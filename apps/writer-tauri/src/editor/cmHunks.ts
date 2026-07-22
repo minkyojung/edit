@@ -25,13 +25,20 @@ export type CmHunk = {
 /** Where an `add` lands: end of doc for the empty anchor (append), else just
  * after the LAST occurrence of the anchor text.
  *
- * ⚠️ DIVERGENCE (see Phase 6 of the editor-refactor plan): the REAL disk applier
- * (`applyIngest.appendMarkdownToWikiPage`) ALWAYS appends to end of doc — it does
- * not honor a non-empty anchor. So for an `add` with a non-empty `anchorBefore`
- * this preview would show the green at a DIFFERENT spot than where Keep actually
- * lands it. It only matches today because `add` edits currently carry an empty
- * anchor (→ end of doc). Reconcile with `lib/pendingDiff.applyEditsToText` before
- * relying on non-empty anchors. */
+ * ⚠️ There are THREE `add`/append implementations that DIVERGE, and none is wrong
+ * in practice only because of a narrow reachability invariant — do NOT "fix" one
+ * to match another without re-checking it:
+ *   • this file (in-buffer green, mounted): inserts `after` verbatim at the anchor
+ *     position, NO separator → `…lastLine.appended` gets GLUED onto the last line.
+ *   • `lib/pendingDiff.applyEditsToText` (chat card diff): `doc + '\n\n' + after`.
+ *   • `applyIngest.appendMarkdownToWikiPage` (disk, unmounted): trimEnd + '\n\n' +
+ *     trimmed + '\n'.
+ * The gluing / non-empty-anchor cases are UNREACHABLE today: the only production
+ * `add` PendingChange is a NEW-note body (see toPendingChange — createdNewNote),
+ * so the target doc is EMPTY (anchor → 0, no last line to glue). Appends to an
+ * EXISTING page never become a reviewable PendingChange — they call
+ * appendMarkdownToWikiPage directly. If that invariant ever changes (an `add`
+ * targeting a non-empty open doc), unify all three on the applier's semantics. */
 export function resolveAddInsertion(doc: string, anchor: string): number | null {
   if (anchor.length === 0) return doc.length
   const i = doc.lastIndexOf(anchor)
