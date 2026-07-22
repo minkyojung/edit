@@ -10,7 +10,7 @@ import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 
-import { activeLines } from './reveal'
+import { cursorInRange } from './v2/cursorRange'
 import { detectYoutubeEmbed } from '@/lib/youtube'
 import { useYoutubePlayerStore } from '@/state/youtubePlayerStore'
 
@@ -102,7 +102,6 @@ class YoutubeWidget extends WidgetType {
 
 function build(state: EditorState): DecorationSet {
   const out: Range<Decoration>[] = []
-  const active = activeLines(state)
   syntaxTree(state).iterate({
     enter: (node) => {
       // A bare URL line parses as a Paragraph; match the whole-line URL.
@@ -112,9 +111,9 @@ function build(state: EditorState): DecorationSet {
       if (!embed) return undefined
       const lineFrom = state.doc.lineAt(node.from)
       const lineTo = state.doc.lineAt(Math.min(node.to, state.doc.length))
-      for (let n = lineFrom.number; n <= lineTo.number; n++) {
-        if (active.has(n)) return false // caret here → show the raw URL
-      }
+      // Selection touching the card lines → show the raw URL (same edge-inclusive
+      // predicate the v2 block layer uses, so every card reveals consistently).
+      if (cursorInRange(state, lineFrom.from, lineTo.to)) return false
       out.push(
         Decoration.replace({
           widget: new YoutubeWidget(embed.videoId),

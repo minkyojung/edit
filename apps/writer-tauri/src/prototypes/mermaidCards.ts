@@ -18,7 +18,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
-import { activeLines } from './reveal'
+import { cursorInRange } from './v2/cursorRange'
 
 // Stash the React root on the DOM node so updateDOM/destroy can reuse it.
 type RootHost = HTMLElement & { _root?: Root }
@@ -86,17 +86,15 @@ function fenceBodyCode(state: EditorState, from: number, to: number): string {
 
 function build(state: EditorState): DecorationSet {
   const out: Range<Decoration>[] = []
-  const active = activeLines(state)
   syntaxTree(state).iterate({
     enter: (node) => {
       if (node.name !== 'FencedCode') return
       if (fenceInfo(state, node.from) !== 'mermaid') return
       const lineFrom = state.doc.lineAt(node.from)
       const lineTo = state.doc.lineAt(Math.min(node.to, state.doc.length))
-      // Cursor on any fence line → show raw source (edit mode).
-      for (let n = lineFrom.number; n <= lineTo.number; n++) {
-        if (active.has(n)) return
-      }
+      // Selection touching the fence → show raw source (edit mode). Same
+      // edge-inclusive predicate the v2 block layer uses → consistent reveal.
+      if (cursorInRange(state, lineFrom.from, lineTo.to)) return
       const code = fenceBodyCode(state, node.from, node.to)
       out.push(
         Decoration.replace({
