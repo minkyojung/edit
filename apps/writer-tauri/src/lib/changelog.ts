@@ -39,6 +39,7 @@ export const CHANGELOG: ChangelogEntry[] = [
       '',
       '### Sidebar',
       '',
+      '- Your Google profile picture shows in the sidebar again, instead of falling back to a generic icon.',
       '- The tag filter pane is gone for now while it gets redesigned.',
     ].join('\n'),
   },
