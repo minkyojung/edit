@@ -21,8 +21,22 @@ import { StateField, type EditorState, type Extension, type Range, type Transact
 import type { SyntaxNode } from '@lezer/common'
 import { cursorInRange } from '@/editor/livepreview/cursorRange'
 
-// Stash the React root on the DOM node so updateDOM/destroy can reuse it.
-type RootHost = HTMLElement & { _root?: Root }
+// Stash the React root (and the height observer) on the DOM node so updateDOM/destroy
+// can reuse/clean them up.
+type RootHost = HTMLElement & { _root?: Root; _ro?: ResizeObserver }
+
+// The diagram renders ASYNCHRONOUSLY (lazy chunk + React commit), so CM measures the
+// widget empty first, and it changes height again on every source edit. Watch the box
+// and requestMeasure on any resize so the heightmap tracks the real diagram (else clicks
+// / up-down arrow below it map to the wrong line — the canonical late-height problem the
+// image/media widgets already solve via load events). Guarded for environments without
+// ResizeObserver (jsdom); disconnected in destroy.
+function observeHeight(dom: RootHost, view: EditorView): void {
+  if (dom._ro || typeof ResizeObserver === 'undefined') return
+  const ro = new ResizeObserver(() => view.requestMeasure())
+  ro.observe(dom)
+  dom._ro = ro
+}
 
 // MermaidBlock pulls mermaid (d3/dagre/cytoscape) + shiki — load it only when
 // a card actually renders (keeps this module light enough to unit-test the
@@ -48,9 +62,10 @@ export class MermaidWidget extends WidgetType {
   eq(other: MermaidWidget) {
     return other.code === this.code
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const dom = document.createElement('div') as RootHost
     dom.className = 'cm-mermaid-card'
+    observeHeight(dom, view)
     renderInto(dom, this.code)
     return dom
   }
@@ -61,6 +76,8 @@ export class MermaidWidget extends WidgetType {
   }
   destroy(dom: HTMLElement) {
     const host = dom as RootHost
+    host._ro?.disconnect()
+    host._ro = undefined
     const root = host._root
     host._root = undefined
     // Async unmount — React forbids unmounting synchronously during render.
