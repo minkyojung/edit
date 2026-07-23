@@ -27,6 +27,12 @@ export function richClipboardPayload(
   return { md, html: markdownToHtml(md) }
 }
 
+// Monotonic copy generation. The OS clipboard is a single GLOBAL resource, so the
+// LATEST copy — from any editor — must win. Each writeRich bumps this; the async image
+// upgrade below captures its generation and bails if a newer copy has happened, so a
+// slow embed from an earlier copy can't clobber a newer copy's content.
+let copyGeneration = 0
+
 /** Best-effort second write: if the selection had vault-local images,
  * re-encode them as base64 and overwrite the clipboard so they survive
  * a paste. Reading image bytes is async and can't happen inside the
@@ -35,9 +41,12 @@ export function richClipboardPayload(
  * a fast paste before this resolves just gets the un-embedded version,
  * never a broken copy. No local images → embedLocalImages returns the
  * same string and we skip the extra clipboard write entirely. */
-async function upgradeWithEmbeddedImages(md: string, html: string): Promise<void> {
+async function upgradeWithEmbeddedImages(md: string, html: string, gen: number): Promise<void> {
   const embedded = await embedLocalImages(html)
   if (embedded === html) return
+  // A newer copy happened while we were embedding — don't overwrite it with this stale
+  // payload (the copy-then-copy race).
+  if (gen !== copyGeneration) return
   try {
     await navigator.clipboard.write([
       new ClipboardItem({
@@ -53,12 +62,14 @@ async function upgradeWithEmbeddedImages(md: string, html: string): Promise<void
 function writeRich(event: ClipboardEvent, view: EditorView, isCut: boolean): boolean {
   const payload = richClipboardPayload(view.state)
   if (!payload || !event.clipboardData) return false
+  const gen = ++copyGeneration
   event.clipboardData.setData('text/plain', payload.md)
   event.clipboardData.setData('text/html', payload.html)
   event.preventDefault()
-  void upgradeWithEmbeddedImages(payload.md, payload.html)
-  if (isCut) {
-    // We prevented the default, so CodeMirror won't delete — do it here.
+  void upgradeWithEmbeddedImages(payload.md, payload.html, gen)
+  if (isCut && !view.state.readOnly) {
+    // We prevented the default, so CodeMirror won't delete — do it here. (A read-only
+    // editor still gets the copy but keeps its text — cut degrades to copy.)
     view.dispatch(
       view.state.update({
         changes: view.state.selection.ranges
