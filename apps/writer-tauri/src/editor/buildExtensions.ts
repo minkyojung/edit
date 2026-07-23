@@ -5,7 +5,8 @@
 // ordering comments are load-bearing (keymap precedence + IME correctness) — do NOT
 // reorder. Only `slug` and `scheduleStats` are parameterized.
 
-import { EditorState, Prec, Annotation, Transaction, type Extension, type TransactionSpec } from '@codemirror/state'
+import { EditorState, Prec, Annotation, Transaction, type ChangeSpec, type Extension, type TransactionSpec } from '@codemirror/state'
+import { diffLines } from 'diff'
 import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { highlightSelectionMatches } from '@codemirror/search'
@@ -74,6 +75,38 @@ const layoutReset = EditorView.theme({
 // below and CmEditor's registerCmEditor setBody closure, which imports it.
 export const externalBody = Annotation.define<boolean>()
 
+// A MINIMAL change set turning the current doc into `md` — a line diff (same `diff`
+// primitive as cmHunks), NOT a whole-doc replace. Only the lines that actually differ
+// are touched, so: the caret/selection and scroll survive an external edit elsewhere
+// (a whole-doc replace collapses every position); unchanged marks/decorations keep
+// their positions; and the history stays sane — an intervening reload no longer maps a
+// user's own edit on an untouched line into a degenerate change (that's what made a
+// post-reload Cmd-Z unreachable). An echo reload (`md` equals the doc) yields NO
+// changes. Ranges come out ascending and non-overlapping (CM's requirement).
+function minimalReloadChanges(current: string, md: string): ChangeSpec[] {
+  if (current === md) return []
+  const parts = diffLines(current, md)
+  const changes: ChangeSpec[] = []
+  let pos = 0 // running offset into `current`
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]
+    if (!part.added && !part.removed) {
+      pos += part.value.length
+      continue
+    }
+    if (part.removed) {
+      const removedLen = part.value.length
+      const next = parts[i + 1]
+      const insert = next?.added ? (i++, next.value) : ''
+      changes.push({ from: pos, to: pos + removedLen, insert })
+      pos += removedLen
+    } else {
+      changes.push({ from: pos, to: pos, insert: part.value }) // pure insertion
+    }
+  }
+  return changes
+}
+
 // The transaction spec for an EXTERNAL reload (vault-watcher change / background
 // rewrite pushed in via the docsStore body path) — NOT the accept path, which stays
 // undoable via acceptEffect. Two annotations, both load-bearing:
@@ -85,7 +118,7 @@ export const externalBody = Annotation.define<boolean>()
 //     edit. Silent data loss. Keeping the reload out of history closes that path.
 export function externalReloadSpec(state: EditorState, md: string): TransactionSpec {
   return {
-    changes: { from: 0, to: state.doc.length, insert: md },
+    changes: minimalReloadChanges(state.doc.toString(), md),
     annotations: [externalBody.of(true), Transaction.addToHistory.of(false)],
   }
 }
