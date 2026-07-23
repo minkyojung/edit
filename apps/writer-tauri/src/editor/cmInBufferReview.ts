@@ -30,7 +30,13 @@ import {
 // still tag transactions (kept compatible with the widget version's contract).
 export const acceptEffect = StateEffect.define<string>()
 export const rejectEffect = StateEffect.define<string>()
-const reopenEffect = StateEffect.define<string>()
+// Inverse of a decision: an UNDO un-decides the change (store → pending). Carries the
+// ORIGINAL decision kind so REDO can re-emit that exact accept/reject — without it the
+// inversion table was asymmetric (reopen had no inverse), so redo dropped the mat but
+// never re-decided → the store stayed pending while the buffer showed the accepted text
+// (a ghost "pending" card). It also means a redo tx carries the decision effect again,
+// so isDecisionTx/shouldRemirror correctly re-mirror the saved body on redo.
+const reopenEffect = StateEffect.define<{ id: string; was: 'accept' | 'reject' }>()
 // Remap a mat's hunk positions through a doc change. Association is per-boundary:
 //   • INWARD  (start +1, end −1): boundary insertions fall OUTSIDE the range — used
 //     to track already-materialized ranges as the user types near them (a keystroke
@@ -141,8 +147,15 @@ export function shouldRemirror(
 const reviewUndoLink = invertedEffects.of((tr) => {
   const out: StateEffect<unknown>[] = []
   for (const e of tr.effects) {
-    // Undo of accept/reject re-opens the change in the store…
-    if (e.is(acceptEffect) || e.is(rejectEffect)) out.push(reopenEffect.of(e.value))
+    // Undo of accept/reject re-opens the change in the store; the kind is preserved so
+    // the inverse-of-reopen (below) can re-emit the SAME decision on redo…
+    if (e.is(acceptEffect)) out.push(reopenEffect.of({ id: e.value, was: 'accept' }))
+    else if (e.is(rejectEffect)) out.push(reopenEffect.of({ id: e.value, was: 'reject' }))
+    // …and the inverse of a reopen (an undo's effect) is re-applying the original
+    // decision — so REDO re-accepts/re-rejects in the store AND re-mirrors the save.
+    if (e.is(reopenEffect)) {
+      out.push(e.value.was === 'accept' ? acceptEffect.of(e.value.id) : rejectEffect.of(e.value.id))
+    }
     // …and restores its red/green ranges in matField, so the reconciler sees it's
     // still materialized and never re-inserts (the duplication bug). The mat is read
     // from startState (PRE-decision) so it still carries the red SPAN, then mapped
@@ -167,7 +180,7 @@ const acceptUndoWatcher = EditorView.updateListener.of((u) => {
       const store = usePendingChangesStore.getState()
       if (e.is(acceptEffect)) queueMicrotask(() => store.accept(e.value))
       else if (e.is(rejectEffect)) queueMicrotask(() => store.reject(e.value))
-      else if (e.is(reopenEffect)) queueMicrotask(() => store.reopen(e.value))
+      else if (e.is(reopenEffect)) queueMicrotask(() => store.reopen(e.value.id))
     }
   }
 })
