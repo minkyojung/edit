@@ -28,9 +28,9 @@ import {
   type Transaction,
 } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
-import { ImageWidget } from '../widgets'
+import { ImageWidget } from '@/editor/cards/widgets'
 import { EditableTableWidget } from './editableTable'
-import { MediaWidget, detectMedia } from '../mediaCards'
+import { MediaWidget, detectMedia } from '@/editor/cards/mediaCards'
 import { inProofRawRange } from '@/editor/proofRawRanges'
 import { cursorInRange } from './cursorRange'
 

@@ -5,7 +5,7 @@
 // rest of the app. Everything is scoped by EditorView.theme, so it can't leak.
 
 import { EditorView } from '@codemirror/view'
-import { LIST_INDENT, LIST_MARKER_END_PAD } from './v2/livePreview'
+import { LIST_INDENT, LIST_MARKER_END_PAD } from '@/editor/livepreview/livePreview'
 
 export const cmPrototypeTheme = EditorView.theme({
   '&': {

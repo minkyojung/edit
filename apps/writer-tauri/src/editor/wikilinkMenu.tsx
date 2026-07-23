@@ -24,7 +24,7 @@ import {
   type TooltipView,
 } from '@codemirror/view'
 import { createRoot, type Root } from 'react-dom/client'
-import { inCodeBlock } from '@/prototypes/slashCommands'
+import { inCodeBlock } from '@/editor/extensions/slashCommands'
 import { useDocsStore } from '@/state/docsStore'
 import { getActiveSlugFromHash } from '@/lib/viewUrl'
 import { EditorWikilinkMenu } from './EditorWikilinkMenu'

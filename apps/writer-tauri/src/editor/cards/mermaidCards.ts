@@ -18,7 +18,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
-import { cursorInRange } from './v2/cursorRange'
+import { cursorInRange } from '@/editor/livepreview/cursorRange'
 
 // Stash the React root on the DOM node so updateDOM/destroy can reuse it.
 type RootHost = HTMLElement & { _root?: Root }

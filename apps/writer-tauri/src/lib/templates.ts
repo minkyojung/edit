@@ -18,7 +18,7 @@ import {
 } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
 import { getTemplatesFolder } from '@/state/settingsStore'
-import { setTemplateSlashItems, templateSlashItem } from '@/prototypes/slashCommands'
+import { setTemplateSlashItems, templateSlashItem } from '@/editor/extensions/slashCommands'
 
 export interface Template {
   /** Filename without `.md` — the label shown in menus. */

@@ -10,7 +10,7 @@ import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 
-import { cursorInRange } from './v2/cursorRange'
+import { cursorInRange } from '@/editor/livepreview/cursorRange'
 import { detectYoutubeEmbed } from '@/lib/youtube'
 import { useYoutubePlayerStore } from '@/state/youtubePlayerStore'
 
