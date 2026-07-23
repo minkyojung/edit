@@ -18,6 +18,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
+import type { SyntaxNode } from '@lezer/common'
 import { cursorInRange } from '@/editor/livepreview/cursorRange'
 
 // Stash the React root on the DOM node so updateDOM/destroy can reuse it.
@@ -134,6 +135,33 @@ function touchesMermaid(tr: Transaction, mapped: DecorationSet): boolean {
   return touched
 }
 
+/** Is `pos` inside a ```mermaid fence? Tree-based (reliable on selection changes, which
+ * happen after the parser settles), the mermaid analog of blocks.ts's `inTableAt` — a
+ * caret in the fence BODY has no marker/`mermaid` text on its line, so a pure text scan
+ * would miss the reveal. */
+function inMermaidFence(state: EditorState, pos: number): boolean {
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
+    if (n.name === 'FencedCode' && fenceInfo(state, n.from) === 'mermaid') return true
+  }
+  return false
+}
+
+/** Does the selection sit on/inside a mermaid fence (reveal condition)? Gates the
+ * selection-change rebuild so a caret move through plain prose keeps the mapped set
+ * instead of re-walking the whole tree every keystroke. Superset of the reveal: the
+ * text scan catches the marker/info lines, the tree check catches the fence body and
+ * boundaries. Mirrors blocks.ts's `selectionNearBlock`. */
+function selectionNearMermaid(state: EditorState): boolean {
+  for (const r of state.selection.ranges) {
+    const first = state.doc.lineAt(r.from)
+    const last = r.to <= first.to ? first : state.doc.lineAt(r.to)
+    const text = state.doc.sliceString(first.from, last.to)
+    if (text.includes('```') || text.includes('~~~') || text.includes('mermaid')) return true
+    if (inMermaidFence(state, r.from) || inMermaidFence(state, r.to)) return true
+  }
+  return false
+}
+
 export const mermaidField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
@@ -141,8 +169,14 @@ export const mermaidField = StateField.define<DecorationSet>({
     // Doc edit: keep the mapped set unless the change could add/remove/alter a
     // mermaid fence — only then re-walk the tree. Stops the per-keystroke scan.
     if (tr.docChanged) return touchesMermaid(tr, mapped) ? build(tr.state) : mapped
-    // Caret moved (reveal): positions didn't shift.
-    if (tr.selection) return build(tr.state)
+    // Caret moved: rebuild ONLY when the selection enters or leaves a mermaid fence
+    // (before OR after the move) — a cursor move through plain prose used to re-walk
+    // the whole tree every keystroke. Positions didn't shift, so no map.
+    if (tr.selection) {
+      return selectionNearMermaid(tr.startState) || selectionNearMermaid(tr.state)
+        ? build(tr.state)
+        : mapped
+    }
     // Parse-progress: the tree advanced (a ```mermaid fence may now be a FencedCode
     // node) — rebuild so it renders as soon as the parser catches up. Cheap pointer
     // compare; only fires on pure parse-progress transactions (after the gates above).

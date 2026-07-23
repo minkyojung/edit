@@ -150,6 +150,21 @@ function touchesYoutube(tr: Transaction, mapped: DecorationSet): boolean {
   return touched
 }
 
+/** Does the selection sit on (or span) a line mentioning a YouTube URL — the reveal
+ * condition? Gates the selection-change rebuild: a caret move through plain prose can't
+ * change which embed reveals, so keep the mapped set instead of re-walking the whole
+ * syntax tree on every arrow/click. Superset of the card lines (same `youtu` predicate
+ * as touchesYoutube), so a reveal is never missed. Mirrors blocks.ts's
+ * `selectionNearBlock`. */
+function selectionNearYoutube(state: EditorState): boolean {
+  for (const r of state.selection.ranges) {
+    const first = state.doc.lineAt(r.from)
+    const last = r.to <= first.to ? first : state.doc.lineAt(r.to)
+    if (state.doc.sliceString(first.from, last.to).includes('youtu')) return true
+  }
+  return false
+}
+
 export const youtubeField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
@@ -158,8 +173,14 @@ export const youtubeField = StateField.define<DecorationSet>({
     // add/remove/alter an embed — only then re-walk the tree. This is what stops
     // the per-keystroke full-document scan.
     if (tr.docChanged) return touchesYoutube(tr, mapped) ? build(tr.state) : mapped
-    // Caret moved (reveal): positions didn't shift, so rebuild without mapping.
-    if (tr.selection) return build(tr.state)
+    // Caret moved: rebuild ONLY when the selection enters or leaves a YouTube-URL line
+    // (before OR after the move) — otherwise a cursor move through plain prose kept
+    // re-walking the whole tree on every keystroke. Positions didn't shift, so no map.
+    if (tr.selection) {
+      return selectionNearYoutube(tr.startState) || selectionNearYoutube(tr.state)
+        ? build(tr.state)
+        : mapped
+    }
     // Parse-progress: the tree advanced (a bare YouTube URL line may now be a matching
     // Paragraph node) — rebuild so it renders as soon as the parser catches up. Cheap
     // pointer compare; only fires on pure parse-progress transactions (after the gates).
