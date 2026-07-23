@@ -1,7 +1,7 @@
 // In-buffer AI-suggestion review (Cursor-style, Option B). Unlike the widget
 // version, the proposal lives as REAL buffer text so editing is fully native:
 //   • on arrival → insert each proposal's NEW text right under the OLD text
-//     (planProposals), record the red/green ranges, mark them RAW (renderers skip
+//     (planAdditional), record the red/green ranges, mark them RAW (renderers skip
 //     them → proposal shows verbatim, tables don't render) and FREEZE the red.
 //   • Keep → delete the red; the (edited) green stays and becomes saved content.
 //   • Reject → delete the green; the red is restored.
@@ -72,6 +72,14 @@ export function greenRangesForSave(state: EditorState): RawRange[] {
   return greenRangesOf(state.field(matField, false) ?? [])
 }
 
+/** The body to PERSIST for `state`: the doc minus the pending-green proposal
+ * ranges (disk only ever holds accepted content). The single source of this
+ * computation — CmEditor's getBody, its unmount checkpoint, and keep()'s
+ * resolvedResult all go through here, and the save test asserts against it. */
+export function savedBodyOf(state: EditorState): string {
+  return stripRanges(state.doc.toString(), greenRangesForSave(state))
+}
+
 /** True when any transaction carries an accept/reject DECISION. Such a decision
  * flips a proposal between pending-green (EXCLUDED from greenRangesForSave) and
  * accepted (INCLUDED), so the saved body changes even when the doc text doesn't —
@@ -82,6 +90,19 @@ export function isDecisionTx(transactions: readonly Transaction[]): boolean {
   return transactions.some((t) =>
     t.effects.some((e) => e.is(acceptEffect) || e.is(rejectEffect)),
   )
+}
+
+/** Whether CmEditor's save listener must re-mirror the saved body for a given
+ * update: on a real doc change, OR on an accept/reject decision (which flips text
+ * between pending-green EXCLUDED and accepted INCLUDED even with NO doc change —
+ * bailing on `!docChanged` alone silently dropped auto-accepted appends). The
+ * listener guard and the save test both call this, so the decision under test is
+ * the production code. */
+export function shouldRemirror(
+  docChanged: boolean,
+  transactions: readonly Transaction[],
+): boolean {
+  return docChanged || isDecisionTx(transactions)
 }
 
 // ── Undo wiring ────────────────────────────────────────────────────────────
@@ -126,7 +147,15 @@ function keep(view: EditorView, changeId: string) {
   // After the dispatch the doc + field are updated; the saved text is the doc
   // minus the REMAINING green. Pass it as resolvedResult so the store applier
   // (which also fires on accept) is a no-op (oldMd === newMd) — no double apply.
-  const resolved = stripRanges(view.state.doc.toString(), greenRangesForSave(view.state))
+  //
+  // Why this direct call AND the acceptEffect dispatched above (which makes
+  // acceptUndoWatcher queue its OWN store.accept in a microtask) is NOT a
+  // double-decision: this synchronous call runs first and flips the status to
+  // 'accepted'; the watcher's microtask call then hits store.accept's
+  // `status !== 'pending'` guard and no-ops WITHOUT clobbering resolvedResult.
+  // reject() needs no resolvedResult, so it lets the watcher do the whole thing
+  // (the asymmetry is intentional — don't "unify" it into a second dispatch).
+  const resolved = savedBodyOf(view.state)
   usePendingChangesStore.getState().accept(changeId, resolved)
 }
 
@@ -376,16 +405,13 @@ export function cmInBufferReview(slug: string): Extension {
 }
 
 /** Is `changeId` currently shown as an in-buffer proposal in this editor? The
- * chat-panel accept path checks this and routes through `acceptInBuffer` (the same
- * keep() the inline ✓ uses) instead of the applier's whole-doc replace — ONE path,
+ * chat-panel accept path checks this (via `isChangeMaterializedInActiveCm`): when
+ * true it lets the store flip the status and the reconciler's CLEANUP phase apply
+ * the decision in-buffer, instead of the applier's whole-doc replace — ONE path,
  * so Cmd-Z restores the proposal consistently instead of duplicating it. */
 export function isMaterialized(state: EditorState, changeId: string): boolean {
   return state.field(matField, false)?.some((m) => m.changeId === changeId) ?? false
 }
-
-/** Accept an in-buffer proposal (delete red, keep the edited green) — the chat
- * panel delegates here for materialized changes so both buttons share one path. */
-export const acceptInBuffer = keep
 
 // Test-only: the field + effects + undo link, so the "Reject → Undo restores the
 // proposal (no duplicate)" invariant can be asserted headlessly.

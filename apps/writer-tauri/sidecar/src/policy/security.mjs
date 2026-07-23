@@ -37,8 +37,16 @@ const SECRET_HOME_RELATIVE = [
   '.config/gcloud',
   '.kube',
   '.npmrc',
-  // The app's own encrypted OAuth/token store.
-  'Library/Application Support/com.minkyojung.octave',
+  // The app's own encrypted OAuth/token stores. Block ONLY the secret `.enc`
+  // files, NOT the whole app-data folder — that folder also holds the vault's
+  // external git repo (`git-repos/`, kept out of the synced vault), which the
+  // agent MUST be able to read and run `git` against to undo its own edits
+  // (undo-ai-change skill). The `.enc` files are AES-256-GCM encrypted at rest;
+  // this deny is defense-in-depth on top of that. A NEW encrypted store added to
+  // secure_storage MUST be listed here too, or it becomes readable to the agent.
+  'Library/Application Support/com.minkyojung.octave/claude-oauth.enc',
+  'Library/Application Support/com.minkyojung.octave/google-oauth.enc',
+  'Library/Application Support/com.minkyojung.octave/github-oauth.enc',
 ]
 
 /** Absolute secret locations for the OS sandbox's `filesystem.denyRead`.

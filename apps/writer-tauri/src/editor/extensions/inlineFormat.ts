@@ -107,12 +107,9 @@ const wrapBindings = [
   { key: 'Mod-Shift-x', run: toggleWrap('~~') },
 ]
 
-export const inlineFormatKeymap: Extension = Prec.high(
-  keymap.of([...wrapBindings, { key: 'Mod-k', run: toggleLink }]),
-)
-
-// Variant WITHOUT ⌘K — for CmEditor, where ⌘K opens the command palette
-// (a window-level shortcut) and binding link here would double-fire both.
+// CmEditor uses this NoLink variant: ⌘K opens the command palette (a
+// window-level shortcut), so binding link here would double-fire both. The
+// ⌘K-link toggle itself is still exercised via `_toggleLink` in tests.
 export const inlineFormatKeymapNoLink: Extension = Prec.high(keymap.of(wrapBindings))
 
 // exported for tests

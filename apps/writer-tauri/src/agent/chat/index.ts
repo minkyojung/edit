@@ -208,14 +208,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // @-mentioned files. Resolve each path back to its doc so we can inject the
   // in-memory body when the note is open/loaded (fresher than disk — the
-  // editor flushes lazily, so a just-edited note reads empty off disk). Unloaded
-  // notes fall back to a "Read this path" instruction.
-  const handles = useDocsStore.getState().handles
+  // editor flushes lazily, so a just-edited note reads empty off disk).
+  // `readDocBody` returns the LIVE editor body when one is mounted (the mirror
+  // lags it), else the mirror. Unloaded notes fall back to a "Read this path"
+  // instruction.
   const mentionFiles = (mentionPaths ?? []).map((path) => {
     const doc = knownDocs.find(
       (d) => pathForDoc(d, (s) => knownDocs.find((x) => x.slug === s)) === path,
     )
-    const body = doc ? handles[doc.slug]?.bodyMarkdown : undefined
+    const body = doc ? readDocBody(doc.slug) : undefined
     // Same CAS base as the current doc: a mentioned note's shown body is what a
     // later whole-doc overwrite must not silently clobber.
     if (doc && body) setModelBase(doc.slug, body)
@@ -426,6 +427,13 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // latest body inline) rides the ack back to the round-trip propose_write
         // tool, which returns it to the model as an error so it rebases.
         let ackReason: string | undefined
+        // True ONLY when auto-accept mode actually wrote this change to disk (an
+        // `accept()` that landed). Rides the ack back so the sidecar tells the
+        // model "applied immediately" instead of "queued for review" — otherwise
+        // the model, believing its edit is still pending, wrongly tells the user
+        // to "reject the card" (there is none; it's already saved). Stays false on
+        // interactive runs, where the change genuinely IS queued.
+        let ackApplied = false
 
         const myTail = (async (): Promise<{ pageSlug: string; pendingId: string } | null> => {
           // The whole body is wrapped in try/catch: without this, a throw
@@ -487,6 +495,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                   )
                   if (ok) {
                     usePendingChangesStore.getState().accept(prior.pendingId, mergedBody)
+                    ackApplied = true
                   } else {
                     // Don't call accept() on a failed write — that would
                     // tell every surface "done" over content that never
@@ -511,6 +520,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                   prior.pendingId,
                 )
                 if (!ok) notify.autoAcceptWriteFailed()
+                else ackApplied = true
               }
               // Don't navigate again — the first call already opened the note.
               return prior
@@ -587,6 +597,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 )
                 if (outcome.kind === 'applied') {
                   usePendingChangesStore.getState().accept(mapped.id, body)
+                  ackApplied = true
                 } else if (outcome.kind === 'stale') {
                   // Bounce the divergence back to the model (via the ack) so it
                   // rebases; leave the change pending so the user's edit survives.
@@ -602,6 +613,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 // Range edit (Edit/MultiEdit): the applier's live-CM write path
                 // is already protected by updateDocBody's live read — no CAS.
                 usePendingChangesStore.getState().accept(mapped.id)
+                ackApplied = true
               }
             }
             // Open the new note. In acceptEdits mode it's already populated
@@ -638,7 +650,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // the hook fails open on its own timeout if this never arrives, so a
         // failure here is a lost confirmation, not a stuck turn.
         invoke('claude_chat_edit_ack', {
-          args: { pendingId: e.payload.pendingId, ok: ackOk, reason: ackReason },
+          args: { pendingId: e.payload.pendingId, ok: ackOk, reason: ackReason, applied: ackApplied },
         }).catch((err) => {
           console.warn('[chat] edit-ack send failed', err)
         })

@@ -15,7 +15,7 @@ import { updater, UPDATER_EVENT, type UpdateState } from '@/lib/updater'
 import { useUpdateStore } from '@/state/updateStore'
 import { useWhatsNewStore } from '@/state/whatsNewStore'
 import { showUpdateReadyToast } from '@/components/UpdateReadyToast'
-import { armRestartWhenIdle } from '@/lib/restartWhenIdle'
+import { armRestartWhenIdle, listenForRestartProbe } from '@/lib/restartWhenIdle'
 import { openSettings } from '@/settings/useSettingsDialog'
 import { notify } from '@/lib/notify'
 
@@ -87,9 +87,18 @@ export function useUpdaterEvents() {
       else unlisten = fn
     })
 
+    // Answer Rust's pre-restart probe for an armed "restart when idle": if this
+    // window has in-flight work, veto so the loop defers to the next lull.
+    let unlistenProbe: UnlistenFn | undefined
+    void listenForRestartProbe().then((fn) => {
+      if (disposed) fn()
+      else unlistenProbe = fn
+    })
+
     return () => {
       disposed = true
       unlisten?.()
+      unlistenProbe?.()
     }
   }, [])
 }

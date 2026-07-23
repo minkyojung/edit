@@ -36,7 +36,7 @@ vi.mock('@/lib/docFileSync', () => ({
   clearDirty: (...a: unknown[]) => state.clearDirty(...(a as [])),
 }))
 
-import { updateDocBody } from './docBody'
+import { updateDocBody, readDocBody } from './docBody'
 
 beforeEach(() => {
   state.handle.bodyMarkdown = ''
@@ -168,5 +168,30 @@ describe('updateDocBody', () => {
     state.handle.contentReady = Promise.reject(new Error('load failed'))
     const r = await updateDocBody('note', () => 'x')
     expect(r).toEqual({ ok: false, reason: 'hydrate-failed' })
+  })
+})
+
+// The canonical read every consumer routes through (Phase 4: rich copy, chat
+// @mentions, the applier's stale-anchor + reject-cleanup checks). The mirror is
+// deliberately STALE while an editor is mounted (the flush no longer writes it
+// back), so reading it directly would lag the live editor — these pin that
+// readDocBody prefers the live body over the stale mirror.
+describe('readDocBody', () => {
+  it('returns the LIVE editor body when one is mounted, NOT the stale mirror', () => {
+    state.handle.bodyMarkdown = 'STALE mirror' // last flush
+    state.livePull = 'LIVE — just typed, not flushed' // mounted editor
+    expect(readDocBody('note')).toBe('LIVE — just typed, not flushed')
+  })
+
+  it('falls back to the mirror when no editor is mounted', () => {
+    state.handle.bodyMarkdown = 'mirror body'
+    state.livePull = null // nothing mounted on this slug
+    expect(readDocBody('note')).toBe('mirror body')
+  })
+
+  it('returns empty string when the doc has no handle', () => {
+    state.handleExists = false
+    state.livePull = null
+    expect(readDocBody('note')).toBe('')
   })
 })

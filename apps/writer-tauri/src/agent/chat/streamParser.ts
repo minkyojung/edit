@@ -6,14 +6,16 @@
 // scalar (last rate-limit snapshot) that mutate together as events
 // arrive. Encapsulating them in a closure (vs a class) lets the
 // returned object expose just the entry points the engine needs
-// (`handleEvent`, plus two read accessors used by the proposal
-// listener) without making any of the internal state directly
-// reachable.
+// (`handleEvent`, plus a couple of read accessors) without making any
+// of the internal state directly reachable.
 //
-// `claude:proposal` is NOT handled here. It runs in a separate
-// listener (proposalListener.ts) that calls `findPendingProposalPart`
-// + `stampProposalApplied` to merge its own outcome into the
-// matching ToolPart this parser created.
+// LEGACY: `findPendingProposalPart` / `stampProposalApplied` (and the
+// markId-preservation branch in the tool_result handler) once served a
+// separate `proposalListener` that stamped a `claude:proposal` outcome
+// back onto the matching ToolPart. That listener was removed (commit
+// "drop mark/propose_change for direct edit_document writes"); AI edits
+// now flow through the pending-changes store (see agent/chat/index.ts +
+// pendingChangesStore). These accessors are currently UNUSED.
 
 import type {
   MessagePart,
@@ -102,18 +104,14 @@ export interface StreamParser {
    * rejected Error when the run fails with code `RATE_LIMIT`. */
   rateLimitInfo(): ChatEvent['event']['rate_limit_info'] | undefined
 
-  /** First unstamped `propose_change` tool part in insertion order.
-   * The proposal listener correlates a `claude:proposal` event with
-   * this part — the sidecar's notification has no tool_use_id, so
-   * we match by order (tool_use blocks land here in model-emission
-   * order, and Map iteration preserves insertion). */
+  /** LEGACY (unused — see file header). First unstamped `propose_change`
+   * tool part in insertion order, matched by order because the removed
+   * proposal listener's notification had no tool_use_id. */
   findPendingProposalPart(): ToolPart | undefined
 
-  /** Stamp the apply outcome onto a propose_change tool part so the
-   * chat panel's click-to-scroll handler can find the resulting
-   * mark. The SDK's tool_result that arrives a beat later only
-   * carries the ack text from the relay handler — without this
-   * stamp the markId would never reach the UI. */
+  /** LEGACY (unused — see file header). Stamped the apply outcome (a
+   * markId) onto a propose_change tool part so the chat panel's
+   * click-to-scroll handler could find the resulting mark. */
   stampProposalApplied(part: ToolPart, markId: string): void
 }
 
@@ -424,13 +422,12 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
               const tool = findToolPartByCallId(b.tool_use_id)
               if (tool) {
                 const isError = !!b.is_error
-                // propose_change parts may have already had their
-                // output stamped with a markId by the proposal
-                // listener. The SDK's tool_result carries only
-                // the relay handler's ack text, so blindly
-                // overwriting would erase the markId and break the
-                // chat → editor click-to-scroll path. Preserve the
-                // stamped markId when one is present.
+                // LEGACY (see file header): the removed proposal listener
+                // could stamp a markId onto a propose_change part before
+                // this tool_result landed; preserving it kept the SDK ack
+                // from erasing it. That path is inert now (nothing stamps),
+                // so `existing.markId` is always undefined here — kept as a
+                // harmless guard until the legacy accessors are removed.
                 const existing = (tool.output ?? {}) as { markId?: string }
                 const stampedMarkId = !isError ? existing.markId : undefined
                 // Edit tools (propose_edit / write / multi_edit) echo the

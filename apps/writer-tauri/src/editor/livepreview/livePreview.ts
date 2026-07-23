@@ -15,7 +15,7 @@ import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { Facet, type EditorState, type Line, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
-import { isKnownNote } from '../wikilinkComplete'
+import { isKnownNote } from './wikilinkComplete'
 import { inProofRawRange } from '@/editor/proofRawRanges'
 import { cursorInRange } from './cursorRange'
 

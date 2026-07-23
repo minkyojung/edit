@@ -126,6 +126,8 @@ pub fn run() {
             updater::updater_check,
             updater::updater_install,
             updater::updater_status,
+            updater::updater_arm_restart_when_idle,
+            updater::updater_restart_veto,
             claude_sidecar::state::sidecar_status,
         ])
         .setup(|app| {
@@ -296,8 +298,9 @@ pub fn run() {
             // Auto-update: one process-wide checker in the Rust runtime — runs
             // regardless of which/how many windows are open (fixing the old
             // launcher-window-only gating). A first check ~5s after launch (so
-            // it doesn't compete with cold start), then hourly. Notify-first:
-            // the loop only CHECKS; the user drives download + restart. Release
+            // it doesn't compete with cold start), then hourly. Auto-download:
+            // a found update downloads + installs in the background (see
+            // updater.rs); the user only drives the final restart. Release
             // builds only — dev has no installed bundle to replace.
             #[cfg(not(debug_assertions))]
             {
@@ -309,6 +312,18 @@ pub fn run() {
                             .await;
                         tokio::time::sleep(std::time::Duration::from_secs(60 * 60)).await;
                     }
+                });
+            }
+
+            // "Restart when idle": a process-global loop that relaunches into a
+            // staged update once the system goes idle (native idle time, not a
+            // throttled webview timer) and no window vetoes. Armed by the
+            // update-ready toast. Release + macOS only.
+            #[cfg(all(not(debug_assertions), target_os = "macos"))]
+            {
+                let idle_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    updater::run_idle_restart_loop(idle_app).await;
                 });
             }
 

@@ -23,8 +23,22 @@ export type CmHunk = {
 }
 
 /** Where an `add` lands: end of doc for the empty anchor (append), else just
- * after the LAST occurrence of the anchor text. Mirrors the applier's insertion
- * rule so "a widget shows" ⟺ "Keep inserts there". */
+ * after the LAST occurrence of the anchor text.
+ *
+ * ⚠️ There are THREE `add`/append implementations that DIVERGE, and none is wrong
+ * in practice only because of a narrow reachability invariant — do NOT "fix" one
+ * to match another without re-checking it:
+ *   • this file (in-buffer green, mounted): inserts `after` verbatim at the anchor
+ *     position, NO separator → `…lastLine.appended` gets GLUED onto the last line.
+ *   • `lib/pendingDiff.applyEditsToText` (chat card diff): `doc + '\n\n' + after`.
+ *   • `applyIngest.appendMarkdownToWikiPage` (disk, unmounted): trimEnd + '\n\n' +
+ *     trimmed + '\n'.
+ * The gluing / non-empty-anchor cases are UNREACHABLE today: the only production
+ * `add` PendingChange is a NEW-note body (see toPendingChange — createdNewNote),
+ * so the target doc is EMPTY (anchor → 0, no last line to glue). Appends to an
+ * EXISTING page never become a reviewable PendingChange — they call
+ * appendMarkdownToWikiPage directly. If that invariant ever changes (an `add`
+ * targeting a non-empty open doc), unify all three on the applier's semantics. */
 export function resolveAddInsertion(doc: string, anchor: string): number | null {
   if (anchor.length === 0) return doc.length
   const i = doc.lastIndexOf(anchor)
@@ -71,24 +85,6 @@ export function applyEditsToText(docText: string, change: PendingChange): string
       // Whole-file Write: the new text IS the whole document.
       text = e.after ?? ''
     }
-  }
-  return text
-}
-
-/** Apply hunks back onto `docText` — the inverse direction of computeCmHunks,
- * used at Keep time to land the (possibly user-edited) green text. Each hunk's
- * [from, to) is replaced by its `after`. Applied right-to-left so earlier offsets
- * stay valid. Because the old (red) spans are frozen while pending, the user's
- * own edits only ever live OUTSIDE these ranges — so applying the hunks to the
- * CURRENT doc preserves those edits AND lands the proposal (the Cursor-style
- * merge, with no diff3). */
-export function applyHunks(
-  docText: string,
-  hunks: readonly { from: number; to: number; after: string }[],
-): string {
-  let text = docText
-  for (const h of [...hunks].sort((a, b) => b.from - a.from)) {
-    text = text.slice(0, h.from) + h.after + text.slice(h.to)
   }
   return text
 }

@@ -793,6 +793,8 @@ export class Server {
       resume,
       maxTurns,
       sandboxEnabled = true,
+      gitDir,
+      gitWorkTree,
     } = params
 
     const options = {
@@ -843,6 +845,11 @@ export class Server {
       CLAUDE_CODE_OAUTH_TOKEN: this.token,
       ANTHROPIC_API_KEY: undefined,
       ANTHROPIC_AUTH_TOKEN: undefined,
+      // Point the model's `git` at the vault's external repo (host-derived, see
+      // claude_chat_start) so plain `git log`/`git revert` from the vault cwd work
+      // without a `--git-dir` flag — the vault itself has no `.git`. Only set when
+      // the host supplied a vault (chats without one don't touch git).
+      ...(gitDir ? { GIT_DIR: gitDir, GIT_WORK_TREE: gitWorkTree } : {}),
     }
 
     // Gate is always attached (a later turn may switch to plan) and reads rec
@@ -1606,12 +1613,37 @@ export class Server {
             // on timeout (ok: true, no rewrite) — don't surface a spurious
             // error over a host that's merely slow, only one that reported
             // failure.
-            const { ok, reason } = await Promise.race([
+            const { ok, reason, applied } = await Promise.race([
               pending.promise,
-              new Promise((r) => setTimeout(() => r({ ok: true, reason: null }), 4000)),
+              new Promise((r) => setTimeout(() => r({ ok: true, reason: null, applied: false }), 4000)),
             ])
             this.pendingAcks.delete(pendingId)
-            if (ok) return {}
+            if (ok) {
+              // Genuinely queued for review (interactive mode, or the ack timed
+              // out) — the tool's own "queued for user review" text is correct.
+              if (!applied) return {}
+              // Auto-accept mode wrote it straight to disk. Correct the model's
+              // belief so it doesn't tell the user to "reject the review card" —
+              // there is none; the change is already saved.
+              return {
+                hookSpecificOutput: {
+                  hookEventName: 'PostToolUse',
+                  updatedToolOutput: {
+                    content: [
+                      {
+                        type: 'text',
+                        text:
+                          'Applied immediately — auto-accept mode is on, so this ' +
+                          'change is already saved to the file. There is no review ' +
+                          'card to accept or reject. To undo it later, revert the ' +
+                          'change (see the undo-ai-change skill); never tell the ' +
+                          'user to reject it.',
+                      },
+                    ],
+                  },
+                },
+              }
+            }
             return {
               hookSpecificOutput: {
                 hookEventName: 'PostToolUse',
@@ -1710,7 +1742,7 @@ export class Server {
     // fires (the host round-trip is fast), and if we deleted here the hook's
     // later `pendingAcks.get` would miss the result and fail open. The hook is
     // the sole deleter (after it reads the settled value).
-    pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null })
+    pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null, applied: !!params?.applied })
   }
 
   // Ask the host to filter its note catalog by metadata and return references.

@@ -63,7 +63,13 @@ export function diffPairsToLines(
  * disagree with the real apply path about whether/where an edit lands — the preview
  * would show one result while the actual save silently did something else. A whole-file
  * replace (no `before`) swaps the body. Used to derive the "after" page so the diff can
- * show document context, not just the changed fragment. */
+ * show document context, not just the changed fragment.
+ *
+ * NOTE: this is a SEPARATE implementation from `editor/cmHunks.applyEditsToText`
+ * (which drives the in-buffer green). They agree on replace/delete/whole-file but
+ * their `add` branches differ (this one inserts a `\n\n` separator; cmHunks does
+ * not) — harmless only because production `add` edits target empty new notes. See
+ * the divergence note on `cmHunks.resolveAddInsertion` before unifying. */
 export function applyEditsToText(snapshot: string, edits: PendingEdit[]): string {
   let doc = snapshot
   for (const e of edits) {

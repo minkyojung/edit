@@ -28,37 +28,6 @@ export type ProposalPlan = {
   mats: ProposalMat[]
 }
 
-export function planProposals(cleanDoc: string, changes: PendingChange[]): ProposalPlan {
-  // Every hunk across all changes, tagged with its change id, sorted by position
-  // so the offset walk stays monotonic. computeCmHunks already line-diffs each
-  // change against the clean doc, so `after` carries its own line breaks.
-  const tagged = changes
-    .flatMap((c) => computeCmHunks(cleanDoc, c).map((h) => ({ changeId: c.id, h })))
-    .sort((a, b) => a.h.from - b.h.from)
-
-  const insertions: { from: number; insert: string }[] = []
-  const byChange = new Map<string, ProposalHunk[]>()
-  let offset = 0
-  for (const { changeId, h } of tagged) {
-    const redFrom = h.from + offset
-    const redTo = h.to + offset
-    let greenFrom = redTo
-    let greenTo = redTo
-    if (h.kind !== 'delete' && h.after) {
-      // Drop the proposal text right after the (struck) red. The hunks are
-      // line-level, so `after` already starts/ends on line boundaries — no extra
-      // separators, which keeps the strip-green round-trip exact.
-      insertions.push({ from: h.to, insert: h.after }) // clean-doc coordinate
-      greenFrom = redTo
-      greenTo = redTo + h.after.length
-      offset += h.after.length
-    }
-    if (!byChange.has(changeId)) byChange.set(changeId, [])
-    byChange.get(changeId)!.push({ redFrom, redTo, greenFrom, greenTo, kind: h.kind })
-  }
-  return { insertions, mats: [...byChange.entries()].map(([changeId, hunks]) => ({ changeId, hunks })) }
-}
-
 /** Map a position in the CLEAN doc (the real doc with `greens` removed) back to
  * the REAL doc — shift it past every existing green run that precedes it. The
  * inverse of stripRanges' coordinate effect. */
@@ -79,7 +48,8 @@ export function cleanToReal(cleanPos: number, greens: { from: number; to: number
  * minus those) and translate every position back into real coordinates (past the
  * existing green, and past the fresh green inserted earlier in this batch). Returns
  * insertions in ORIGINAL real coords (CM applies them as a set) and mats in the
- * POST-insert real coords. With no existing green this equals planProposals. */
+ * POST-insert real coords. With no existing green (`existingGreens: []`) this is
+ * the plain "materialize a fresh batch into a clean doc" case. */
 export function planAdditional(
   realDoc: string,
   existingGreens: { from: number; to: number }[],

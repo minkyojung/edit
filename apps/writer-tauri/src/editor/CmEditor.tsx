@@ -21,35 +21,34 @@ import { highlightSelectionMatches } from '@codemirror/search'
 import { indentUnit } from '@codemirror/language'
 import { markdown, deleteMarkupBackward, pasteURLAsLink } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
-import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
+import type { CollabHandle } from '@/hooks/useCollabDoc'
 import { useDocsStore } from '@/state/docsStore'
 import { setBodyMirror } from '@/state/docsStore/docBody'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { useDocStatsStore, computeDocStats } from '@/state/docStatsStore'
 import { registerCmEditor, unregisterCmEditor } from '@/state/activeCmEditor'
 import { markSlugDirty, flushDirty } from '@/lib/docFileSync'
-import { cmPrototypeTheme } from '@/prototypes/cmTheme'
-import { livePreviewV2, taskCheckboxClick, wikilinkKnown } from '@/prototypes/v2/livePreview'
-import { blocksV2 } from '@/prototypes/v2/blocks'
-import { tableArrowEntry } from '@/prototypes/v2/editableTable'
-import { blockVerticalNav } from '@/prototypes/v2/blockVerticalNav'
-import { inlineFormatKeymapNoLink } from '@/prototypes/v2/inlineFormat'
-import { wikilinkClick } from '@/prototypes/wikilinkNav'
-import { linkClick } from '@/prototypes/linkNav'
+import { cmPrototypeTheme } from '@/editor/theme/cmTheme'
+import { livePreviewV2, taskCheckboxClick, wikilinkKnown } from '@/editor/livepreview/livePreview'
+import { blocksV2 } from '@/editor/livepreview/blocks'
+import { tableArrowEntry } from '@/editor/livepreview/editableTable'
+import { blockVerticalNav } from '@/editor/extensions/blockVerticalNav'
+import { inlineFormatKeymapNoLink } from '@/editor/extensions/inlineFormat'
+import { wikilinkClick } from '@/editor/extensions/wikilinkNav'
+import { linkClick } from '@/editor/extensions/linkNav'
 import { timestampSeekClick } from '@/editor/cmTimestampSeek'
-import { youtubeCards } from '@/prototypes/youtubeCards'
-import { mermaidCards } from '@/prototypes/mermaidCards'
+import { youtubeCards } from '@/editor/cards/youtubeCards'
+import { mermaidCards } from '@/editor/cards/mermaidCards'
 import { navigateToNoteByTitle, isKnownNoteTitle } from '@/editor/cmNav'
 import { scrollOffsetForChange } from '@/editor/cmHunks'
 import {
   cmInBufferReview,
   acceptEffect,
   rejectEffect,
-  greenRangesForSave,
-  isDecisionTx,
+  savedBodyOf,
+  shouldRemirror,
   isMaterialized,
 } from '@/editor/cmInBufferReview'
-import { stripRanges } from '@/editor/proposalPlan'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore } from '@/state/settingsStore'
 import { DocStatsPanel } from '@/editor/DocStatsPanel'
@@ -57,11 +56,11 @@ import { openLinkSafely } from '@/editor/linkUtils'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
 import { refreshTemplateSlashItems } from '@/lib/templates'
 import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
-import { smartEnter, shiftEnter } from '@/prototypes/listEnter'
-import { imeListContinue } from '@/prototypes/imeListContinue'
-import { spaceWidthProbe } from '@/prototypes/spaceWidth'
-import { dedentContinuationBackward } from '@/prototypes/listBackspace'
-import { mediaDropPaste } from '@/prototypes/mediaDrop'
+import { smartEnter, shiftEnter } from '@/editor/extensions/listEnter'
+import { imeListContinue } from '@/editor/extensions/imeListContinue'
+import { spaceWidthProbe } from '@/editor/extensions/spaceWidth'
+import { dedentContinuationBackward } from '@/editor/extensions/listBackspace'
+import { mediaDropPaste } from '@/editor/extensions/mediaDrop'
 import { richTextCopy } from './cmRichCopy'
 import { htmlPaste } from './cmHtmlPaste'
 import { importMediaToVault } from '@/editor/cmMedia'
@@ -69,7 +68,6 @@ import { pageHeaderWidget } from '@/editor/cmPageHeaderWidget'
 
 interface Props {
   handle: CollabHandle | null
-  status: CollabStatus
 }
 
 // CM now OWNS the scroll (.cm-scroller, overflow:auto), so the centered 750px column
@@ -104,8 +102,6 @@ const layoutReset = EditorView.theme({
 // dirty-tracking update listener ignores it — it's a load FROM disk, not a user edit.
 const externalBody = Annotation.define<boolean>()
 
-// `status` is still accepted (callers pass it) but no longer rendered —
-// the connection-state readout lived in the now-removed footer.
 export function CmEditor({ handle }: Props) {
   const rootRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -281,7 +277,7 @@ export function CmEditor({ handle }: Props) {
               // there leaves bodyMarkdown holding the pre-accept body, so an
               // auto-accepted append to the open note is silently dropped on flush.
               // A decision transaction changes the exclusion set → must re-mirror.
-              if (!u.docChanged && !isDecisionTx(u.transactions)) return
+              if (!shouldRemirror(u.docChanged, u.transactions)) return
               // Publish live word/char counts (display-only, debounced — no toString
               // on the keystroke). Also fires for programmatic loads.
               scheduleStats(u.state)
@@ -353,7 +349,7 @@ export function CmEditor({ handle }: Props) {
         // Body reader: the flush PULLS the current saved body from here (CM state is
         // the source of truth). Excludes pending-green proposal text (disk only holds
         // accepted content), matching what the old per-keystroke mirror wrote.
-        () => (view ? stripRanges(view.state.doc.toString(), greenRangesForSave(view.state)) : ''),
+        () => (view ? savedBodyOf(view.state) : ''),
       )
     })
 
@@ -368,7 +364,7 @@ export function CmEditor({ handle }: Props) {
       // one. flushDirty then persists it (Obsidian "save on note switch").
       if (view) {
         const h = useDocsStore.getState().handles[handle.slug]
-        if (h) setBodyMirror(h, stripRanges(view.state.doc.toString(), greenRangesForSave(view.state)))
+        if (h) setBodyMirror(h, savedBodyOf(view.state))
       }
       void flushDirty()
       if (statsTimer !== null) window.clearTimeout(statsTimer)

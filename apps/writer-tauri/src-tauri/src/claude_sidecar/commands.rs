@@ -151,6 +151,12 @@ pub struct ChatEditAckArgs {
     /// Optional short reason surfaced in that rewritten error text.
     #[serde(default)]
     pub reason: Option<String>,
+    /// True when auto-accept mode actually wrote the change to disk (not merely
+    /// queued). The sidecar rewrites the tool's "queued for user review" text
+    /// into "applied immediately" so the model doesn't tell the user to reject a
+    /// review card that never existed. Defaults false (interactive review path).
+    #[serde(default)]
+    pub applied: bool,
 }
 
 #[derive(Deserialize)]
@@ -195,6 +201,15 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
         params["relayTools"] = json!(tools);
     }
     if let Some(vp) = args.vault_path {
+        // The vault's `.git` lives OUTSIDE the vault (appdata::vault_git_dir) so a
+        // file-sync can't corrupt it. Pass the resolved git-dir + work-tree so the
+        // model's Bash `git` targets the real repo with no `--git-dir` flag — this
+        // is what makes the undo-ai-change skill work (plain `git log`/`git revert`
+        // from the vault cwd). Single source of truth: the path is derived here in
+        // Rust, never recomputed in the sidecar.
+        let git_dir = crate::appdata::vault_git_dir(&vp).join(".git");
+        params["gitDir"] = Value::String(git_dir.to_string_lossy().into_owned());
+        params["gitWorkTree"] = Value::String(vp.clone());
         params["vaultPath"] = Value::String(vp);
     }
     if let Some(mode) = args.permission_mode {
@@ -330,6 +345,7 @@ pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Resu
             "pendingId": args.pending_id,
             "ok": args.ok,
             "reason": args.reason,
+            "applied": args.applied,
         })),
     )
     .await

@@ -11,9 +11,9 @@ import { Prec } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
 import { forceParsing } from '@codemirror/language'
-import { livePreviewV2 } from './prototypes/v2/livePreview'
-import { cmPrototypeTheme } from './prototypes/cmTheme'
-import { spaceWidthProbe } from './prototypes/spaceWidth'
+import { livePreviewV2 } from './editor/livepreview/livePreview'
+import { cmPrototypeTheme } from './editor/theme/cmTheme'
+import { spaceWidthProbe } from './editor/extensions/spaceWidth'
 
 // Replica of CmEditor's layoutReset (the production default is text-align:justify —
 // suspected of stretching spaces and breaking indent alignment, so it must be in the

@@ -17,7 +17,7 @@ import { markdown } from '@codemirror/lang-markdown'
 import { syntaxTree } from '@codemirror/language'
 import { GFM } from '@lezer/markdown'
 import { livePreviewInline } from './livePreview'
-import { addRow, addColumn, deleteRow, deleteColumn, applyContentColumns } from '../tableEdit'
+import { addRow, addColumn, deleteRow, deleteColumn, applyContentColumns } from './tableEdit'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 
 const isDelim = (line: string): boolean => /^[\s|:-]+$/.test(line) && line.includes('-')

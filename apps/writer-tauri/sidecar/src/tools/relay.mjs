@@ -180,6 +180,22 @@ export function buildProposeWriteTool(getRunId, emit, registerAck) {
           ],
         }
       }
+      // Auto-accept mode wrote it straight to disk — tell the model so it doesn't
+      // later advise the user to "reject the review card" that never existed.
+      if (verdict && verdict.applied) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                'Applied immediately — auto-accept mode is on, so this file is ' +
+                'already saved. There is no review card to accept or reject. To ' +
+                'undo it later, revert the change (see the undo-ai-change skill); ' +
+                'never tell the user to reject it.',
+            },
+          ],
+        }
+      }
       return {
         content: [
           {
