@@ -145,10 +145,16 @@ function touchesBlocks(tr: Transaction, mapped: DecorationSet): boolean {
       touched = true
       return false
     })
-    if (!touched && tr.state.doc.lineAt(fromB).text.includes('![')) touched = true
-    // A freshly-inserted `<video>`/`<audio>` line (like `![` for images) — otherwise
-    // an inserted media embed stays raw until the caret happens to enter its line.
-    if (!touched && /<(video|audio)\b/i.test(tr.state.doc.lineAt(fromB).text)) touched = true
+    // Scan EVERY line the change spans (not just the first) so a multi-line paste whose
+    // image (`![`) or `<video>`/`<audio>` embed isn't on the first line still triggers a
+    // rebuild — otherwise it stays raw markdown until the caret wanders onto its line.
+    // (youtubeCards/mermaidCards already scan the full span; blocks was the straggler.)
+    const first = tr.state.doc.lineAt(fromB).number
+    const last = tr.state.doc.lineAt(toB).number
+    for (let n = first; n <= last && !touched; n++) {
+      const text = tr.state.doc.line(n).text
+      if (text.includes('![') || /<(video|audio)\b/i.test(text)) touched = true
+    }
     if (!touched && (inTableAt(tr.state, fromB) || inTableAt(tr.state, toB))) touched = true
   })
   return touched
