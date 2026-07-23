@@ -10,7 +10,7 @@ import type { DecorationSet, WidgetType } from '@codemirror/view'
 import { ensureSyntaxTree } from '@codemirror/language'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
-import { youtubeCards } from './youtubeCards'
+import { youtubeCards, youtubeField } from './youtubeCards'
 
 const URL = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 const DOC = [
@@ -50,7 +50,7 @@ function youtubeWidgetIn(set: DecorationSet): (WidgetType & { videoId: string })
 describe('youtube card — placement + reveal + no-remount', () => {
   it('places a block widget for a bare YouTube URL (cursor away)', () => {
     const state = stateFor(DOC, 0) // cursor on line 1, far from the URL
-    const w = youtubeWidgetIn(state.field(youtubeCards))
+    const w = youtubeWidgetIn(state.field(youtubeField))
     expect(w).not.toBeNull()
     expect(w!.videoId).toBe('dQw4w9WgXcQ')
   })
@@ -58,22 +58,22 @@ describe('youtube card — placement + reveal + no-remount', () => {
   it('cursor ON the URL line reveals raw source (no widget)', () => {
     const urlStart = DOC.indexOf(URL)
     const state = stateFor(DOC, urlStart + 5) // caret inside the URL
-    expect(youtubeWidgetIn(state.field(youtubeCards))).toBeNull()
+    expect(youtubeWidgetIn(state.field(youtubeField))).toBeNull()
   })
 
   it('cursor at the very END of the URL line still reveals (edge-inclusive)', () => {
     // cursorInRange is edge-inclusive — a caret at lineTo.to counts as touching.
     const urlEnd = DOC.indexOf(URL) + URL.length
     const state = stateFor(DOC, urlEnd)
-    expect(youtubeWidgetIn(state.field(youtubeCards))).toBeNull()
+    expect(youtubeWidgetIn(state.field(youtubeField))).toBeNull()
   })
 
   it('UNRELATED edit keeps an eq() widget → live player NOT torn down', () => {
     const before = stateFor(DOC, 0)
-    const wBefore = youtubeWidgetIn(before.field(youtubeCards))!
+    const wBefore = youtubeWidgetIn(before.field(youtubeField))!
     const at = before.doc.line(3).from // edit the paragraph above
     const after = before.update({ changes: { from: at, insert: 'XYZ ' } }).state
-    const wAfter = youtubeWidgetIn(after.field(youtubeCards))!
+    const wAfter = youtubeWidgetIn(after.field(youtubeField))!
     expect(wBefore.eq(wAfter)).toBe(true)
   })
 })

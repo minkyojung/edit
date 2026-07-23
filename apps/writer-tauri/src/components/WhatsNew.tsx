@@ -118,8 +118,8 @@ export function WhatsNewCard({
   onDismiss: () => void
 }) {
   return (
-    <div className="m-2 rounded-lg border border-border bg-muted/40 p-2.5">
-      <div className="mb-0.5 flex items-center justify-between gap-2">
+    <div className="m-2 rounded-[var(--surface-radius)] border border-border bg-muted/40 px-2.5 py-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-footnote font-semibold text-foreground">
           What’s new · {version}
         </span>

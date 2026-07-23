@@ -150,7 +150,7 @@ function touchesYoutube(tr: Transaction, mapped: DecorationSet): boolean {
   return touched
 }
 
-export const youtubeCards: Extension = StateField.define<DecorationSet>({
+export const youtubeField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
@@ -171,3 +171,5 @@ export const youtubeCards: Extension = StateField.define<DecorationSet>({
     EditorView.atomicRanges.of((view) => view.state.field(f)),
   ],
 })
+
+export const youtubeCards: Extension = youtubeField
