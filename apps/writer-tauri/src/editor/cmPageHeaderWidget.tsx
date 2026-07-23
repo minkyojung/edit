@@ -56,6 +56,12 @@ class PageHeaderWidget extends WidgetType {
   ignoreEvent() {
     return true
   }
+  // The header (title + properties panel) mounts its React tree asynchronously, so CM
+  // first measures it empty. Seed a typical height so the first body line isn't laid
+  // out under the chrome before the commit lands (CM re-measures once the DOM settles).
+  get estimatedHeight() {
+    return 120
+  }
 }
 
 /** Block widget pinned to document position 0 (side -1 → before the first line). The

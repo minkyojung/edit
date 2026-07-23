@@ -71,6 +71,12 @@ export class MermaidWidget extends WidgetType {
   ignoreEvent() {
     return true
   }
+  // Diagrams vary widely; seed a mid estimate so the heightmap isn't wildly off before
+  // the async render lands (requestMeasure then corrects it). Prevents scroll jumps on
+  // docs with several diagrams.
+  get estimatedHeight() {
+    return 240
+  }
 }
 
 function fenceInfo(state: EditorState, fenceFrom: number): string {

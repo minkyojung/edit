@@ -98,6 +98,12 @@ class YoutubeWidget extends WidgetType {
   ignoreEvent() {
     return true
   }
+  // 16:9 at the 640px max width ≈ 360px. Seeds the heightmap before the poster is
+  // measured so the scrollbar length and scrollTo/pos mapping don't jump on docs with
+  // several cards (converges to the real height after first measure).
+  get estimatedHeight() {
+    return 360
+  }
 }
 
 function build(state: EditorState): DecorationSet {
