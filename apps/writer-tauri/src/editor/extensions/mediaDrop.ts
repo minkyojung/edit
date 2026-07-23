@@ -8,6 +8,7 @@
 
 import { EditorView } from '@codemirror/view'
 import type { Extension } from '@codemirror/state'
+import { dropAnchorField, addDropAnchor, clearDropAnchor } from './dropAnchor'
 
 export type MediaKind = 'image' | 'video' | 'audio'
 
@@ -36,15 +37,30 @@ export function markdownForMedia(kind: MediaKind, url: string, name: string): st
  * line near the drop point. `importFile` is the vault copy (real app); the
  * prototype passes an object-URL stub. */
 export function mediaDropPaste(importFile: (file: File) => Promise<string>): Extension {
+  let nextAnchorId = 0 // per-editor (this factory runs once per mount) — no module state
   function insertAt(view: EditorView, basePos: number, file: File, kind: MediaKind) {
+    // Register the drop point so it MAPS through any edits made while the import runs
+    // (typing above it, an AI rewrite) instead of landing at a stale offset.
+    const id = nextAnchorId++
+    view.dispatch({ effects: addDropAnchor.of({ id, pos: basePos }) })
     void importFile(file).then((url) => {
+      const anchor = view.state.field(dropAnchorField, false)?.get(id)
+      if (anchor === undefined) return // anchor cleared / field gone
       const md = markdownForMedia(kind, url, file.name)
-      const line = view.state.doc.lineAt(Math.min(basePos, view.state.doc.length))
+      const line = view.state.doc.lineAt(Math.min(anchor, view.state.doc.length))
       const at = line.to
-      view.dispatch({
-        changes: { from: at, insert: `\n\n${md}` },
-        selection: { anchor: at + 2 + md.length },
-      })
+      try {
+        view.dispatch({
+          changes: { from: at, insert: `\n\n${md}` },
+          selection: { anchor: at + 2 + md.length },
+          effects: clearDropAnchor.of(id),
+        })
+      } catch {
+        // The view was torn down between the drop and the import resolving (a doc
+        // switch). The file is in the vault but its reference isn't inserted — a known
+        // orphan; wiring a docsStore-body fallback for the unmounted case is a separate
+        // follow-up.
+      }
     })
   }
 
@@ -59,7 +75,7 @@ export function mediaDropPaste(importFile: (file: File) => Promise<string>): Ext
     return any
   }
 
-  return EditorView.domEventHandlers({
+  return [dropAnchorField, EditorView.domEventHandlers({
     // Browsers only fire `drop` if `dragover` was preventDefault'd for the
     // dragged data. Without this, a file drop is rejected (no drop event).
     dragover(event) {
@@ -84,5 +100,5 @@ export function mediaDropPaste(importFile: (file: File) => Promise<string>): Ext
       event.preventDefault()
       return true
     },
-  })
+  })]
 }
