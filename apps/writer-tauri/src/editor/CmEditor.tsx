@@ -29,7 +29,7 @@ import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useSettingsStore } from '@/state/settingsStore'
 import { DocStatsPanel } from '@/editor/DocStatsPanel'
 import { refreshTemplateSlashItems } from '@/lib/templates'
-import { buildEditorExtensions, externalBody } from '@/editor/buildExtensions'
+import { buildEditorExtensions, externalReloadSpec } from '@/editor/buildExtensions'
 import { installUndoRouter } from '@/editor/undoRouter'
 
 interface Props {
@@ -116,11 +116,10 @@ export function CmEditor({ handle }: Props) {
           // whole-doc replace would FIGHT that, so skip it here — do nothing and let
           // the review handle it. (The dual path was what duplicated on undo.)
           if (changeId && isMaterialized(v.state, changeId)) return
-          const changes = { from: 0, to: v.state.doc.length, insert: md }
           v.dispatch(
             changeId
-              ? { changes, effects: acceptEffect.of(changeId) }
-              : { changes, annotations: externalBody.of(true) },
+              ? { changes: { from: 0, to: v.state.doc.length, insert: md }, effects: acceptEffect.of(changeId) }
+              : externalReloadSpec(v.state, md),
           )
         },
         // Reject bridge: an effect-only, undoable transaction (used by both the inline

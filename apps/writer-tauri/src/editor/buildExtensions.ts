@@ -5,7 +5,7 @@
 // ordering comments are load-bearing (keymap precedence + IME correctness) — do NOT
 // reorder. Only `slug` and `scheduleStats` are parameterized.
 
-import { EditorState, Prec, Annotation, type Extension } from '@codemirror/state'
+import { EditorState, Prec, Annotation, Transaction, type Extension, type TransactionSpec } from '@codemirror/state'
 import { EditorView, keymap, drawSelection, dropCursor, placeholder } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { highlightSelectionMatches } from '@codemirror/search'
@@ -73,6 +73,22 @@ const layoutReset = EditorView.theme({
 // Defined here (not in CmEditor) because it's read on BOTH sides: the save listener
 // below and CmEditor's registerCmEditor setBody closure, which imports it.
 export const externalBody = Annotation.define<boolean>()
+
+// The transaction spec for an EXTERNAL reload (vault-watcher change / background
+// rewrite pushed in via the docsStore body path) — NOT the accept path, which stays
+// undoable via acceptEffect. Two annotations, both load-bearing:
+//   • externalBody   → the save listener skips it (a load from disk isn't a user edit).
+//   • addToHistory:false → it must NOT enter the undo history. Otherwise Cmd-Z reverts
+//     the buffer to the PRE-reload text, and that undo transaction (annotations are per
+//     transaction, not inherited by their inverses) carries neither annotation → it
+//     re-dirties the slug and the flush writes the stale body back over the external
+//     edit. Silent data loss. Keeping the reload out of history closes that path.
+export function externalReloadSpec(state: EditorState, md: string): TransactionSpec {
+  return {
+    changes: { from: 0, to: state.doc.length, insert: md },
+    annotations: [externalBody.of(true), Transaction.addToHistory.of(false)],
+  }
+}
 
 export function buildEditorExtensions(deps: {
   slug: string
