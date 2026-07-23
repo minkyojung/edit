@@ -7,7 +7,7 @@
 import { useEffect, useState, type ComponentPropsWithoutRef } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { IconX, IconChevronRight } from '@tabler/icons-react'
+import { IconX } from '@tabler/icons-react'
 import { getVersion } from '@tauri-apps/api/app'
 import { useSettingsStore } from '@/state/settingsStore'
 import { useWhatsNewStore } from '@/state/whatsNewStore'
@@ -107,38 +107,35 @@ export function ReleaseNotesHistory() {
  * the headline opens the full notes; the × dismisses. Presentational — the
  * stateful wrapper below decides when to show it. */
 export function WhatsNewCard({
-  version,
   headline,
   onOpen,
   onDismiss,
 }: {
-  version: string
+  /** Accepted for call-site parity; shown only in the full notes, not the chip. */
+  version?: string
   headline: string
   onOpen: () => void
   onDismiss: () => void
 }) {
   return (
-    <div className="m-2 rounded-[var(--surface-radius)] border border-border bg-muted/40 px-2.5 py-4">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-footnote font-semibold text-foreground">
-          What’s new · {version}
-        </span>
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="Dismiss"
-          className="-mr-1 shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <IconX size={13} />
-        </button>
-      </div>
+    <div className="group m-2 flex items-center gap-2 rounded-3xl border border-border bg-muted px-3 py-2">
+      <span className="shrink-0 rounded-full bg-foreground/10 px-1.5 py-px text-caption-2 font-semibold uppercase tracking-wide text-foreground">
+        New
+      </span>
       <button
         type="button"
         onClick={onOpen}
-        className="group flex w-full items-start gap-1 text-left text-footnote text-muted-foreground transition-colors hover:text-foreground"
+        className="min-w-0 flex-1 truncate text-left text-footnote text-muted-foreground transition-colors hover:text-foreground"
       >
-        <span className="flex-1 leading-snug">{headline}</span>
-        <IconChevronRight size={14} className="mt-px shrink-0 opacity-60 group-hover:opacity-100" />
+        {headline}
+      </button>
+      <button
+        type="button"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+        className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+      >
+        <IconX size={13} />
       </button>
     </div>
   )
