@@ -15,8 +15,10 @@ import { blockVerticalNav } from '@/editor/extensions/blockVerticalNav'
 describe('buildEditorExtensions — order contract', () => {
   const ext = buildEditorExtensions({ slug: 'my-note', scheduleStats: () => {} })
 
-  it('returns exactly 39 extensions', () => {
-    expect(ext.length).toBe(39)
+  it('returns exactly 40 extensions', () => {
+    // Hardcoded so any add/remove to the stack forces a deliberate review here.
+    // (40 since pairedLanesExt joined the array next to blocksV2.)
+    expect(ext.length).toBe(40)
   })
 
   it('preserves the front ordering slash → wikilink → … → tableArrowEntry → blockVerticalNav', () => {
