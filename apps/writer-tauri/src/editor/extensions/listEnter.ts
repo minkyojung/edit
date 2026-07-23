@@ -14,6 +14,7 @@
 import { EditorView } from '@codemirror/view'
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
 import { insertNewlineAndIndent } from '@codemirror/commands'
+import { inCodeBlock } from './slashCommands'
 
 // indent | marker(bullet or `N.`/`N)`) | gap | optional task box | content
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])([ \t]+)(\[[ xX]\][ \t]+)?(.*)$/
@@ -184,9 +185,21 @@ export function enterHandledRecently(ms = 50): boolean {
 }
 
 export function smartEnter(view: EditorView): boolean {
+  const { state } = view
+  const sel = state.selection.main
+  // Inside a fenced/indented code block, a `- x` or `> x` line is LITERAL code, not a
+  // list/quote — the three continuation commands below are pure line-text regex with
+  // no tree awareness, so without this guard Enter would inject a `- `/`N.` marker into
+  // the code (silent content corruption). Fall straight to a plain newline, which also
+  // maintains code-block indentation. (Same tree guard the Backspace/slash paths use.)
+  if (inCodeBlock(state, sel.head)) {
+    const handled = insertNewlineAndIndent(view)
+    if (handled) lastEnterHandledAt = performance.now()
+    return handled
+  }
   let handled = listEnter(view) || continuationEnter(view)
   if (!handled) {
-    const line = view.state.doc.lineAt(view.state.selection.main.head)
+    const line = state.doc.lineAt(sel.head)
     handled = /^\s*>/.test(line.text) ? insertNewlineContinueMarkup(view) : insertNewlineAndIndent(view)
   }
   if (handled) lastEnterHandledAt = performance.now()
@@ -200,6 +213,15 @@ export function smartEnter(view: EditorView): boolean {
  * against the keymap — one source of truth, no double / dropped line break.
  */
 export function shiftEnter(view: EditorView): boolean {
+  const { state } = view
+  // In code, continue with CM's indentation-aware newline rather than the list-item
+  // soft continuation (which would indent to a marker's content column). Consistent
+  // with smartEnter's guard above.
+  if (inCodeBlock(state, state.selection.main.head)) {
+    const handled = insertNewlineAndIndent(view)
+    if (handled) lastEnterHandledAt = performance.now()
+    return handled
+  }
   let handled = continueListItemSoft(view)
   if (!handled) handled = insertNewlineAndIndent(view)
   if (handled) lastEnterHandledAt = performance.now()
