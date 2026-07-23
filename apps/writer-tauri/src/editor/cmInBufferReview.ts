@@ -12,7 +12,7 @@
 // is still pending, they wait until the current batch is decided. Multi-batch
 // concurrency is a later refinement.
 
-import { StateField, StateEffect, EditorState, Transaction, type Extension, type Range } from '@codemirror/state'
+import { StateField, StateEffect, EditorState, Transaction, type ChangeDesc, type Extension, type Range } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { invertedEffects } from '@codemirror/commands'
 import { usePendingChangesStore, type PendingChange } from '@/state/pendingChangesStore'
@@ -31,13 +31,48 @@ import {
 export const acceptEffect = StateEffect.define<string>()
 export const rejectEffect = StateEffect.define<string>()
 const reopenEffect = StateEffect.define<string>()
+// Remap a mat's hunk positions through a doc change. Association is per-boundary:
+//   • INWARD  (start +1, end −1): boundary insertions fall OUTSIDE the range — used
+//     to track already-materialized ranges as the user types near them (a keystroke
+//     at a boundary must not silently swallow into red/green).
+//   • OUTWARD (start −1, end +1): a range that collapsed onto an insertion point
+//     RE-EXPANDS to cover the inserted text — used when replaying an addMat over the
+//     undo transaction that re-inserts the very red/green text the range describes.
+type MatAssoc = { start: 1 | -1; end: 1 | -1 }
+const INWARD: MatAssoc = { start: 1, end: -1 }
+const OUTWARD: MatAssoc = { start: -1, end: 1 }
+function remapMat(mat: ProposalMat, changes: ChangeDesc, a: MatAssoc): ProposalMat {
+  return {
+    changeId: mat.changeId,
+    hunks: mat.hunks.map((h) => ({
+      redFrom: changes.mapPos(h.redFrom, a.start),
+      redTo: changes.mapPos(h.redTo, a.end),
+      greenFrom: changes.mapPos(h.greenFrom, a.start),
+      greenTo: changes.mapPos(h.greenTo, a.end),
+      kind: h.kind,
+    })),
+  }
+}
+
 // Drop a change's materialized ranges from the field (after its red/green text was
 // deleted by accept/reject). Applied AFTER the doc-change mapping in the same
 // transaction, so the remaining changes stay correctly positioned.
 const dropChange = StateEffect.define<string>()
-// Re-add a previously-dropped change's ranges. Emitted by invertedEffects so an
-// UNDO of an accept/reject restores matField in lockstep with the restored text.
-const addMat = StateEffect.define<ProposalMat>()
+// Re-add a previously-dropped change's ranges. Emitted by invertedEffects so an UNDO
+// of an accept/reject restores matField in lockstep with the restored text. It CARRIES
+// DOCUMENT POSITIONS, and its payload is stored in POST-decision coordinates (the same
+// space as the inverse changes CM stores alongside it — see reviewUndoLink), so:
+//   • `map` (INWARD) keeps the payload consistent with the stored changes while an
+//     intervening addToHistory:false edit (the reconciler merging a new proposal)
+//     makes CM remap the whole history event. Without it the offsets go stale → undo
+//     restores the red text at the right place but matField points at the wrong
+//     coordinates → savedBodyOf strips the wrong "green" into the saved body.
+//   • the field re-expands it OUTWARD through the undo's own changes on apply (below).
+const addMat = StateEffect.define<ProposalMat>({
+  map: (mat, changes) => remapMat(mat, changes, INWARD),
+})
+// Test-only initial materialization; never dispatched in production and never flows
+// through invertedEffects/history, so it needs no `map`.
 const setMat = StateEffect.define<ProposalMat[]>()
 
 const matField = StateField.define<ProposalMat[]>({
@@ -45,22 +80,19 @@ const matField = StateField.define<ProposalMat[]>({
   update(value, tr) {
     let next = value
     if (tr.docChanged) {
-      next = value
-        .map((m) => ({
-          changeId: m.changeId,
-          hunks: m.hunks.map((h) => ({
-            redFrom: tr.changes.mapPos(h.redFrom, 1),
-            redTo: tr.changes.mapPos(h.redTo, -1),
-            greenFrom: tr.changes.mapPos(h.greenFrom, 1),
-            greenTo: tr.changes.mapPos(h.greenTo, -1),
-            kind: h.kind,
-          })),
-        }))
+      // Track existing ranges INWARD as the doc changes around them.
+      next = value.map((m) => remapMat(m, tr.changes, INWARD))
     }
     for (const e of tr.effects) {
       if (e.is(setMat)) next = e.value
       else if (e.is(dropChange)) next = next.filter((m) => m.changeId !== e.value)
-      else if (e.is(addMat)) next = [...next.filter((m) => m.changeId !== e.value.changeId), e.value]
+      else if (e.is(addMat)) {
+        // The payload is in this transaction's PRE-change (post-decision) space. Map it
+        // OUTWARD through the transaction's own changes so a red/green range that was
+        // collapsed onto the re-insertion point re-expands to cover the restored text.
+        const mat = tr.docChanged ? remapMat(e.value, tr.changes, OUTWARD) : e.value
+        next = [...next.filter((m) => m.changeId !== mat.changeId), mat]
+      }
     }
     return next
   },
@@ -112,10 +144,16 @@ const reviewUndoLink = invertedEffects.of((tr) => {
     // Undo of accept/reject re-opens the change in the store…
     if (e.is(acceptEffect) || e.is(rejectEffect)) out.push(reopenEffect.of(e.value))
     // …and restores its red/green ranges in matField, so the reconciler sees it's
-    // still materialized and never re-inserts (the duplication bug).
+    // still materialized and never re-inserts (the duplication bug). The mat is read
+    // from startState (PRE-decision) so it still carries the red SPAN, then mapped
+    // FORWARD through this decision's changes into POST-decision coordinates — the same
+    // space as the inverse changes CM stores next to it, so a later intervening edit
+    // maps the pair consistently (and never off the end of a shorter changeset). The
+    // field re-expands it OUTWARD on undo. Deleted red/green collapses to a point here
+    // and is recovered by that outward re-expansion.
     if (e.is(dropChange)) {
       const mat = tr.startState.field(matField).find((m) => m.changeId === e.value)
-      if (mat) out.push(addMat.of(mat))
+      if (mat) out.push(addMat.of(remapMat(mat, tr.changes, INWARD)))
     }
     // The inverse of re-adding (an undo's effect) is dropping again — so REDO of
     // an accept/reject drops the change once more, keeping matField ↔ text in step.
