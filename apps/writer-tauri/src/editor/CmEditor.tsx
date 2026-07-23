@@ -106,9 +106,9 @@ export function CmEditor({ handle }: Props) {
       // tagged with acceptEffect, so Cmd-Z reverts the doc AND reopens the change
       // (cmProofReview's invertedEffects). External reload / seed (no changeId) stays
       // non-undoable and carries externalBody so the dirty tracker ignores it.
-      registerCmEditor(
-        handle.slug,
-        (md, changeId) => {
+      registerCmEditor({
+        slug: handle.slug,
+        setBody: (md, changeId) => {
           const v = view
           if (!v) return
           // If this change is showing as an in-buffer proposal, the in-buffer review
@@ -125,9 +125,9 @@ export function CmEditor({ handle }: Props) {
         },
         // Reject bridge: an effect-only, undoable transaction (used by both the inline
         // ✕ and the chat panel via rejectPendingChange).
-        (changeId) => view?.dispatch({ effects: rejectEffect.of(changeId) }),
+        rejectChange: (changeId) => view?.dispatch({ effects: rejectEffect.of(changeId) }),
         // Scroll bridge: jump to a change's location (chat suggestion card click).
-        (changeId) => {
+        scrollToChange: (changeId) => {
           const v = view
           if (!v) return
           const change = usePendingChangesStore.getState().byId[changeId]
@@ -138,12 +138,12 @@ export function CmEditor({ handle }: Props) {
         },
         // Materialized query: is this change showing as an in-buffer proposal? The
         // applier asks before applying, so it skips changes the review already owns.
-        (changeId) => (view ? isMaterialized(view.state, changeId) : false),
+        isMaterialized: (changeId) => (view ? isMaterialized(view.state, changeId) : false),
         // Body reader: the flush PULLS the current saved body from here (CM state is
         // the source of truth). Excludes pending-green proposal text (disk only holds
         // accepted content), matching what the old per-keystroke mirror wrote.
-        () => (view ? savedBodyOf(view.state) : ''),
-      )
+        getBody: () => (view ? savedBodyOf(view.state) : ''),
+      })
     })
 
     return () => {

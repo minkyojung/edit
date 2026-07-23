@@ -16,7 +16,14 @@ describe('pullActiveCmBody', () => {
   })
 
   it('returns getBody() for the registered slug, null for any other', () => {
-    registerCmEditor('a', noop, noop, noop, notMaterialized, () => 'BODY-A')
+    registerCmEditor({
+      slug: 'a',
+      setBody: noop,
+      rejectChange: noop,
+      scrollToChange: noop,
+      isMaterialized: notMaterialized,
+      getBody: () => 'BODY-A',
+    })
     expect(pullActiveCmBody('a')).toBe('BODY-A')
     expect(pullActiveCmBody('other')).toBeNull()
     unregisterCmEditor('a')
@@ -25,7 +32,14 @@ describe('pullActiveCmBody', () => {
 
   it('reads getBody() live on every call (not a cached snapshot)', () => {
     let body = 'v1'
-    registerCmEditor('a', noop, noop, noop, notMaterialized, () => body)
+    registerCmEditor({
+      slug: 'a',
+      setBody: noop,
+      rejectChange: noop,
+      scrollToChange: noop,
+      isMaterialized: notMaterialized,
+      getBody: () => body,
+    })
     expect(pullActiveCmBody('a')).toBe('v1')
     body = 'v2' // a later keystroke would change what the live editor returns
     expect(pullActiveCmBody('a')).toBe('v2')

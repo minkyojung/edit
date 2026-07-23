@@ -30,34 +30,32 @@ type CmMaterializedQuery = (changeId: string) => boolean
 // only holds accepted content), matching what the old per-keystroke mirror wrote.
 type CmBodyReader = () => string
 
-let active: {
+// The mounted editor's registration: its slug + the six callbacks the store paths
+// reach it through. One object instead of positional args so the call site names each
+// callback (order can't silently drift).
+export interface CmEditorBridge {
   slug: string
   setBody: CmBodySetter
   rejectChange: CmRejecter
   scrollToChange: CmScroller
   isMaterialized: CmMaterializedQuery
   getBody: CmBodyReader
-} | null = null
+}
+
+let active: CmEditorBridge | null = null
 
 // A scroll request that arrived before its target editor mounted — the cross-note jump
 // case (the card navigates to another note in the same click). The next editor to
 // register for this slug consumes it. Only the latest request is kept.
 let pendingScroll: { slug: string; changeId: string } | null = null
 
-export function registerCmEditor(
-  slug: string,
-  setBody: CmBodySetter,
-  rejectChange: CmRejecter,
-  scrollToChange: CmScroller,
-  isMaterialized: CmMaterializedQuery,
-  getBody: CmBodyReader,
-): void {
-  active = { slug, setBody, rejectChange, scrollToChange, isMaterialized, getBody }
-  if (pendingScroll?.slug === slug) {
+export function registerCmEditor(bridge: CmEditorBridge): void {
+  active = bridge
+  if (pendingScroll?.slug === bridge.slug) {
     const { changeId } = pendingScroll
     pendingScroll = null
     // Defer a frame so the freshly-mounted view is laid out before scrolling.
-    requestAnimationFrame(() => scrollToChange(changeId))
+    requestAnimationFrame(() => bridge.scrollToChange(changeId))
   }
 }
 
