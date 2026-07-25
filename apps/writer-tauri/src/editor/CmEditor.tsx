@@ -143,6 +143,11 @@ export function CmEditor({ handle }: Props) {
         // accepted content), matching what the old per-keystroke mirror wrote.
         getBody: () => (view ? savedBodyOf(view.state) : ''),
       })
+    }).catch((err) => {
+      // A rejected load used to surface as an unhandled rejection and an editor that
+      // silently never mounts (blank pane, undo router installed, no view). Log it so
+      // the failure is at least diagnosable instead of invisible.
+      console.error('[CmEditor] contentReady failed; editor not mounted', err)
     })
 
     return () => {

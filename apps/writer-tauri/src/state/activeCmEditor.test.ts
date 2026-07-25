@@ -144,4 +144,18 @@ describe('pendingScroll consumption on register', () => {
     expect(wanted.scrollToChange).toHaveBeenCalledWith('c8')
     unregisterCmEditor('wanted')
   })
+
+  it('a parked scroll EXPIRES — a much later mount is not hijacked', async () => {
+    const now = Date.now()
+    const spy = vi.spyOn(Date, 'now')
+    spy.mockReturnValue(now)
+    requestScrollToChange('stale', 'c9') // parked "now"
+    spy.mockReturnValue(now + 60_000) // …the navigation never happened; a minute passes
+    const late = spyBridge('stale')
+    registerCmEditor(late)
+    await nextFrame()
+    expect(late.scrollToChange).not.toHaveBeenCalled() // no surprise jump
+    unregisterCmEditor('stale')
+    spy.mockRestore()
+  })
 })

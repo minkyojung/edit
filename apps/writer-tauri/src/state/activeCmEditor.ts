@@ -47,13 +47,20 @@ let active: CmEditorBridge | null = null
 // A scroll request that arrived before its target editor mounted — the cross-note jump
 // case (the card navigates to another note in the same click). The next editor to
 // register for this slug consumes it. Only the latest request is kept.
-let pendingScroll: { slug: string; changeId: string } | null = null
+let pendingScroll: { slug: string; changeId: string; at: number } | null = null
+
+// The request only makes sense for the navigation it was issued with, which mounts an
+// editor within a moment. Without an expiry a request whose navigation never happened
+// (cancelled, failed, user went elsewhere) sat forever and hijacked the scroll the next
+// time that note was opened — minutes later, with no visible cause.
+const PENDING_SCROLL_TTL_MS = 30_000
 
 export function registerCmEditor(bridge: CmEditorBridge): void {
   active = bridge
   if (pendingScroll?.slug === bridge.slug) {
-    const { changeId } = pendingScroll
+    const { changeId, at } = pendingScroll
     pendingScroll = null
+    if (Date.now() - at > PENDING_SCROLL_TTL_MS) return // stale — not this navigation
     // Defer a frame so the freshly-mounted view is laid out before scrolling.
     requestAnimationFrame(() => bridge.scrollToChange(changeId))
   }
@@ -71,7 +78,7 @@ export function requestScrollToChange(slug: string, changeId: string): void {
     active.scrollToChange(changeId)
     return
   }
-  pendingScroll = { slug, changeId }
+  pendingScroll = { slug, changeId, at: Date.now() }
 }
 
 /** Push markdown into the mounted CM editor for `slug`. Returns true when a CM editor
