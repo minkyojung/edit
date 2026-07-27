@@ -110,8 +110,22 @@ export function envDumpDenyRules() {
 }
 
 /** OS-sandbox config: block outbound network from tool subprocesses and
- * deny reads of the secret locations. */
-export function sandboxLockdown() {
+ * deny reads of the secret locations.
+ *
+ * `gitDir` is the vault's repo, which lives OUTSIDE the vault
+ * (appdata `git-repos/`, so a file-sync can't corrupt it). Reading it was
+ * already allowed — that's why `git log` / `git show` worked — but the sandbox
+ * confines WRITES to the workspace, and the repo isn't in it. So `git revert`
+ * died on `.git/index.lock: Operation not permitted` and the undo-ai-change
+ * skill could find the commit to undo and then not undo it.
+ *
+ * Only the git dir is named. The SDK types don't say whether an explicit
+ * `allowWrite` ADDS to the default writable set or REPLACES it, which matters:
+ * if it replaced, listing only this path would silently make the vault
+ * unwritable. Measured rather than assumed — with `allowWrite: [gitDir]` alone,
+ * a write inside the vault still succeeds, so it ADDS. Scenario 2 of
+ * verify-sandbox-git-write.mjs keeps that pinned. */
+export function sandboxLockdown({ gitDir } = {}) {
   return {
     enabled: true,
     // failIfUnavailable:false → a host where the sandbox can't initialise
@@ -136,6 +150,11 @@ export function sandboxLockdown() {
     // OS-level backstop for the SUBPROCESS reads the permission rules can't
     // reach (a python/node script opening a file itself). The tool-level
     // block lives in secretDenyRules().
-    filesystem: { denyRead: secretPaths() },
+    filesystem: {
+      denyRead: secretPaths(),
+      // Scoped to the repo the agent is meant to be able to rewrite — NOT the
+      // enclosing app-data folder, which also holds the encrypted token stores.
+      ...(gitDir ? { allowWrite: [gitDir] } : {}),
+    },
   }
 }

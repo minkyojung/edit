@@ -15,7 +15,7 @@ import {
   NOT_INITIALIZED,
   NO_TOKEN,
 } from './jsonrpc.mjs'
-import { readSkillMeta } from './frontmatter.mjs'
+import { readBackgroundAgentNames, readSkillMeta } from './frontmatter.mjs'
 import {
   rateLimitPayload,
   mapSdkError,
@@ -757,6 +757,10 @@ export class Server {
       rateLimitRejected: false,
       // background-task tracking (Stage 4)
       backgroundTaskIds: new Set(),
+      // Agent names declared `background: true` in the vault. Populated in
+      // #applySkillsAndRelay; read by #trackBackground to tell a fire-and-forget
+      // subagent from an ordinary blocking one, which the SDK won't tell us.
+      backgroundAgentNames: new Set(),
       stopHookBackground: [],
       backgroundRequested: false,
       // reaper (Stage 4)
@@ -823,7 +827,7 @@ export class Server {
       },
       settingSources: [],
     }
-    if (sandboxEnabled) options.sandbox = sandboxLockdown()
+    if (sandboxEnabled) options.sandbox = sandboxLockdown({ gitDir })
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
     if (effort) options.effort = effort
@@ -956,6 +960,10 @@ export class Server {
         const pluginRoot = join(vaultPath, '_system/agent')
         await readdir(pluginRoot)
         options.plugins = [{ type: 'local', path: pluginRoot }]
+        // Which agents are fire-and-forget. Read once per thread — agent files
+        // don't change mid-conversation, and a miss only costs us the old
+        // (conservative) behaviour.
+        rec.backgroundAgentNames = await readBackgroundAgentNames(pluginRoot)
         if (allowDelegation && Array.isArray(options.tools)) {
           for (const t of ['Skill', 'Task']) {
             if (!options.tools.includes(t)) options.tools = [...options.tools, t]
@@ -1357,10 +1365,47 @@ export class Server {
   // task_started → task_progress → task_notification{status,output_file}; the
   // spawning turn's result is terminal_reason 'completed', NOT
   // 'background_requested' — so we must NOT rely on that flag for keep-alive.)
+  // Whether a `task_started` represents work that OUTLIVES its turn, and so
+  // must keep the thread alive. Ordered so a future SDK wins over our fallback:
+  //
+  //   1. If the event ever carries an explicit flag, believe it. Nothing emits
+  //      one today (`task_started` has no such field on 0.3.187), but this is
+  //      where a fixed SDK would put it, and then the vault lookup stops
+  //      mattering without anyone having to notice.
+  //   2. A Task subagent is background only if its agent file says
+  //      `background: true`. This is the case the SDK gets wrong.
+  //   3. Anything else — shells (`run_in_background`), monitors, workflows —
+  //      is treated as background, as before. Conservative on purpose: those
+  //      genuinely do outlive the turn, and mis-classifying one the other way
+  //      would reap a thread with live work and lose its result.
+  #isBackgroundTask(rec, event) {
+    if (typeof event.is_backgrounded === 'boolean') return event.is_backgrounded
+    const type = event.subagent_type
+    if (!type) return true
+    // `subagent_type` is plugin-qualified ("writer-agent-skills:researcher");
+    // the frontmatter `name` is not.
+    const bare = type.includes(':') ? type.slice(type.lastIndexOf(':') + 1) : type
+    return rec.backgroundAgentNames?.has(bare) ?? false
+  }
+
   #trackBackground(rec, event) {
     const st = event.subtype
     if (st === 'task_started' && event.task_id) {
-      rec.backgroundTaskIds.add(event.task_id)
+      // Only OUTSTANDING work belongs in this set. An ordinary blocking
+      // subagent is finished by the time its turn produces an answer, but the
+      // SDK never emits a completion event for one — so adding it here left a
+      // permanent phantom entry, and `#backgroundInFlight` then reported the
+      // thread as busy forever. That silently disabled BOTH the idle reaper and
+      // LRU eviction (`#threadBusy`), so every thread that used a subagent kept
+      // its CLI subprocess alive for the life of the app. Measured 2026-07-27.
+      //
+      // Fix is deliberately confined to the ADD side; the removal branches below
+      // are untouched. If a future SDK does start reporting these properly, its
+      // completion events flow through the existing deletes and this filter just
+      // becomes redundant — it can never fight a fixed SDK.
+      // NB: only the tracking is skipped — the event still forwards on the
+      // chat/task channel below, so the UI keeps showing subagent progress.
+      if (this.#isBackgroundTask(rec, event)) rec.backgroundTaskIds.add(event.task_id)
     } else if (st === 'task_notification' && event.task_id) {
       rec.backgroundTaskIds.delete(event.task_id)
     } else if (st === 'task_updated' && event.task_id) {
