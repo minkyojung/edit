@@ -26,7 +26,9 @@ function describe(part: NoticePart): { icon: ReactNode; label: string } {
       return { icon: <IconBan size={14} />, label: `Blocked: ${tool}${why}` }
     }
     case 'model-fallback': {
-      const to = part.fallbackModel ? ` to ${part.fallbackModel}` : ''
+      // labelForModel, not the raw id: this row predates it and was printing
+      // `claude-opus-4-8` right above a sibling row saying "Opus 4.8".
+      const to = part.fallbackModel ? ` to ${labelForModel(part.fallbackModel)}` : ''
       return {
         icon: <IconArrowsExchange size={14} />,
         label: `Switched${to} after a safety refusal`,

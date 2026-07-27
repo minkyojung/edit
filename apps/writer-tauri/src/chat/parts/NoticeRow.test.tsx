@@ -44,9 +44,13 @@ describe('model-unavailable', () => {
 })
 
 describe('the neighbouring kinds still read distinctly', () => {
-  it('model-fallback stays about a safety refusal', () => {
+  it('model-fallback stays about a safety refusal, and names the model the same way', () => {
     const out = text({ ...base, kind: 'model-fallback', fallbackModel: 'claude-opus-4-8' })
     expect(out).toContain('safety refusal')
+    // Both rows render model ids through labelForModel — one printing a raw
+    // `claude-opus-4-8` next to a sibling saying "Opus 4.8" reads as a bug.
+    expect(out).toContain('Switched to Opus 4.8')
+    expect(out).not.toContain('claude-opus-4-8')
     // The two kinds must not collapse into the same sentence — that's why
     // model-unavailable exists as its own kind.
     expect(out).not.toContain('unavailable')
