@@ -54,18 +54,24 @@ function needleLines(needle: string): string[] {
   return lines
 }
 
-/** Find `needle` in `body`, tolerating benign drift. Returns the char
- * range `[start, end)` in `body` to act on, or null when no acceptable
- * match exists.
+/** Why a needle did or didn't resolve. `looseFindRange` collapses the two
+ * failures into `null`, which is all a caller that just wants to splice text
+ * needs — but they call for OPPOSITE responses when the failure is reported to
+ * the model: an absent anchor means "the text you targeted isn't there, look at
+ * what is", while an ambiguous one means "it's there several times, say which".
+ * Telling a model the wrong one sends it down a retry loop that cannot succeed. */
+export type LooseMatch =
+  | { kind: 'found'; start: number; end: number }
+  | { kind: 'absent' }
+  | { kind: 'ambiguous' }
+
+/** Locate `needle` in `body`, tolerating benign drift, and say WHY on failure.
  *
- * For a single-line tier-2 match the range covers only the line's
- * CONTENT (after any leading marker) so a replace preserves the
- * marker. For tier-1 it covers the verbatim span as found. */
-export function looseFindRange(
-  body: string,
-  needle: string,
-): { start: number; end: number } | null {
-  if (needle.length === 0) return null
+ * For a single-line tier-2 match the range covers only the line's CONTENT
+ * (after any leading marker) so a replace preserves the marker. For tier-1 it
+ * covers the verbatim span as found. */
+export function locateLoose(body: string, needle: string): LooseMatch {
+  if (needle.length === 0) return { kind: 'absent' }
 
   // Tier 1 — exact substring (any length). Require a UNIQUE match: a
   // needle that occurs more than once is ambiguous — we can't know which
@@ -77,25 +83,39 @@ export function looseFindRange(
   const first = body.indexOf(needle)
   if (first >= 0) {
     const second = body.indexOf(needle, first + 1)
-    if (second >= 0) return null // ambiguous — more than one exact match
-    return { start: first, end: first + needle.length }
+    if (second >= 0) return { kind: 'ambiguous' }
+    return { kind: 'found', start: first, end: first + needle.length }
   }
 
-  // Tier 2 — normalized, single-line only. Same uniqueness rule: bail if
-  // more than one line canonicalizes to the target.
+  // Tier 2 — normalized, single-line only. A multi-line needle that isn't
+  // verbatim is reported ABSENT rather than ambiguous: normalizing it is
+  // refused by design (see the header), so the honest message is "not found",
+  // not "found several times".
   const nLines = needleLines(needle)
-  if (nLines.length !== 1) return null
+  if (nLines.length !== 1) return { kind: 'absent' }
   const target = canonicalizeLine(nLines[0])
-  if (target.length === 0) return null
+  if (target.length === 0) return { kind: 'absent' }
 
   let match: { start: number; end: number } | null = null
   for (const span of lineSpans(body)) {
     if (canonicalizeLine(span.text) !== target) continue
-    if (match) return null // ambiguous — more than one normalized match
+    if (match) return { kind: 'ambiguous' } // more than one normalized match
     const markerLen = leadingMarkerLength(span.text)
     match = { start: span.start + markerLen, end: span.end }
   }
-  return match
+  return match ? { kind: 'found', ...match } : { kind: 'absent' }
+}
+
+/** Find `needle` in `body`, tolerating benign drift. Returns the char
+ * range `[start, end)` in `body` to act on, or null when no acceptable
+ * match exists — for callers that only need to splice and have nothing to
+ * report. Use `locateLoose` when the reason matters. */
+export function looseFindRange(
+  body: string,
+  needle: string,
+): { start: number; end: number } | null {
+  const m = locateLoose(body, needle)
+  return m.kind === 'found' ? { start: m.start, end: m.end } : null
 }
 
 /** Replace the (tolerant) match of `oldStr` in `body` with `newStr`,
