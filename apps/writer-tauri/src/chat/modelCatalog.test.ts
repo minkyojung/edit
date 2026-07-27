@@ -2,7 +2,7 @@
 // new binary — and that guarantee a failed fetch can never take one away.
 
 import { describe, expect, it } from 'vitest'
-import { familyKey, mergeModelCatalog, type ModelEntry } from './modelCatalog'
+import { familyKey, mergeModelCatalog, splitByRecency, type ModelEntry } from './modelCatalog'
 
 const entry = (id: string, over: Partial<ModelEntry> = {}): ModelEntry => ({
   id,
@@ -91,6 +91,44 @@ describe('mergeModelCatalog — efforts', () => {
       entry('claude-opus-4-8', { efforts: [] }),
     ])
     expect(merged[0].efforts).toBeUndefined()
+  })
+})
+
+describe('splitByRecency', () => {
+  it('puts everything up front when there is no catalog', () => {
+    const { primary, older } = splitByRecency(mergeModelCatalog(SEED, null), SEED)
+    expect(primary.map((m) => m.id).sort()).toEqual([...SEED].sort())
+    expect(older).toHaveLength(0)
+  })
+
+  it('promotes a model newer than anything this build ships with', () => {
+    const merged = mergeModelCatalog(SEED, [
+      entry('claude-sonnet-5', { createdAt: '2026-05-01T00:00:00Z' }),
+      entry('claude-opus-9', { createdAt: '2027-01-01T00:00:00Z' }),
+    ])
+    const { primary, older } = splitByRecency(merged, SEED)
+    expect(primary.map((m) => m.id)).toContain('claude-opus-9')
+    expect(older).toHaveLength(0)
+  })
+
+  it('demotes a catalog model older than what we ship with — without dropping it', () => {
+    const merged = mergeModelCatalog(SEED, [
+      entry('claude-sonnet-5', { createdAt: '2026-05-01T00:00:00Z' }),
+      entry('claude-opus-4-1-20250805', { createdAt: '2025-08-05T00:00:00Z' }),
+    ])
+    const { primary, older } = splitByRecency(merged, SEED)
+    expect(older.map((m) => m.id)).toEqual(['claude-opus-4-1-20250805'])
+    // Still reachable — an old thread pinned to it must stay selectable.
+    expect([...primary, ...older].map((m) => m.id)).toContain('claude-opus-4-1-20250805')
+  })
+
+  it('never demotes a built-in model, however old', () => {
+    const merged = mergeModelCatalog(SEED, [
+      entry('claude-haiku-4-5', { createdAt: '2020-01-01T00:00:00Z' }),
+      entry('claude-sonnet-5', { createdAt: '2026-05-01T00:00:00Z' }),
+    ])
+    const { older } = splitByRecency(merged, SEED)
+    expect(older).toHaveLength(0)
   })
 })
 

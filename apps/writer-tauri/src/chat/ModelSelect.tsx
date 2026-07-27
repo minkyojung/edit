@@ -13,9 +13,11 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { CHAT_MODELS, labelForModel, type ChatModel } from '@/chat/types'
+import { CHAT_MODELS, labelForModel, type ChatModel, type ModelInfo } from '@/chat/types'
+import { mergeModelCatalog, splitByRecency, type MergedModel } from '@/chat/modelCatalog'
 import { useAvailableModelsStore } from '@/state/availableModelsStore'
 import { cn } from '@/lib/utils'
 
@@ -34,27 +36,49 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
     void useAvailableModelsStore.getState().load()
   }, [])
 
-  const models = useMemo<readonly ChatModel[]>(() => {
-    if (!available) return CHAT_MODELS
+  // The fetched catalog (GET /v1/models). Null before the first successful
+  // fetch and with nothing cached; the merge below then yields exactly the
+  // built-in list, so the picker behaves as it always did.
+  const catalog = useAvailableModelsStore((s) => s.catalog)
+
+  const { primary, older } = useMemo(() => {
+    const merged = mergeModelCatalog(CHAT_MODELS, catalog)
+
     // supportedModels() lists enabled models by opaque CLI alias (default /
     // opus / haiku) but reports a model the account *can't* use by its real id
     // with a "disabled"/"unavailable" marker in its name/description (e.g.
-    // region-gated Fable). So default to showing every built-in model and hide
-    // only the ones explicitly flagged disabled — which means a model the user
-    // gains access to (moving regions, plan change) reappears on its own.
-    const isDisabledFlag = (a: (typeof available)[number]) => {
+    // region-gated Fable). So default to showing every model and hide only the
+    // ones explicitly flagged disabled — which means a model the user gains
+    // access to (moving regions, plan change) reappears on its own.
+    const isDisabledFlag = (a: ModelInfo) => {
       const text = `${a.displayName ?? ''} ${a.description ?? ''}`.toLowerCase()
       return text.includes('disabled') || text.includes('unavailable')
     }
-    const idMatches = (value: string, m: ChatModel) =>
-      value === m || value.startsWith(m) || m.startsWith(value)
-    const isDisabled = (m: ChatModel) =>
-      available.some((a) => isDisabledFlag(a) && idMatches(a.value, m))
-    const filtered = CHAT_MODELS.filter((m) => !isDisabled(m))
+    const idMatches = (flagged: string, id: string) =>
+      flagged === id || flagged.startsWith(id) || id.startsWith(flagged)
+    const isDisabled = (id: string) =>
+      (available ?? []).some((a) => isDisabledFlag(a) && idMatches(a.value, id))
+
+    const visible = merged.filter((m) => !isDisabled(m.id))
     // Never strand the user with an empty picker if every model somehow reads
     // as disabled (unexpected payload shape).
-    return filtered.length > 0 ? filtered : CHAT_MODELS
-  }, [available])
+    return splitByRecency(visible.length > 0 ? visible : merged, CHAT_MODELS)
+  }, [available, catalog])
+
+  const renderItem = (m: MergedModel) => (
+    <DropdownMenuItem
+      key={m.id}
+      // The catalog can name a model that isn't in the ChatModel union — that's
+      // the point of fetching it. The union is a compile-time convenience, not a
+      // runtime guarantee, and every id-keyed lookup falls back safely (see
+      // labelForModel / effortsForModel / contextLimitForModel).
+      onSelect={() => onChange(m.id as ChatModel)}
+      className="items-center gap-2.5 rounded-lg px-2.5 py-1.5"
+    >
+      <span className="min-w-0 flex-1 text-body font-medium">{labelForModel(m.id)}</span>
+      {m.id === value && <IconCheck className="size-4 shrink-0 text-muted-foreground" stroke={2} />}
+    </DropdownMenuItem>
+  )
 
   return (
     <DropdownMenu>
@@ -74,18 +98,16 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
         <DropdownMenuLabel className="px-2.5 text-footnote text-muted-foreground">
           Model
         </DropdownMenuLabel>
-        {models.map((m) => (
-          <DropdownMenuItem
-            key={m}
-            onSelect={() => onChange(m)}
-            className="items-center gap-2.5 rounded-lg px-2.5 py-1.5"
-          >
-            <span className="min-w-0 flex-1 text-body font-medium">{labelForModel(m)}</span>
-            {m === value && (
-              <IconCheck className="size-4 shrink-0 text-muted-foreground" stroke={2} />
-            )}
-          </DropdownMenuItem>
-        ))}
+        {primary.map((m) => renderItem(m))}
+        {older.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="px-2.5 text-footnote text-muted-foreground">
+              Older
+            </DropdownMenuLabel>
+            {older.map((m) => renderItem(m))}
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   )

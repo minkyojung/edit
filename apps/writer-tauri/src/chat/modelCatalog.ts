@@ -120,3 +120,47 @@ export function mergeModelCatalog(
 
   return merged.sort(byNewestFirst)
 }
+
+/**
+ * Split a merged list into what the picker shows up front and what it tucks
+ * behind an "Older" heading.
+ *
+ * The catalog returns everything the account can reach — currently 11 models,
+ * back to Opus 4.1 — and dumping all of them into the picker would bury the
+ * three or four anyone actually uses. But nothing may be REMOVED (an old thread
+ * pinned to an old model must stay selectable), so this demotes rather than
+ * filters.
+ *
+ * Primary = anything this build ships with, plus anything NEWER than the newest
+ * model it ships with. That second clause is the whole point: a model released
+ * after ship date is exactly what should be surfaced, and it's the only thing
+ * we can identify as "new" without a human curating a list. Everything older
+ * that we didn't ship with is demoted.
+ *
+ * With no catalog every entry is seed-only and undated, so primary is the full
+ * built-in list and `older` is empty — identical to the pre-catalog picker.
+ */
+export function splitByRecency(
+  merged: readonly MergedModel[],
+  seedIds: readonly string[],
+): { primary: MergedModel[]; older: MergedModel[] } {
+  const seed = new Set(seedIds.map(familyKey))
+  const isSeed = (m: MergedModel) => seed.has(familyKey(m.id))
+
+  // Newest release date among the models we ship with — the cutoff.
+  let newestSeedDate: string | undefined
+  for (const m of merged) {
+    if (!isSeed(m) || !m.createdAt) continue
+    if (!newestSeedDate || m.createdAt > newestSeedDate) newestSeedDate = m.createdAt
+  }
+
+  const primary: MergedModel[] = []
+  const older: MergedModel[] = []
+  for (const m of merged) {
+    // Undated non-seed entries can't be proven newer, so they're demoted — the
+    // conservative side of the guess (still reachable, just not up front).
+    const isNewer = newestSeedDate !== undefined && m.createdAt !== undefined && m.createdAt > newestSeedDate
+    ;(isSeed(m) || isNewer ? primary : older).push(m)
+  }
+  return { primary, older }
+}
