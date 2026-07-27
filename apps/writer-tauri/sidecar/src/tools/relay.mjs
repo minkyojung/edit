@@ -49,22 +49,59 @@ async function checkOldString(vaultPath, filePath, oldString) {
   return null
 }
 
-/** Pull the pendingId a propose_edit/write/multi_edit call stamped into its
- * own success text ("... queued for user review (id: <uuid>)."), out of a
- * PostToolUse hook's `tool_response` — shape is `unknown` per the SDK types,
- * so stringify first rather than assume a specific object shape; the id
- * substring survives serialization regardless of how it's nested. Returns
- * null when no id is found (a call that errored before queuing, or an
- * unrelated tool). */
-export function extractPendingId(toolResponse) {
-  let text
+/** How long a propose_* handler waits for the host's verdict before assuming
+ * success. Local IPC to the host's own process, so this only elapses when the
+ * host is wedged — and then failing OPEN is right: a lost ack must not wedge
+ * the turn too. */
+const ACK_TIMEOUT_MS = 15000
+
+/** Block on the host's verdict for a proposal, then release the slot.
+ * Shared by all three propose_* tools so the fail-open policy is one fact. */
+async function awaitVerdict(promise, cleanup) {
   try {
-    text = typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse ?? '')
-  } catch {
-    return null
+    return await Promise.race([
+      promise,
+      new Promise((r) => setTimeout(() => r({ ok: true, reason: null, applied: false }), ACK_TIMEOUT_MS)),
+    ])
+  } finally {
+    cleanup()
   }
-  const match = /\(id:\s*([0-9a-f-]{36})\)/i.exec(text ?? '')
-  return match ? match[1] : null
+}
+
+/** The tool result for a staged edit, chosen by the host's verdict.
+ *
+ * These three texts used to be produced by a PostToolUse hook that REWROTE an
+ * optimistic "queued" string the handler had already returned. That hook landed
+ * only ~2/3 of the time, so a refusal frequently never reached the model — and
+ * an unrefused model, seeing the file unchanged (staging leaves disk alone by
+ * design), concluded the call had failed and proposed the same edit again. One
+ * logical edit, two review cards. Returning the verdict directly removes the
+ * race: there is no optimistic claim to correct. */
+function stagedEditResult(verdict, pendingId, kind) {
+  const said = (text) => ({ content: [{ type: 'text', text }] })
+  if (verdict && verdict.ok === false) {
+    return said(
+      `(error: this proposal was NOT queued${verdict.reason ? ` — ${verdict.reason}` : ''}. ` +
+        `No review card was created and the file is unchanged. Re-read the file to see ` +
+        `its current content, then propose the edit again against that text.)`,
+    )
+  }
+  // Auto-accept mode wrote it straight to disk — tell the model so it doesn't
+  // later advise the user to "reject the review card" that never existed.
+  if (verdict && verdict.applied) {
+    return said(
+      'Applied immediately — auto-accept mode is on, so this change is already ' +
+        'saved to the file. There is no review card to accept or reject. To undo ' +
+        'it later, revert the change (see the undo-ai-change skill); never tell ' +
+        'the user to reject it.',
+    )
+  }
+  return said(
+    `${kind === 'Edit' ? 'Edit' : 'MultiEdit'} queued for user review (id: ${pendingId}). ` +
+      `The file is intentionally NOT modified until the user accepts, so do not re-read it to verify — ` +
+      `it will still show the old text and that does not mean this call failed. ` +
+      `Do not propose ${kind === 'Edit' ? 'this edit' : 'these edits'} again.`,
+  )
 }
 
 // E6 "host-applies" pattern: instead of letting the SDK's built-in
@@ -109,6 +146,7 @@ export function buildProposeEditTool(getRunId, emit, vaultPath, registerAck) {
       const err = await checkOldString(vaultPath, input.file_path, input.old_string)
       if (err) return { content: [{ type: 'text', text: err }] }
       const pendingId = globalThis.crypto.randomUUID()
+      const { promise, cleanup } = registerAck(pendingId)
       emit(
         notification('chat/edit-pending', {
           runId: getRunId(),
@@ -117,24 +155,10 @@ export function buildProposeEditTool(getRunId, emit, vaultPath, registerAck) {
           input,
         }),
       )
-      registerAck(pendingId)
-      // The second sentence is load-bearing, not politeness. Edits are STAGED: the
-      // file on disk is deliberately left untouched until the user accepts. A model
-      // that re-reads to confirm therefore sees its edit missing, concludes the call
-      // failed, and proposes the same edit again — which registers a SECOND review
-      // card for one logical edit. Say plainly that an unchanged file is the expected
-      // state so the verification never happens.
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              `Edit queued for user review (id: ${pendingId}). ` +
-              `The file is intentionally NOT modified until the user accepts, so do not re-read it to verify — ` +
-              `it will still show the old text and that does not mean this call failed. Do not propose this edit again.`,
-          },
-        ],
-      }
+      // Round-trip on the host's verdict rather than returning an optimistic
+      // "queued" — see stagedEditResult for why the optimistic form produced
+      // duplicate review cards.
+      return stagedEditResult(await awaitVerdict(promise, cleanup), pendingId, 'Edit')
     },
   )
 }
@@ -166,15 +190,7 @@ export function buildProposeWriteTool(getRunId, emit, registerAck) {
       // propose_edit path, this does NOT return an optimistic "queued": that
       // would let a stale overwrite look successful. Fail open if the host
       // never answers, so a lost ack can't wedge the turn.
-      let verdict
-      try {
-        verdict = await Promise.race([
-          promise,
-          new Promise((r) => setTimeout(() => r({ ok: true, reason: null }), 15000)),
-        ])
-      } finally {
-        cleanup()
-      }
+      const verdict = await awaitVerdict(promise, cleanup)
       if (verdict && verdict.ok === false) {
         return {
           content: [
@@ -300,6 +316,7 @@ export function buildProposeMultiEditTool(getRunId, emit, vaultPath, registerAck
         if (err) return { content: [{ type: 'text', text: `(edit #${i + 1}) ${err}` }] }
       }
       const pendingId = globalThis.crypto.randomUUID()
+      const { promise, cleanup } = registerAck(pendingId)
       emit(
         notification('chat/edit-pending', {
           runId: getRunId(),
@@ -308,18 +325,7 @@ export function buildProposeMultiEditTool(getRunId, emit, vaultPath, registerAck
           input,
         }),
       )
-      registerAck(pendingId)
-      return {
-        content: [
-          {
-            type: 'text',
-            text:
-              `MultiEdit queued for user review (id: ${pendingId}). ` +
-              `The file is intentionally NOT modified until the user accepts, so do not re-read it to verify — ` +
-              `it will still show the old text and that does not mean this call failed. Do not propose these edits again.`,
-          },
-        ],
-      }
+      return stagedEditResult(await awaitVerdict(promise, cleanup), pendingId, 'MultiEdit')
     },
   )
 }

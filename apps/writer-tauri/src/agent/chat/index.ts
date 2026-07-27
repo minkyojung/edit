@@ -650,12 +650,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         if (vaultRelPath) newNoteByPath.set(vaultRelPath, myTail)
         await myTail
 
-        // Tell the sidecar whether THIS call's proposal actually landed —
-        // its PostToolUse hook is waiting on this pendingId (not `mapped.id`
-        // in the merge case: the hook is keyed to what ITS OWN tool call
-        // returned, which always stamps `e.payload.pendingId`). Best-effort:
-        // the hook fails open on its own timeout if this never arrives, so a
-        // failure here is a lost confirmation, not a stuck turn.
+        // Tell the sidecar whether THIS call's proposal actually landed — the
+        // propose_* tool handler is BLOCKED awaiting this pendingId (not
+        // `mapped.id` in the merge case: the handler waits on what ITS OWN
+        // tool call minted, which is always `e.payload.pendingId`). Its
+        // verdict becomes the tool result the model sees, which is what stops
+        // it from re-proposing an edit it can't otherwise confirm landed.
+        // Best-effort: the handler races a fail-open timeout, so a failure
+        // here costs a lost confirmation and a delay, not a stuck turn.
         invoke('claude_chat_edit_ack', {
           args: { pendingId: e.payload.pendingId, ok: ackOk, reason: ackReason, applied: ackApplied },
         }).catch((err) => {

@@ -34,7 +34,6 @@ import {
   buildProposeSkillTool,
   buildProposeMultiEditTool,
   buildMoveNoteTool,
-  extractPendingId,
 } from './tools/relay.mjs'
 
 
@@ -260,11 +259,9 @@ export class Server {
     // pendingId -> resolve(ok: boolean) for a propose_edit/write/multi_edit
     // proposal awaiting the host's confirmation that it was actually queued
     // into pendingChangesStore. Registered when the tool emits `chat/edit-
-    // pending`; resolved by `chat/edit-ack`. Read by the PostToolUse hook
-    // (see #buildPostToolUseHooks) — NOT by the tool handlers themselves,
-    // which still return immediately (the agent loop's progress on OTHER
-    // files/tool-calls isn't blocked on this — only the SINGLE tool result
-    // that hook rewrites, if the host reports it didn't land).
+    // pending`; resolved by `chat/edit-ack`. AWAITED by the tool handler itself,
+    // which returns the verdict as its own result — so only that one tool call
+    // blocks, never the agent loop's progress on other files.
     this.pendingAcks = new Map()
     // queryId -> { resolve, reject, runId } for an in-flight `query_notes`
     // tool call awaiting the host's filtered result (references). Unlike
@@ -998,12 +995,10 @@ export class Server {
     )
     if (relayServer) options.mcpServers = { 'writer-relay': relayServer }
 
-    // PostToolUse: proposal-ack confirmation (shared with legacy). Stop: snapshot
-    // the authoritative in-flight background inventory each turn end, so the
-    // reaper can tell "thread idle & done" from "idle but awaiting a background
-    // wake". Non-blocking (returns {}).
+    // Stop: snapshot the authoritative in-flight background inventory each turn
+    // end, so the reaper can tell "thread idle & done" from "idle but awaiting a
+    // background wake". Non-blocking (returns {}).
     options.hooks = {
-      PostToolUse: this.#postToolUseHooks(),
       Stop: [
         {
           hooks: [
@@ -1579,102 +1574,6 @@ export class Server {
     return createSdkMcpServer({ name: 'writer-relay', tools: relayDefs })
   }
 
-  // The PostToolUse hook that confirms propose_edit/write/multi_edit proposals
-  // actually landed in the host's pendingChangesStore before the model treats
-  // them as settled. Keyed by pendingId (runId-independent), so it's shared
-  // verbatim by the legacy and persistent paths. See the call site for the
-  // full rationale (eager-success gap; fail-open on timeout).
-  #postToolUseHooks() {
-    return [
-      {
-        // The tools are in-process MCP tools, so their real names are
-        // namespaced `mcp__writer-relay__propose_*` — the SDK matches this
-        // pattern against the FULL name, so the bare `propose_*` form never
-        // matched and this ack-confirmation hook silently never fired.
-        // `propose_write` is NOT here: it round-trips in its own handler (awaits
-        // the verdict and returns the error directly), which is race-free —
-        // this hook's rewrite only reliably lands ~2/3 of the time. The
-        // fire-and-forget edit/multi_edit paths still rely on it.
-        matcher:
-          'mcp__writer-relay__propose_edit|mcp__writer-relay__propose_multi_edit',
-        // Seconds. Local IPC to the host's own process — generous but bounded
-        // so a host hang can't stall the agent loop forever.
-        timeout: 5,
-        hooks: [
-          async (input) => {
-            const pendingId = extractPendingId(input.tool_response)
-            // No id found — this call errored before queuing (e.g.
-            // checkOldString rejected it) and already carries its own error
-            // text; nothing to confirm.
-            if (!pendingId) return {}
-            const pending = this.pendingAcks.get(pendingId)
-            if (!pending) return {} // no slot registered — let it pass
-            // Belt-and-suspenders: race against our OWN timeout too. Fail-open
-            // on timeout (ok: true, no rewrite) — don't surface a spurious
-            // error over a host that's merely slow, only one that reported
-            // failure.
-            const { ok, reason, applied } = await Promise.race([
-              pending.promise,
-              new Promise((r) => setTimeout(() => r({ ok: true, reason: null, applied: false }), 4000)),
-            ])
-            this.pendingAcks.delete(pendingId)
-            if (ok) {
-              // Genuinely queued for review (interactive mode, or the ack timed
-              // out) — the tool's own "queued for user review" text is correct.
-              if (!applied) return {}
-              // Auto-accept mode wrote it straight to disk. Correct the model's
-              // belief so it doesn't tell the user to "reject the review card" —
-              // there is none; the change is already saved.
-              return {
-                hookSpecificOutput: {
-                  hookEventName: 'PostToolUse',
-                  updatedToolOutput: {
-                    content: [
-                      {
-                        type: 'text',
-                        text:
-                          'Applied immediately — auto-accept mode is on, so this ' +
-                          'change is already saved to the file. There is no review ' +
-                          'card to accept or reject. To undo it later, revert the ' +
-                          'change (see the undo-ai-change skill); never tell the ' +
-                          'user to reject it.',
-                      },
-                    ],
-                  },
-                },
-              }
-            }
-            // ok:false means the host could NOT stage the proposal at all — no review
-            // card exists and the file is untouched. Say both parts explicitly: the
-            // tool already returned an optimistic "queued for user review", and that
-            // text is still in the transcript, so a vague error leaves the model
-            // believing something is pending when nothing is. Re-reading IS the right
-            // move here (unlike after a successful stage, where the file is unchanged
-            // by design) — the anchor genuinely isn't where the model thought.
-            return {
-              hookSpecificOutput: {
-                hookEventName: 'PostToolUse',
-                updatedToolOutput: {
-                  content: [
-                    {
-                      type: 'text',
-                      text:
-                        '(error: this proposal was NOT queued' +
-                        (reason ? ` — ${reason}` : '') +
-                        '. Disregard the "queued for user review" message above: no review ' +
-                        'card was created and the file is unchanged. Re-read the file to see ' +
-                        'its current content, then propose the edit again against that text.)',
-                    },
-                  ],
-                },
-              },
-            }
-          },
-        ],
-      },
-    ]
-  }
-
   #emitChatError(runId, code, message, retryable, rateLimit, threadId) {
     this.emit(
       notification('chat/error', { runId, code, message, retryable, rateLimit, threadId }),
@@ -1719,43 +1618,39 @@ export class Server {
     pending.resolve(params?.decision ?? {})
   }
 
-  // Open a slot for a propose_* tool call's host-ack, keyed by the pendingId
-  // it just emitted in its `chat/edit-pending` notification. Called from the
-  // tool handler itself (buildProposeEditTool etc.), right after emitting —
-  // NOT awaited there; only the PostToolUse hook reads this slot's promise.
+  // Open a slot for a propose_* tool call's host-ack, keyed by the pendingId it
+  // is about to emit in its `chat/edit-pending` notification. Every caller
+  // registers BEFORE emitting: the host round-trip is fast enough that an ack
+  // can land before the emit call returns, and a slot opened afterwards would
+  // miss it and fail open on a genuine refusal.
   #registerAckSlot(pendingId) {
     let resolve
     const promise = new Promise((r) => {
       resolve = r
     })
     this.pendingAcks.set(pendingId, { promise, resolve })
-    // The round-trip caller (propose_write) awaits `promise` and then calls
-    // `cleanup` — it holds the promise ref, so deletion can't lose its value.
-    // The fire-and-forget callers (propose_edit/multi_edit) ignore the return
-    // and let the PostToolUse hook read + delete the slot instead.
+    // Callers await `promise` and then call `cleanup`; they hold the promise
+    // ref, so deleting the map entry can't lose its value.
     return { promise, cleanup: () => this.pendingAcks.delete(pendingId) }
   }
 
   // Host's answer to "did this propose_* proposal actually get queued?"
   // (agent/chat/index.ts sends this once its edit-pending handling settles).
-  // Resolves the matching PostToolUse hook's wait (see #buildPostToolUseHooks).
-  // Unknown / already-settled / already-timed-out pendingIds are ignored —
-  // the hook's own `timeout` (SDK-native, on the matcher) is what fires if
-  // this never arrives, so a late or duplicate ack is just a harmless no-op.
+  // Resolves the waiting tool handler. Unknown / already-settled / already-
+  // timed-out pendingIds are ignored — each handler races its own fail-open
+  // timeout, so a late or duplicate ack is a harmless no-op.
   #handleEditAck(params) {
     const pendingId = params?.pendingId
     if (typeof pendingId !== 'string') return
     const pending = this.pendingAcks.get(pendingId)
     if (!pending) return
-    // Resolve but DON'T delete: the ack can arrive before the PostToolUse hook
-    // fires (the host round-trip is fast), and if we deleted here the hook's
-    // later `pendingAcks.get` would miss the result and fail open. The hook is
-    // the sole deleter (after it reads the settled value).
+    // Resolve but DON'T delete — the awaiting handler's `cleanup` is the sole
+    // deleter, after it has read the settled value.
     pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null, applied: !!params?.applied })
   }
 
   // Ask the host to filter its note catalog by metadata and return references.
-  // Awaited by the `query_notes` tool handler (unlike the propose_* acks). The
+  // Awaited by the `query_notes` tool handler, as the propose_* acks are. The
   // host's filter is a near-instant in-memory pass, so a 5s timeout backstop
   // (host never answers) plus per-run rejection on cancel is enough — no
   // controller is threaded through the fire-once relay tools.
