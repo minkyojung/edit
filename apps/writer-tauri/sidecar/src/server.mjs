@@ -990,7 +990,6 @@ export class Server {
     const relayServer = this.#buildRelayServer(
       enabledRelay,
       () => rec.currentRunId, // live per-turn runId
-      vaultPath,
       existingSkills,
     )
     if (relayServer) options.mcpServers = { 'writer-relay': relayServer }
@@ -1539,12 +1538,12 @@ export class Server {
   // relay call stamps the runId that's live at emit time — constant on the
   // legacy single-turn path, `() => rec.currentRunId` on the persistent path
   // where one server instance serves many turns.
-  #buildRelayServer(enabledRelay, getRunId, vaultPath, existingSkills) {
+  #buildRelayServer(enabledRelay, getRunId, existingSkills) {
     const relayDefs = []
     for (const name of enabledRelay) {
       if (name === 'propose_edit') {
         relayDefs.push(
-          buildProposeEditTool(getRunId, this.emit, vaultPath, (id) => this.#registerAckSlot(id)),
+          buildProposeEditTool(getRunId, this.emit, (id) => this.#registerAckSlot(id)),
         )
       } else if (name === 'propose_write') {
         relayDefs.push(buildProposeWriteTool(getRunId, this.emit, (id) => this.#registerAckSlot(id)))
@@ -1552,7 +1551,7 @@ export class Server {
         relayDefs.push(buildProposeSkillTool(getRunId, this.emit, existingSkills))
       } else if (name === 'propose_multi_edit') {
         relayDefs.push(
-          buildProposeMultiEditTool(getRunId, this.emit, vaultPath, (id) =>
+          buildProposeMultiEditTool(getRunId, this.emit, (id) =>
             this.#registerAckSlot(id),
           ),
         )

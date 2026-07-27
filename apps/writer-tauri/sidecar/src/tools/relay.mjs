@@ -3,51 +3,25 @@
 // and return success immediately. The host owns the editor/UI and does the real
 // work (queue for review, or apply immediately for move/viz). Extracted from
 // server.mjs; every factory takes its host deps as parameters (getRunId, emit,
-// vaultPath, registerAck) — no coupling to the Server instance.
+// registerAck) — no coupling to the Server instance.
 
-import { readFile } from 'node:fs/promises'
 import { isAbsolute, relative, normalize, resolve as resolvePath } from 'node:path'
 import { tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { notification } from '../jsonrpc.mjs'
 
-/** Resolve a model-supplied file_path (absolute OR vault-relative) to an absolute
- * path inside the vault, or null if it escapes the vault. */
-function resolveVaultFile(vaultPath, filePath) {
-  const raw = String(filePath ?? '').trim()
-  if (!raw) return null
-  const rel = isAbsolute(raw) ? relative(vaultPath, raw) : normalize(raw)
-  if (!rel || rel.startsWith('..') || rel.includes('/../')) return null
-  return resolvePath(vaultPath, rel)
-}
-
-/** Validate a propose_edit `old_string` against the live file — the built-in Edit
- * tool's contract: it must match VERBATIM and UNIQUELY. Returns an error string for
- * the model (so it re-reads and retries with exact text) or null on success. Without
- * a vaultPath we can't read the file, so we let the edit through (host still checks). */
-async function checkOldString(vaultPath, filePath, oldString) {
-  if (!vaultPath) return null
-  if (!oldString) return `(error: old_string is empty — provide the exact text to replace.)`
-  // FAIL-OPEN on anything we can't verify (odd/symlinked path, unreadable file): don't
-  // block a possibly-valid edit — the host still applies it. Only reject when we have
-  // the file in hand AND the text genuinely isn't there.
-  const abs = resolveVaultFile(vaultPath, filePath)
-  if (!abs) return null
-  let body
-  try {
-    body = await readFile(abs, 'utf-8')
-  } catch {
-    return null
-  }
-  const first = body.indexOf(oldString)
-  if (first < 0) {
-    return `(error: old_string was not found in ${filePath}. Read the file to get the current content and copy old_string VERBATIM, then retry.)`
-  }
-  if (body.indexOf(oldString, first + 1) >= 0) {
-    return `(error: old_string matches more than one place in ${filePath}. Include enough surrounding lines to make it unique, then retry.)`
-  }
-  return null
-}
+// Anchor validation lives in the HOST now (agent/chat/checkPlacement), not here.
+// This file used to read the file off DISK and require `old_string` to match
+// VERBATIM. Two things were wrong with that:
+//   • Disk is the wrong document. While a proposal is staged the file on disk
+//     deliberately lags the buffer, so a check against it can disagree with the
+//     one that actually decides whether the edit places.
+//   • Exact match is stricter than the applier. The host locates anchors with the
+//     tolerant matcher (lib/looseMatch), which forgives benign drift like a
+//     different list marker. Measured: body '* 날짜: 미정' + old_string
+//     '- 날짜: 미정' → indexOf -1 (rejected here, model sent off to re-read) but
+//     locateLoose 'found' (the host would simply have placed it).
+// One check, against the document the edit is actually applied to.
 
 /** How long a propose_* handler waits for the host's verdict before assuming
  * success. Local IPC to the host's own process, so this only elapses when the
@@ -128,7 +102,7 @@ function stagedEditResult(verdict, pendingId, kind) {
 // new_string"). The model has prior experience with those names — the
 // `propose_` prefix is the only visible difference, and the matching
 // input shape keeps the tool-call ergonomics unchanged.
-export function buildProposeEditTool(getRunId, emit, vaultPath, registerAck) {
+export function buildProposeEditTool(getRunId, emit, registerAck) {
   return tool(
     'propose_edit',
     'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — Read it first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works like the built-in Edit tool with ONE difference that matters: the change is STAGED for the user to review, and the file on disk stays unchanged until they accept it. So after a successful call, do NOT re-read the file to check your edit landed — it will still show the old text, and that is the expected state, not a failure. Returns immediately — do not wait for the user. `reason`: a short one-line note recorded in the VERSION HISTORY (the commit log) for this edit — say what changed and why in plain terms. It is NOT shown in your chat reply; it is the audit trail so the user can later see why a change was made. Keep it specific ("Fixed the typo in the intro", "Added the 2026 pricing row"), not generic.',
@@ -136,15 +110,9 @@ export function buildProposeEditTool(getRunId, emit, vaultPath, registerAck) {
       file_path: z.string(),
       old_string: z.string(),
       new_string: z.string(),
-      replace_all: z.boolean().optional(),
       reason: z.string().optional(),
     },
     async (input) => {
-      // Validate the anchor against the live file (the built-in Edit's contract) so a
-      // bad old_string is fixed by the model NOW instead of surfacing as a broken
-      // proposal at Keep time.
-      const err = await checkOldString(vaultPath, input.file_path, input.old_string)
-      if (err) return { content: [{ type: 'text', text: err }] }
       const pendingId = globalThis.crypto.randomUUID()
       const { promise, cleanup } = registerAck(pendingId)
       emit(
@@ -294,7 +262,7 @@ export function buildProposeSkillTool(getRunId, emit, existingSkills = []) {
   )
 }
 
-export function buildProposeMultiEditTool(getRunId, emit, vaultPath, registerAck) {
+export function buildProposeMultiEditTool(getRunId, emit, registerAck) {
   return tool(
     'propose_multi_edit',
     'Propose multiple edits to a single file in one transaction. The host queues this proposal for user review and applies it on approval. Use the same way as the built-in MultiEdit tool: provide the file_path and an array of edits, each with old_string and new_string. Each old_string MUST identify exactly ONE place in the file — when the same text appears more than once (e.g. two identical lines you want changed differently), include enough surrounding lines in each old_string to make it unique, otherwise that edit is rejected as ambiguous (the host never guesses which occurrence you meant). Returns immediately — do not wait for the user.',
@@ -304,17 +272,10 @@ export function buildProposeMultiEditTool(getRunId, emit, vaultPath, registerAck
         z.object({
           old_string: z.string(),
           new_string: z.string(),
-          replace_all: z.boolean().optional(),
-        }),
+            }),
       ),
     },
     async (input) => {
-      // Validate every anchor before queuing — one bad old_string fails the whole
-      // transaction (same as the built-in MultiEdit) so the model fixes it now.
-      for (let i = 0; i < input.edits.length; i++) {
-        const err = await checkOldString(vaultPath, input.file_path, input.edits[i].old_string)
-        if (err) return { content: [{ type: 'text', text: `(edit #${i + 1}) ${err}` }] }
-      }
       const pendingId = globalThis.crypto.randomUUID()
       const { promise, cleanup } = registerAck(pendingId)
       emit(

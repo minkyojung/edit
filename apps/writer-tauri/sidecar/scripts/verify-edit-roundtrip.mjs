@@ -182,6 +182,46 @@ try {
       : bad('reply still mentions rejecting — the notice did not take')
   }
 
+  // D — the host, not the sidecar, adjudicates anchors.
+  //
+  // The sidecar used to read the file off DISK and reject a non-matching
+  // old_string itself, so a proposal like this never reached the host at all.
+  // Two things were wrong with that: disk is the wrong document (staging makes
+  // it lag the buffer on purpose), and `indexOf` is stricter than the applier's
+  // tolerant matcher — measured, body '* 날짜: 미정' with old_string
+  // '- 날짜: 미정' is indexOf -1 but locateLoose 'found', i.e. the sidecar was
+  // refusing edits the host would simply have placed.
+  //
+  // Read is withheld so the model can't discover the mismatch and self-correct;
+  // what is under test is the routing, not the model's judgement.
+  {
+    writeFileSync(notePath, ORIGINAL)
+    proposals = []; toolResults = []; assistantText = ''
+    verdict = { ok: false, reason: 'the anchor text was not found in the current document' }
+    console.log('\n  --- D. an unmatched anchor still reaches the host ---')
+    const r = await new Promise((resolve) => {
+      const runId = globalThis.crypto.randomUUID()
+      notifListeners.push((msg) => {
+        if (msg.params?.runId && msg.params.runId !== runId) return
+        if (msg.method === 'chat/done') resolve({ kind: 'ok' })
+        else if (msg.method === 'chat/error') resolve({ kind: 'error', code: msg.params.code })
+      })
+      request('chat', {
+        runId, threadId: runId, model: 'claude-sonnet-5', systemPrompt, vaultPath: vault,
+        prompt:
+          'Call propose_edit on wiki/Greeting.md with old_string exactly ' +
+          '"존재하지않는문장" and new_string exactly "X". Do not read the file first — ' +
+          'call the tool directly with those exact values.',
+        relayTools: ['propose_edit'],
+        builtinTools: [], allowDelegation: false, sandboxEnabled: false,
+      }).catch((err) => resolve({ kind: 'error', code: err?.code }))
+    })
+    if (r.kind !== 'ok') bad('D: chat run did not complete', JSON.stringify(r))
+    proposals.length >= 1
+      ? ok('proposal reached the HOST (sidecar no longer adjudicates on disk)')
+      : bad('proposal never reached the host — a disk-side check rejected it first')
+  }
+
   await request('shutdown', {}).catch(() => {})
 } catch (err) {
   bad('harness threw', err?.message ?? String(err))
