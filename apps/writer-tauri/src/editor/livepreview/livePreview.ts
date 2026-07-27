@@ -16,7 +16,7 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
 import { Facet, type EditorState, type Line, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from './wikilinkComplete'
-import { inProofRawRange } from '@/editor/proofRawRanges'
+import { nodeInProofRawRange } from '@/editor/proofRawRanges'
 import { cursorInRange } from './cursorRange'
 
 const HIDE = Decoration.replace({})
@@ -172,8 +172,11 @@ function buildDecos(
         const nt = node.to
 
         // Pending AI proposal (Option B): leave it RAW so proposal ≠ content and
-        // it edits natively. Skip the node + its children.
-        if (inProofRawRange(state, nf)) return false
+        // it edits natively. Skip the node + its children — but only when the node
+        // is CONTAINED in the proposal. A node that merely overlaps it (above all
+        // the root `Document`, whose `from` is always 0) must be descended into, or
+        // a proposal touching position 0 blanks the whole document's decorations.
+        if (nodeInProofRawRange(state, nf, nt)) return false
 
         // Images and GFM tables are owned ENTIRELY by the block-decoration layer
         // (v2/blocks): it replaces `![alt](url)` with the <img> widget and the whole

@@ -31,7 +31,7 @@ import { type SyntaxNode } from '@lezer/common'
 import { ImageWidget } from '@/editor/cards/widgets'
 import { EditableTableWidget } from './editableTable'
 import { MediaWidget, detectMedia } from '@/editor/cards/mediaCards'
-import { inProofRawRange } from '@/editor/proofRawRanges'
+import { nodeInProofRawRange } from '@/editor/proofRawRanges'
 import { cursorInRange } from './cursorRange'
 
 function build(state: EditorState): DecorationSet {
@@ -40,7 +40,10 @@ function build(state: EditorState): DecorationSet {
     enter: (node) => {
       // Pending AI proposal (Option B): keep it RAW — don't render its table /
       // image as a widget, so the proposal stays distinguishable + editable.
-      if (inProofRawRange(state, node.from)) return false
+      // Containment, not a point test on `node.from` — this walk also starts at
+      // the root `Document` (from 0), so a proposal at position 0 used to abort it
+      // entirely. See nodeInProofRawRange.
+      if (nodeInProofRawRange(state, node.from, node.to)) return false
       // Image — same model as the media card. Two modes:
       //  • editing (cursor OR selection touching it) → KEEP the raw `![...](...)`
       //    source visible AND show the image preview as a block right below it
