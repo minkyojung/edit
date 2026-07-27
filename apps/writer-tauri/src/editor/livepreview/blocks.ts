@@ -31,7 +31,7 @@ import { type SyntaxNode } from '@lezer/common'
 import { ImageWidget } from '@/editor/cards/widgets'
 import { EditableTableWidget } from './editableTable'
 import { MediaWidget, detectMedia } from '@/editor/cards/mediaCards'
-import { nodeInProofRawRange } from '@/editor/proofRawRanges'
+import { proofRawOverlap, proofRawRangesChanged } from '@/editor/proofRawRanges'
 import { cursorInRange } from './cursorRange'
 
 function build(state: EditorState): DecorationSet {
@@ -40,10 +40,13 @@ function build(state: EditorState): DecorationSet {
     enter: (node) => {
       // Pending AI proposal (Option B): keep it RAW — don't render its table /
       // image as a widget, so the proposal stays distinguishable + editable.
-      // Containment, not a point test on `node.from` — this walk also starts at
-      // the root `Document` (from 0), so a proposal at position 0 used to abort it
-      // entirely. See nodeInProofRawRange.
-      if (nodeInProofRawRange(state, node.from, node.to)) return false
+      // `inside` → skip the subtree; `partial` → don't build a widget here but keep
+      // descending. Both matter: this walk also starts at the root `Document`
+      // (from 0), and a proposal covering only PART of a table must still stop the
+      // table widget, or the accept/reject buttons end up sealed inside a block
+      // replace where they can't be seen or clicked.
+      const raw = proofRawOverlap(state, node.from, node.to)
+      if (raw !== 'none') return raw === 'inside' ? false : undefined
       // Image — same model as the media card. Two modes:
       //  • editing (cursor OR selection touching it) → KEEP the raw `![...](...)`
       //    source visible AND show the image preview as a block right below it
@@ -187,6 +190,11 @@ const blocksField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
+    // Pending-proposal ranges are a fourth input to `build`, and they can change
+    // without a doc edit, a caret move, or parse progress — a reject is dispatched
+    // as an effect-only transaction. Without this, a block this layer had to leave
+    // raw would stay raw until some unrelated edit triggered a rebuild.
+    if (proofRawRangesChanged(tr.startState, tr.state)) return build(tr.state)
     if (tr.docChanged) return touchesBlocks(tr, mapped) ? build(tr.state) : mapped
     // Selection-only change: rebuild ONLY when the caret enters or leaves a
     // reveal-capable block line (before OR after the move). Since this branch is

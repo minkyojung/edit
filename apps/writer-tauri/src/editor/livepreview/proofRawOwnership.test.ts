@@ -1,24 +1,27 @@
-// Characterization tests for the raw-range OWNERSHIP contract — the seam Phase 2
-// changes. `proofRawRanges.ts` claims "Every block/inline renderer reads
-// `inProofRawRange()` and skips nodes inside these ranges". That claim is false
-// today, in two distinct ways, and each one silently breaks the AI review flow:
+// The raw-range OWNERSHIP contract: a pending AI proposal lives as real buffer
+// text, and no renderer may decorate over it — otherwise the proposal reads as
+// committed content, or worse, disappears inside a block replace.
 //
-//   B2  The guard tests whether a node is CONTAINED in a raw range, so a proposal
-//       covering only PART of a table leaves the table fully rendered as a block
-//       widget — built from text that now includes the proposal. The red/green
-//       marks and the accept/reject ButtonsWidget land inside that block replace
-//       and are therefore invisible: the proposal can be neither accepted nor
-//       rejected.
-//   B3  `cards/youtubeCards.ts` and `cards/mermaidCards.ts` never call the guard
-//       at all, so a proposed YouTube URL or mermaid fence renders as a live
+// `proofRawRanges.ts` used to claim "Every block/inline renderer reads
+// `inProofRawRange()`". The claim was false in two ways, each of which silently
+// broke the AI review flow:
+//
+//   B2  The guard tested a single point (`node.from`), so a proposal covering
+//       only PART of a table left the table rendered as a block widget built from
+//       text that included the proposal. The red/green marks and the accept/reject
+//       ButtonsWidget landed inside that replace and were therefore invisible:
+//       the proposal could be neither accepted nor rejected.
+//   B3  `cards/youtubeCards.ts` and `cards/mermaidCards.ts` never called the guard
+//       at all, so a proposed YouTube URL or mermaid fence rendered as a live
 //       player/diagram instead of a diff.
 //
-// The failing cases are written with `it.fails`, which asserts they fail TODAY.
-// When Phase 2 replaces the containment test with a range-overlap gate, vitest
-// will report "expected test to fail" and force these to be flipped to `it`.
+// Both are fixed now: the guard classifies a span as none/partial/inside instead
+// of testing a single point, and the cards consult it before replacing. These
+// tests were written first with `it.fails` (asserting they failed against the
+// point-test version) and flipped once the gate landed.
 
 import { describe, expect, it } from 'vitest'
-import { EditorState } from '@codemirror/state'
+import { EditorState, StateEffect, StateField } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
@@ -51,7 +54,7 @@ function mount(doc: string, raw: RawRange[], extra: unknown[]) {
 const tableIn = (v: EditorView) => v.contentDOM.querySelector('.cm-table-widget, table')
 
 describe('B2 — a proposal overlapping PART of a table', () => {
-  it.fails('leaves the table raw so the accept/reject buttons stay reachable', () => {
+  it('leaves the table raw so the accept/reject buttons stay reachable', () => {
     const doc = `intro\n\n${TABLE}\n`
     const tableFrom = doc.indexOf('|')
     // Proposal covers the table's 2nd and 3rd rows only — it starts inside the
@@ -77,7 +80,7 @@ describe('B2 — a proposal overlapping PART of a table', () => {
 })
 
 describe('B3 — cards ignore the raw-range contract entirely', () => {
-  it.fails('a proposed YouTube URL shows as a diff, not a player', () => {
+  it('a proposed YouTube URL shows as a diff, not a player', () => {
     const doc = `intro\n\n${YT}\n`
     const from = doc.indexOf('https')
     const view = mount(doc, [{ from, to: from + YT.length }], [youtubeCards])
@@ -88,7 +91,7 @@ describe('B3 — cards ignore the raw-range contract entirely', () => {
     }
   })
 
-  it.fails('a proposed mermaid fence shows as a diff, not a diagram', () => {
+  it('a proposed mermaid fence shows as a diff, not a diagram', () => {
     const doc = `intro\n\n${MERMAID}\n`
     const from = doc.indexOf('```')
     const view = mount(doc, [{ from, to: from + MERMAID.length }], [mermaidCards])
@@ -97,5 +100,49 @@ describe('B3 — cards ignore the raw-range contract entirely', () => {
     } finally {
       view.destroy()
     }
+  })
+})
+
+describe('proposals that end without a doc change', () => {
+  // Rejecting a proposal is dispatched as an EFFECT-ONLY transaction. The block
+  // renderers keep a position-mapped decoration set and only re-walk the tree when
+  // a gate fires — doc change, caret move, parse progress. A raw-range change is
+  // none of those, so gating a card on raw ranges without also gating its REBUILD
+  // on them would leave the card suppressed indefinitely.
+  const clearProposal = StateEffect.define<null>()
+
+  /** Stands in for cmInBufferReview: holds raw ranges in a field, cleared by an
+   *  effect-only transaction, and publishes them through the shared facet. */
+  function proposalField(initial: RawRange[]) {
+    const field = StateField.define<RawRange[]>({
+      create: () => initial,
+      update: (v, tr) => (tr.effects.some((e) => e.is(clearProposal)) ? [] : v),
+      provide: (f) => proofRawRangeProvider.of((state) => state.field(f)),
+    })
+    return field
+  }
+
+  it('the card renders again once the proposal is cleared', () => {
+    const doc = `intro\n\n${YT}\n`
+    const from = doc.indexOf('https')
+    const parent = document.createElement('div')
+    document.body.appendChild(parent)
+    const view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc,
+        selection: { anchor: 0 },
+        extensions: [
+          markdown({ extensions: [GFM] }),
+          proposalField([{ from, to: from + YT.length }]),
+          youtubeCards,
+        ],
+      }),
+    })
+    expect(view.contentDOM.querySelector('.cm-youtube-card')).toBeNull()
+    // No doc change, no selection change, no parse progress — only the effect.
+    view.dispatch({ effects: clearProposal.of(null) })
+    expect(view.contentDOM.querySelector('.cm-youtube-card')).not.toBeNull()
+    view.destroy()
   })
 })

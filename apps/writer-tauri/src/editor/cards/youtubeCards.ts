@@ -11,6 +11,7 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 
 import { cursorInRange } from '@/editor/livepreview/cursorRange'
+import { touchesProofRawRange, proofRawRangesChanged } from '@/editor/proofRawRanges'
 import { detectYoutubeEmbed } from '@/lib/youtube'
 import { useYoutubePlayerStore } from '@/state/youtubePlayerStore'
 
@@ -117,6 +118,10 @@ function build(state: EditorState): DecorationSet {
       if (!embed) return undefined
       const lineFrom = state.doc.lineAt(node.from)
       const lineTo = state.doc.lineAt(Math.min(node.to, state.doc.length))
+      // Pending AI proposal: a proposed URL must read as a diff, not play. Gate on
+      // the range we would REPLACE, not the node — the replace is what would seal
+      // the red/green marks and the accept/reject buttons out of view.
+      if (touchesProofRawRange(state, lineFrom.from, lineTo.to)) return false
       // Selection touching the card lines → show the raw URL (same edge-inclusive
       // predicate the v2 block layer uses, so every card reveals consistently).
       if (cursorInRange(state, lineFrom.from, lineTo.to)) return false
@@ -175,6 +180,10 @@ export const youtubeField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
+    // Pending-proposal ranges gate whether this card may render at all, and they
+    // change on effect-only transactions (a reject), which none of the gates below
+    // would catch — the card would stay raw until an unrelated edit.
+    if (proofRawRangesChanged(tr.startState, tr.state)) return build(tr.state)
     // Doc edit: keep the mapped (position-shifted) set unless the change could
     // add/remove/alter an embed — only then re-walk the tree. This is what stops
     // the per-keystroke full-document scan.

@@ -20,6 +20,7 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 import type { SyntaxNode } from '@lezer/common'
 import { cursorInRange } from '@/editor/livepreview/cursorRange'
+import { touchesProofRawRange, proofRawRangesChanged } from '@/editor/proofRawRanges'
 
 // Stash the React root (and the height observer) on the DOM node so updateDOM/destroy
 // can reuse/clean them up.
@@ -116,6 +117,9 @@ function build(state: EditorState): DecorationSet {
       if (fenceInfo(state, node.from) !== 'mermaid') return
       const lineFrom = state.doc.lineAt(node.from)
       const lineTo = state.doc.lineAt(Math.min(node.to, state.doc.length))
+      // Pending AI proposal: a proposed fence must read as a diff, not render as a
+      // diagram. Gate on the range we would REPLACE, not the node.
+      if (touchesProofRawRange(state, lineFrom.from, lineTo.to)) return
       // Selection touching the fence → show raw source (edit mode). Same
       // edge-inclusive predicate the v2 block layer uses → consistent reveal.
       if (cursorInRange(state, lineFrom.from, lineTo.to)) return
@@ -189,6 +193,10 @@ export const mermaidField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
+    // Pending-proposal ranges gate whether this diagram may render at all, and they
+    // change on effect-only transactions (a reject), which none of the gates below
+    // would catch — the fence would stay raw until an unrelated edit.
+    if (proofRawRangesChanged(tr.startState, tr.state)) return build(tr.state)
     // Doc edit: keep the mapped set unless the change could add/remove/alter a
     // mermaid fence — only then re-walk the tree. Stops the per-keystroke scan.
     if (tr.docChanged) return touchesMermaid(tr, mapped) ? build(tr.state) : mapped

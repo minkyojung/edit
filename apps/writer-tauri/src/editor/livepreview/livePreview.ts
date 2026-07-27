@@ -16,7 +16,7 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
 import { Facet, type EditorState, type Line, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from './wikilinkComplete'
-import { nodeInProofRawRange } from '@/editor/proofRawRanges'
+import { proofRawOverlap, touchesProofRawRange } from '@/editor/proofRawRanges'
 import { cursorInRange } from './cursorRange'
 
 const HIDE = Decoration.replace({})
@@ -171,13 +171,6 @@ function buildDecos(
         const nf = node.from
         const nt = node.to
 
-        // Pending AI proposal (Option B): leave it RAW so proposal ≠ content and
-        // it edits natively. Skip the node + its children — but only when the node
-        // is CONTAINED in the proposal. A node that merely overlaps it (above all
-        // the root `Document`, whose `from` is always 0) must be descended into, or
-        // a proposal touching position 0 blanks the whole document's decorations.
-        if (nodeInProofRawRange(state, nf, nt)) return false
-
         // Images and GFM tables are owned ENTIRELY by the block-decoration layer
         // (v2/blocks): it replaces `![alt](url)` with the <img> widget and the whole
         // table with the editable-table widget (whose cells render their own inline
@@ -189,7 +182,19 @@ function buildDecos(
         // node + children (return false) so blocks is the sole owner — same as the
         // proof guard above. (In inlineOnly cell mode the nested doc has no Image/
         // Table node, so this never suppresses a cell's own inline rendering.)
+        // (Checked BEFORE the proposal gate below so blocks stays the sole owner
+        // unconditionally — a proposal overlapping a table must not hand the
+        // table's innards back to this layer.)
         if (name === 'Image' || name === 'Table') return false
+
+        // Pending AI proposal (Option B): leave it RAW so proposal ≠ content and
+        // it edits natively. `inside` → skip the node and its children; `partial`
+        // → emit nothing for THIS node but keep descending, so children clear of
+        // the proposal still render. The root `Document` is always `partial` when
+        // any proposal exists, which is what stops a proposal at position 0 from
+        // aborting the walk and blanking the document.
+        const raw = proofRawOverlap(state, nf, nt)
+        if (raw !== 'none') return raw === 'inside' ? false : undefined
 
         // INLINE-ONLY mode (table cells): a GFM table cell holds inline content
         // only — there are no real headings/lists/quotes/rules/code-blocks in a
@@ -393,6 +398,9 @@ function buildDecos(
     while ((m = re.exec(text))) {
       const start = from + m.index
       if (inCodeContext(state, start)) continue // `[[...]]` inside `code` is literal
+      // This overlay runs OUTSIDE the tree walk, so it needs its own proposal gate
+      // — the one in `enter` never sees it.
+      if (touchesProofRawRange(state, start, start + m[0].length)) continue
       const innerFrom = start + 2
       const innerTo = innerFrom + m[1].length
       const end = innerTo + 2
@@ -422,6 +430,10 @@ function buildDecos(
       for (let ln = firstLine; ln <= lastLine; ln++) {
         const line = state.doc.line(ln)
         if (listLinesDone.has(line.from)) continue // Lezer already styled this line
+        // Same as the wikilink overlay: this loop is outside the tree walk, so the
+        // proposal gate in `enter` doesn't cover it. A line carrying proposal text
+        // stays raw.
+        if (touchesProofRawRange(state, line.from, line.to)) continue
         const lm = /^(\s*)([-*+]|\d+[.)])\s/.exec(line.text)
         if (!lm) {
           // No marker — a continuation line of the list item above (incl. the empty one
