@@ -102,9 +102,11 @@ export interface RunChatArgs {
   /** Vault-relative path of a non-markdown file the user is viewing in the
    * FileViewer (`/file/:rel`) route — a PDF, image, audio, etc. There's no
    * editor/slug for these, so this is the only signal the agent gets that a
-   * file is open. Injected into the system prompt with an instruction to
-   * Read it on demand (the SDK's Read tool ingests PDFs/images natively).
-   * Null/omitted on every other surface. */
+   * file is open. Injected as a `--- VIEWING FILE ---` block on the USER
+   * message (not the system prompt, which a persistent thread freezes at its
+   * first turn — a stale copy would then contradict the per-turn CURRENT NOTE
+   * block). Path only; the model Reads it on demand, and the SDK's Read tool
+   * ingests PDFs/images natively. Null/omitted on every other surface. */
   viewingFilePath?: string | null
   /** Editor text the user had selected when sending a free-chat turn. Injected
    * as a `--- SELECTION ---` block on the USER message (not the system prompt,

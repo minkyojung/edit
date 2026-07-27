@@ -183,6 +183,22 @@ function selectionBlock(text) {
   )
 }
 
+// Mirrors viewingFileBlock() in src/agent/chat/systemPrompt.ts — same copy
+// caveat as the two above.
+function viewingFileBlock(path) {
+  return (
+    `--- VIEWING FILE ---\n` +
+    `As of this message, the user is looking at the file \`${path}\` — a non-markdown ` +
+    `file (PDF, image, audio), not a note. "this", "this file", and "here" refer to it ` +
+    `when they don't name something else. If an earlier message in this conversation ` +
+    `named a different file or note as the current one, that message is out of date and ` +
+    `this one is current.\n` +
+    `Its contents are not included here. Reading that exact path is what makes them ` +
+    `available — Read ingests PDFs and images directly. It has no note body, so the ` +
+    `note-editing tools don't apply to it.`
+  )
+}
+
 const mentionsA = (t) => /lighthouse/i.test(t)
 const mentionsB = (t) => /beekeeping/i.test(t)
 
@@ -245,6 +261,33 @@ try {
   t5ok
     ? ok('turn 5 → quoted the NEW selection, not the frozen one')
     : bad('turn 5 answered with the OLD selection — still frozen', t5.trim())
+
+  // ── Turns 6-7: the FileViewer (PDF/image) route ────────────────────────
+  // Same freeze, plus a sharper failure once the note went per-turn: a frozen
+  // VIEWING FILE block and a live CURRENT NOTE block state different things
+  // about where the user is, and nothing tells the model which to believe.
+  console.log('\n  … turn 6 (opens a PDF)')
+  const t6 = await turn(
+    `${viewingFileBlock('papers/lighthouse-optics.pdf')}` +
+      `\n\nWhich file am I looking at? Answer with just the path.`,
+  )
+  console.log(`    → ${t6.trim().replace(/\n/g, ' ')}`)
+  const t6ok = /lighthouse-optics\.pdf/i.test(t6)
+  t6ok ? ok('turn 6 → the PDF') : bad('turn 6 did not identify the PDF', t6.trim())
+
+  // Back to a note. The PDF block from turn 6 is still in the history and can't
+  // be retracted, so this is the contradiction case: the model has to prefer the
+  // block from THIS message.
+  console.log('\n  … turn 7 (back to a note — the PDF block is still in history)')
+  const t7 = await turn(
+    `${currentNoteBlock(B_REL, undefined, true)}` +
+      `\n\nWhat am I looking at right now? Answer with just the path.`,
+  )
+  console.log(`    → ${t7.trim().replace(/\n/g, ' ')}`)
+  const t7ok = /beekeeping\.md/i.test(t7) && !/\.pdf/i.test(t7)
+  t7ok
+    ? ok('turn 7 → the note, not the stale PDF (no contradiction)')
+    : bad('turn 7 answered with the stale PDF', t7.trim())
 
   await request('shutdown', {}).catch(() => {})
 } catch (err) {

@@ -660,7 +660,16 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // changes to another file.
   function resetContextChips() {
     if (selectionText) useEditorSelectionStore.getState().collapse?.()
-    if (viewingFilePath) setFileChipDismissed(true)
+    // The viewed file is NOT detached here, unlike before. It's the same kind of
+    // thing as the open note — where the user still IS, not a one-shot
+    // attachment — so it stays for as long as they're on that route, and the
+    // note chip is kept for the same reason.
+    //
+    // Dropping it used to be invisible: the file was frozen into the thread's
+    // system prompt on turn 1, so the model kept seeing it no matter what the
+    // chip did. Now that it rides the per-turn message, detaching on send would
+    // mean "summarize this PDF" stops working from the second question on.
+    // The X still detaches it, and navigating to another file re-attaches.
   }
 
   async function handleSend(

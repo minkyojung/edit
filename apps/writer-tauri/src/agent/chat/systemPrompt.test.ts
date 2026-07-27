@@ -14,6 +14,7 @@ import {
   currentNoteBlock,
   referencedFilesBlock,
   selectionBlock,
+  viewingFileBlock,
   type SystemBlocksArgs,
 } from './systemPrompt'
 
@@ -109,6 +110,14 @@ describe('per-turn file context rides the user message, not the system prompt', 
     expect(out).not.toContain('--- REFERENCED FILES ---')
   })
 
+  // Once the note went per-turn, a frozen VIEWING FILE block would contradict
+  // it outright — both answer "where is the user" and the model can't tell
+  // which is stale.
+  it('composeSystemBlocks never emits the VIEWING FILE block', () => {
+    const out = text(composeSystemBlocks(args({ vaultRoot: '/v' })))
+    expect(out).not.toContain('--- VIEWING FILE ---')
+  })
+
   // A selection changes on every drag, so a frozen one is wrong even more
   // often than a frozen note was.
   it('composeSystemBlocks never emits the SELECTION block', () => {
@@ -197,6 +206,42 @@ describe('currentNoteBlock', () => {
 
   it('returns "" for an empty path', () => {
     expect(currentNoteBlock('')).toBe('')
+  })
+})
+
+describe('viewingFileBlock', () => {
+  it('names the file every turn', () => {
+    const block = viewingFileBlock('papers/paper.pdf')
+    expect(block).toContain('--- VIEWING FILE ---')
+    expect(block).toContain('`papers/paper.pdf`')
+  })
+
+  it('dates itself and supersedes an earlier file OR note', () => {
+    const block = viewingFileBlock('papers/paper.pdf')
+    expect(block).toContain('As of this message')
+    expect(block).toContain('out of date')
+    // Must supersede a stale CURRENT NOTE too, not just an older file — the two
+    // blocks both answer "where is the user", so whichever is older has to lose.
+    expect(block).toMatch(/file or note/i)
+  })
+
+  it('reads as statements, not as commands to the model', () => {
+    const block = viewingFileBlock('papers/paper.pdf')
+    expect(block).not.toMatch(/\bYou (must|should|will)\b/)
+    expect(block).not.toMatch(/\bUse the Read tool\b/)
+    expect(block).not.toMatch(/\bdon't try to edit\b/i)
+  })
+
+  it('still tells the model the contents are absent and readable', () => {
+    const block = viewingFileBlock('papers/paper.pdf')
+    expect(block).toContain('not included here')
+    expect(block).toContain('Read')
+  })
+
+  it('returns "" when no file is open', () => {
+    expect(viewingFileBlock(null)).toBe('')
+    expect(viewingFileBlock(undefined)).toBe('')
+    expect(viewingFileBlock('')).toBe('')
   })
 })
 

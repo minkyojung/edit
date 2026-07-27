@@ -75,6 +75,7 @@ import {
   referencedFilesBlock,
   selectionBlock,
   shouldResumeSession,
+  viewingFileBlock,
   truncateDocForPrompt,
 } from './systemPrompt'
 import { markNoteBodyShown, needsNoteBody } from './noteContextLedger'
@@ -297,6 +298,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // drop out via filter.
   const prompt = [
     currentNote,
+    viewingFileBlock(viewingFilePath),
     selectionBlock(selectionText),
     outcome.note,
     basePrompt,
@@ -321,13 +323,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     knowledgeBaseFolder: getKnowledgeBaseFolder(),
     // The DOCUMENT block now carries ONLY a caller-supplied synthetic page (the
     // Read Later queue's article list, the wiki-handoff content), which is fixed
-    // for the run and so is safe to freeze into the system prompt. The open
-    // note left this channel: it changes as the user navigates, and a persistent
-    // thread's system prompt never updates — it rides `currentNoteBlock` in the
-    // user message instead. Viewing a non-markdown file (PDF/image/…) suppresses
-    // the block outright; the VIEWING FILE block tells the model to Read it.
-    appendDocument: viewingFilePath ? false : isSyntheticPage && appendDocument,
-    viewingFilePath,
+    // for the run and so is safe to freeze into the system prompt. Everything
+    // that tracks where the user IS — the open note, the viewed file, the
+    // selection — left this channel for the per-turn user message, because a
+    // persistent thread's system prompt never updates after its first turn.
+    //
+    // (The old `viewingFilePath ? false :` guard here is gone: a `/file/` route
+    // and a synthetic page can't both be active, so it could never change the
+    // result once the open note stopped using this block.)
+    appendDocument: isSyntheticPage && appendDocument,
     today: todayLocalDate(),
   })
   const runId = crypto.randomUUID()

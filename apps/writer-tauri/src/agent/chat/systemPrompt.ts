@@ -95,10 +95,6 @@ export interface SystemBlocksArgs {
    * Slash commands that already embed `{{document}}` in their body
    * pass false to avoid the document showing up twice. */
   appendDocument: boolean
-  /** Vault-relative path of a non-markdown file open in the FileViewer (PDF,
-   * image, audio, …). Unlike `currentFilePath`, there's no text body to inject
-   * — the model is told to Read the path on demand to interpret it. */
-  viewingFilePath?: string | null
   /** Today's date as local `YYYY-MM-DD` (from `todayLocalDate()`). Injected
    * past the cache boundary so the model can resolve "today" / "today's
    * daily note" without guessing — and so the daily-changing value never
@@ -111,7 +107,7 @@ export interface SystemBlocksArgs {
  * Anchor ordering by cache stability (most-stable → most-mutable):
  *   prefix (stable):   systemBody(persona) → claudeMd → folder blocks →
  *                      SELF PROFILE → PREFERENCES
- *   suffix (dynamic):  today → viewing file → document
+ *   suffix (dynamic):  today → document
  *
  * `systemBody` (FREE_CHAT_PROMPT) and `claudeMd` (the Karpathy / Claude Code
  * schema — vault layout, operations, tool usage, conventions) are app-static,
@@ -139,7 +135,6 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     captureFolder,
     knowledgeBaseFolder,
     appendDocument,
-    viewingFilePath,
     today,
   } = args
   const prefix: string[] = []
@@ -237,24 +232,13 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `When the user says "today" / "the daily note", resolve it against this date.`,
     )
   }
-  if (viewingFilePath) {
-    dynamic.push(
-      `--- VIEWING FILE ---\n` +
-        `The user is currently viewing the file \`${viewingFilePath}\` (a non-markdown ` +
-        `file — e.g. a PDF, image, or audio). It is NOT a wiki note: there is no body ` +
-        `text in this prompt for it. When they say "this", "this file", "here", or ask ` +
-        `you to summarize / explain / analyze without naming a file, they mean THIS file. ` +
-        `Use the Read tool on that exact path to open and interpret it (Read ingests PDFs ` +
-        `and images directly). Treat it as read-only — don't try to edit it.`,
-    )
-  }
   // NOTE: the open note, the selection, @-mentioned files and attached files
   // are NOT injected here. They belong to a specific turn, but a persistent
   // thread freezes its system prompt at the first turn's value (the SDK has no
   // setSystemPrompt), so anything added on a later turn would never reach the
   // model through this channel. They ride the USER message instead — see
-  // currentNoteBlock / selectionBlock / attachedFilesBlock /
-  // referencedFilesBlock, built into the prompt in runChat.
+  // currentNoteBlock / viewingFileBlock / selectionBlock /
+  // attachedFilesBlock / referencedFilesBlock, built into the prompt in runChat.
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)
 
   if (dynamic.length > 0) {
@@ -328,6 +312,35 @@ export function currentNoteBlock(
     lines.push(`Its content was included earlier in this conversation and has not changed since.`)
   }
   return lines.join('\n')
+}
+
+/** The `--- VIEWING FILE ---` block for a non-markdown file open in the
+ * FileViewer (`/file/:rel`) — a PDF, image, audio.
+ *
+ * Rides the USER message for the same reason {@link currentNoteBlock} does. It
+ * became urgent once the note moved: a frozen VIEWING FILE block and a per-turn
+ * CURRENT NOTE block will state different things about where the user is, and
+ * the model has no way to tell which is stale. Both per-turn, they can only
+ * disagree when they're both true — and they never are, since a `/file/` route
+ * carries no slug.
+ *
+ * Path only, no ledger. There's no body to send: the file isn't a note, so the
+ * model reads it on demand. That also makes this the cheapest of the three
+ * blocks — one line, every turn.
+ */
+export function viewingFileBlock(path: string | null | undefined): string {
+  if (!path) return ''
+  return (
+    `--- VIEWING FILE ---\n` +
+    `As of this message, the user is looking at the file \`${path}\` — a non-markdown ` +
+    `file (PDF, image, audio), not a note. "this", "this file", and "here" refer to it ` +
+    `when they don't name something else. If an earlier message in this conversation ` +
+    `named a different file or note as the current one, that message is out of date and ` +
+    `this one is current.\n` +
+    `Its contents are not included here. Reading that exact path is what makes them ` +
+    `available — Read ingests PDFs and images directly. It has no note body, so the ` +
+    `note-editing tools don't apply to it.`
+  )
 }
 
 /** The `--- SELECTION ---` block for the passage highlighted in the editor.
