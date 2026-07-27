@@ -39,6 +39,26 @@ describe('parseCommand — Claude Code slash-command convention', () => {
     expect(() => parseCommand(raw, 'c.md')).toThrow(CommandParseError)
   })
 
+  // `model` is the one field validated leniently: the real model set grows
+  // outside this repo, so a command naming a model newer than this build must
+  // survive rather than take its whole file down.
+  it('accepts a model id it does not recognize (passes it through)', () => {
+    const raw = '---\nname: c\nmodel: claude-opus-9\n---\n\nbody'
+    const cmd = parseCommand(raw, 'c.md')
+    expect(cmd.model).toBe('claude-opus-9')
+  })
+
+  it('still accepts a known model id', () => {
+    const raw = '---\nname: c\nmodel: claude-opus-4-8\n---\n\nbody'
+    expect(parseCommand(raw, 'c.md').model).toBe('claude-opus-4-8')
+  })
+
+  // effort stays strict — it IS a closed set we own.
+  it('still rejects an unknown effort loudly', () => {
+    const raw = '---\nname: c\neffort: turbo\n---\n\nbody'
+    expect(() => parseCommand(raw, 'c.md')).toThrow(CommandParseError)
+  })
+
   it('reads a quoted value that contains a colon', () => {
     const raw = "---\nname: c\nargument-hint: 'format: <lang>'\n---\n\nbody"
     expect(parseCommand(raw, 'c.md').argumentHint).toBe('format: <lang>')

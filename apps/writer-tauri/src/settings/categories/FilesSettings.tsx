@@ -4,7 +4,7 @@
 
 import { useDocsStore } from '@/state/docsStore'
 import { useSettingsStore } from '@/state/settingsStore'
-import { CHAT_MODELS, CHAT_MODEL_LABELS, type ChatModel } from '@/chat/types'
+import { CHAT_MODELS, labelForModel, normalizeModel, type ChatModel } from '@/chat/types'
 import {
   Select,
   SelectContent,
@@ -142,14 +142,16 @@ export function FilesSettings() {
         title="Organize model"
         description="Model used when Organize files notes into the wiki/daily. Haiku is cheaper for bulk passes; Opus is highest quality."
       >
-        <Select value={intakeModel} onValueChange={(v) => setIntakeModel(v as ChatModel)}>
+        {/* normalizeModel: a setting persisted before a model was renamed/retired
+            would match no SelectItem and render an empty trigger. */}
+        <Select value={normalizeModel(intakeModel)} onValueChange={(v) => setIntakeModel(v as ChatModel)}>
           <SelectTrigger className="w-48">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {CHAT_MODELS.map((m) => (
               <SelectItem key={m} value={m}>
-                {CHAT_MODEL_LABELS[m]}
+                {labelForModel(m)}
               </SelectItem>
             ))}
           </SelectContent>

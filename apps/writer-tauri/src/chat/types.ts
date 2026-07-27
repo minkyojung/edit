@@ -19,6 +19,7 @@
 export type ChatModel =
   | 'claude-haiku-4-5'
   | 'claude-sonnet-5'
+  | 'claude-opus-5'
   | 'claude-opus-4-8'
   | 'claude-fable-5'
   // Legacy — kept selectable for threads created before Sonnet 5, but listed
@@ -28,6 +29,7 @@ export type ChatModel =
 export const CHAT_MODELS: readonly ChatModel[] = [
   'claude-haiku-4-5',
   'claude-sonnet-5',
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-fable-5',
   'claude-sonnet-4-6',
@@ -36,12 +38,22 @@ export const CHAT_MODELS: readonly ChatModel[] = [
 export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
   'claude-haiku-4-5': 'Haiku 4.5',
   'claude-sonnet-5': 'Sonnet 5',
+  'claude-opus-5': 'Opus 5',
   'claude-opus-4-8': 'Opus 4.8',
   'claude-fable-5': 'Fable 5',
   'claude-sonnet-4-6': 'Sonnet 4.6',
 }
 
 export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-5'
+
+/** Display name for a model id. Reads the built-in table first, then degrades to
+ * the bare id minus its `claude-` prefix — never an empty string. Indexing
+ * CHAT_MODEL_LABELS directly is what made an unrecognized id (a thread saved
+ * before a model was added, a persisted setting, a slash command naming a model
+ * we don't list) render as a blank button. Callers should use this instead. */
+export function labelForModel(model: string): string {
+  return CHAT_MODEL_LABELS[model as ChatModel] ?? model.replace(/^claude-/, '')
+}
 
 /** One model the account can actually use, as reported by the Claude Agent
  * SDK's session-init handshake (query.supportedModels()). Only `value` is
@@ -70,7 +82,14 @@ export function normalizeModel(model: string | undefined): ChatModel {
 /** Fast mode = faster output without downgrading the model. The SDK marks
  * which models support it (`supportsFastMode`); in our lineup only Opus does.
  * Mirrors effortsForModel's client-side capability gating, so the toggle only
- * shows where it's real. */
+ * shows where it's real.
+ *
+ * Opus 5 is deliberately NOT listed yet: supportedModels() doesn't report it at
+ * all (it still describes Opus as 4.8), so there's no `supportsFastMode` flag to
+ * read, and a probe couldn't settle it either — a fastMode turn came back
+ * `fast_mode_state: 'off'` on Opus 4.8 too, which this account is flagged for.
+ * Offering a toggle that silently does nothing is worse than omitting it; flip
+ * this the moment the SDK handshake lists Opus 5 with the flag. */
 export function modelSupportsFastMode(model: ChatModel): boolean {
   return model === 'claude-opus-4-8'
 }
@@ -101,20 +120,31 @@ export const EFFORTS_BY_MODEL: Record<ChatModel, readonly ChatEffort[]> = {
   // Sonnet 5 is the first Sonnet-tier model to expose the extra `xhigh` gear;
   // Sonnet 4.6 tops out at `high`.
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh'],
+  'claude-opus-5': ['low', 'medium', 'high', 'xhigh'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh'],
   'claude-sonnet-4-6': ['low', 'medium', 'high'],
 }
 
-export function effortsForModel(model: ChatModel): readonly ChatEffort[] {
-  return EFFORTS_BY_MODEL[model]
+/** Efforts offered for a model we have no entry for. Every Claude model exposes
+ * at least low/medium/high, so this is the safe floor: an unknown id renders a
+ * working picker instead of crashing. `xhigh` is deliberately omitted — offering
+ * a gear the model may not have is worse than under-offering one it does (the
+ * catalog fills the real list in once it lands). */
+const FALLBACK_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high']
+
+/** Takes a plain string, not ChatModel: a persisted thread, a slash-command
+ * frontmatter field, or (soon) a runtime-fetched catalog can all carry an id
+ * that isn't in our built-in union. Falling back keeps those paths alive. */
+export function effortsForModel(model: string): readonly ChatEffort[] {
+  return EFFORTS_BY_MODEL[model as ChatModel] ?? FALLBACK_EFFORTS
 }
 
 /** Snap an effort to one the model supports, falling back to its highest
  * level. Keeps a thread's stored `xhigh` from leaking into the UI / the SDK
  * call after the user switches to a model that tops out at `high`. */
-export function clampEffort(effort: ChatEffort, model: ChatModel): ChatEffort {
-  const allowed = EFFORTS_BY_MODEL[model]
+export function clampEffort(effort: ChatEffort, model: string): ChatEffort {
+  const allowed = effortsForModel(model)
   return allowed.includes(effort) ? effort : allowed[allowed.length - 1]
 }
 

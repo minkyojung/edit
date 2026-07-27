@@ -15,7 +15,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { CHAT_MODELS, CHAT_MODEL_LABELS, type ChatModel } from '@/chat/types'
+import { CHAT_MODELS, labelForModel, type ChatModel } from '@/chat/types'
 import { useAvailableModelsStore } from '@/state/availableModelsStore'
 import { cn } from '@/lib/utils'
 
@@ -60,7 +60,7 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
     <DropdownMenu>
       <DropdownMenuTrigger
         disabled={disabled}
-        aria-label={`Model: ${CHAT_MODEL_LABELS[value]}`}
+        aria-label={`Model: ${labelForModel(value)}`}
         className={cn(
           'inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-body text-muted-foreground transition-colors',
           'hover:bg-accent hover:text-foreground',
@@ -68,7 +68,7 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
           'disabled:pointer-events-none disabled:opacity-50',
         )}
       >
-        {CHAT_MODEL_LABELS[value]}
+        {labelForModel(value)}
       </DropdownMenuTrigger>
       <DropdownMenuContent side="top" align="end" className="w-44 rounded-xl p-1">
         <DropdownMenuLabel className="px-2.5 text-footnote text-muted-foreground">
@@ -80,7 +80,7 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
             onSelect={() => onChange(m)}
             className="items-center gap-2.5 rounded-lg px-2.5 py-1.5"
           >
-            <span className="min-w-0 flex-1 text-body font-medium">{CHAT_MODEL_LABELS[m]}</span>
+            <span className="min-w-0 flex-1 text-body font-medium">{labelForModel(m)}</span>
             {m === value && (
               <IconCheck className="size-4 shrink-0 text-muted-foreground" stroke={2} />
             )}

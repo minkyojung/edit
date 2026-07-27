@@ -72,7 +72,20 @@ export function parseCommand(raw: string, source: string): LoadedCommand {
   }
   const kind = kindRaw as CommandKindId
 
-  const model = optionalEnum(fm, 'model', CHAT_MODELS, source) as ChatModel | undefined
+  // Model is validated LENIENTLY (unlike kind/effort/scope, which are closed
+  // sets we own). The set of real models grows outside this codebase, so a
+  // command naming one we haven't listed yet must not take the whole file down
+  // with it — that would silently drop a working command the moment Anthropic
+  // ships a model. Warn and pass it through; the downstream lookups (label,
+  // efforts) all fall back safely, and an id that truly isn't servable surfaces
+  // as a normal turn error.
+  const modelRaw = optionalString(fm, 'model')
+  if (modelRaw && !(CHAT_MODELS as readonly string[]).includes(modelRaw)) {
+    console.warn(
+      `[commands] ${source}: model "${modelRaw}" is not in the built-in list; passing through`,
+    )
+  }
+  const model = modelRaw as ChatModel | undefined
   const effort = optionalEnum(fm, 'effort', CHAT_EFFORTS, source) as ChatEffort | undefined
 
   const scope = (optionalEnum(fm, 'scope', SCOPES, source) as CommandScope | undefined) ?? 'none'

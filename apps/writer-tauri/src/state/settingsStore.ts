@@ -17,7 +17,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { WINDOW_ROOT } from '@/lib/windowRoot'
-import { type ChatModel, DEFAULT_CHAT_MODEL } from '@/chat/types'
+import { type ChatModel, DEFAULT_CHAT_MODEL, normalizeModel } from '@/chat/types'
 
 /** macOS system sound played when a background chat job finishes (file names in
  * /System/Library/Sounds). 'None' silences the completion ping. */
@@ -262,9 +262,13 @@ export function getTemplatesFolder(): string {
   return useSettingsStore.getState().templatesFolder
 }
 
-/** Model the Organize / intake agent runs on. Non-React read for runIntake. */
+/** Model the Organize / intake agent runs on. Non-React read for runIntake.
+ * Normalized on the way out: this value is PERSISTED (localStorage), so a
+ * setting saved before a model was renamed or retired would otherwise reach the
+ * sidecar verbatim and fail the turn. The chat path already coerces its stored
+ * id (ChatPanel); this is the same guard for the intake path. */
 export function getIntakeModel(): ChatModel {
-  return useSettingsStore.getState().intakeModel
+  return normalizeModel(useSettingsStore.getState().intakeModel)
 }
 
 /** Whether idle auto-organize of the inbox is enabled. Non-React read for the
