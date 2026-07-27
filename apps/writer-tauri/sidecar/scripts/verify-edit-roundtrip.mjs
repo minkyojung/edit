@@ -213,7 +213,10 @@ try {
           '"존재하지않는문장" and new_string exactly "X". Do not read the file first — ' +
           'call the tool directly with those exact values.',
         relayTools: ['propose_edit'],
-        builtinTools: [], allowDelegation: false, sandboxEnabled: false,
+        // NOT `[]` — the sidecar reads an empty array as "unspecified" and hands
+        // over the full claude_code preset, Read and Bash included. Naming one
+        // harmless tool is how you actually withhold the rest.
+        builtinTools: ['Glob'], allowDelegation: false, sandboxEnabled: false,
       }).catch((err) => resolve({ kind: 'error', code: err?.code }))
     })
     if (r.kind !== 'ok') bad('D: chat run did not complete', JSON.stringify(r))

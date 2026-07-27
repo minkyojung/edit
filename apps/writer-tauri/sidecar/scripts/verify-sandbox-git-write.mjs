@@ -27,7 +27,7 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { FrameParser, encode } from '../src/jsonrpc.mjs'
 
@@ -80,13 +80,31 @@ const ok = (l) => console.log(`  ✓ ${l}`)
 const bad = (l, e) => { failed = true; console.log(`  ✗ ${l}${e ? ` — ${e}` : ''}`) }
 
 let assistantText = ''
-function runChat(prompt) {
+let toolOutput = ''
+// `sandboxEnabled` is a parameter, not a constant, because the only way to show
+// the sandbox is doing anything is to run the SAME probe with it off and compare.
+// The SDK exposes no signal that the sandbox initialised — no field on the init
+// message, no message type, no violation callback (measured against a live run),
+// and `failIfUnavailable: false` means a host where Seatbelt can't start runs
+// unsandboxed and says nothing. A single "the write failed" assertion is
+// therefore not evidence; the DELTA between the two runs is.
+function runChat(prompt, { sandboxEnabled = true } = {}) {
   return new Promise((resolve) => {
     const runId = globalThis.crypto.randomUUID()
     notifListeners.push((msg) => {
       if (msg.params?.runId && msg.params.runId !== runId) return
       if (msg.method === 'chat/event' && msg.params?.event?.type === 'assistant') {
         for (const b of msg.params.event.message?.content ?? []) if (b.type === 'text') assistantText += b.text
+      }
+      // Tool results carry the shell's own stderr — where the denial signature
+      // lives. The model's narration is not usable for this: measured, it
+      // rewrites the commands it is given.
+      if (msg.method === 'chat/event' && msg.params?.event?.type === 'user') {
+        for (const b of msg.params.event.message?.content ?? []) {
+          const t = typeof b?.content === 'string' ? b.content
+            : Array.isArray(b?.content) ? b.content.map((c) => c?.text ?? '').join(' ') : ''
+          if (t) toolOutput += t
+        }
       }
       if (msg.method === 'chat/done') resolve({ kind: 'ok' })
       else if (msg.method === 'chat/error') resolve({ kind: 'error', code: msg.params.code })
@@ -96,7 +114,7 @@ function runChat(prompt) {
       systemPrompt: 'You are a shell operator. Run exactly the command asked, then report the exact stdout/stderr you saw. Do not improvise alternatives.',
       vaultPath: workTree, gitDir, gitWorkTree: workTree,
       relayTools: [], builtinTools: ['Bash'], allowDelegation: false,
-      sandboxEnabled: true,
+      sandboxEnabled,
     }).catch((err) => resolve({ kind: 'error', code: err?.code }))
   })
 }
@@ -108,17 +126,44 @@ try {
   st === null ? ok('setToken') : bad('setToken', JSON.stringify(st))
 
   // ── 0. Is the sandbox actually enforcing? ────────────────────────────────
-  // `failIfUnavailable: false` means a host where Seatbelt can't initialise
-  // runs UNSANDBOXED. Everything below would then pass for the wrong reason.
-  console.log('\n  --- 0. sandbox is enforcing (guard against a vacuous pass) ---')
-  assistantText = ''
-  await runChat(`Run this exact command: touch ${PROBE}`)
-  if (existsSync(PROBE)) {
+  //
+  // Run one probe TWICE and compare. Absence of the file after the sandboxed
+  // run means nothing on its own: the model may have declined, rewritten the
+  // command, lost its Bash tool, or the turn may have errored. All of those
+  // look exactly like "the sandbox blocked it". The unsandboxed run is the
+  // positive control that separates them — if the probe cannot write the file
+  // even with nothing in its way, this run proves nothing and says so.
+  const probeCmd = `Run this exact command: touch ${PROBE}`
+  console.log('\n  --- 0. sandbox is enforcing (differential guard) ---')
+
+  rmSync(PROBE, { force: true })
+  assistantText = ''; toolOutput = ''
+  await runChat(probeCmd, { sandboxEnabled: false })
+  const wroteUnsandboxed = existsSync(PROBE)
+  rmSync(PROBE, { force: true })
+
+  assistantText = ''; toolOutput = ''
+  await runChat(probeCmd, { sandboxEnabled: true })
+  const wroteSandboxed = existsSync(PROBE)
+  rmSync(PROBE, { force: true })
+
+  if (!wroteUnsandboxed) {
+    inconclusive = true
+    console.log('  ! the probe could not write the file even UNSANDBOXED')
+    console.log('  ! so its absence under the sandbox is not evidence of anything')
+  } else if (wroteSandboxed) {
     inconclusive = true
     console.log(`  ! the model wrote OUTSIDE the vault and repo (${PROBE})`)
     console.log('  ! the sandbox is not enforcing here, so the rest proves nothing')
   } else {
-    ok('a write outside the vault and repo was refused')
+    ok('the same write succeeds unsandboxed and is refused sandboxed')
+    // Corroboration only. The denial reaches the shell as EPERM, which zsh
+    // renders "operation not permitted" and BSD tools render "Operation not
+    // permitted" — shell- and platform-specific, so a miss here is reported
+    // without failing the run. The delta above is the actual assertion.
+    ;/operation not permitted/i.test(toolOutput)
+      ? ok('the refusal carried a permission-denied signature (EPERM)')
+      : console.log('  … no EPERM string in the tool output (informational)')
   }
 
   // ── 1. The fix: git can write to the external repo ───────────────────────
@@ -153,7 +198,7 @@ try {
 } finally {
   setTimeout(() => {
     child.kill('SIGTERM')
-    if (inconclusive) console.log('\nRESULT: INCONCLUSIVE (sandbox not enforcing on this host)')
+    if (inconclusive) console.log('\nRESULT: INCONCLUSIVE (see scenario 0 — nothing below is evidence)')
     else console.log(failed ? '\nRESULT: FAIL' : '\nRESULT: PASS')
     process.exit(inconclusive ? 2 : failed ? 1 : 0)
   }, 300)
