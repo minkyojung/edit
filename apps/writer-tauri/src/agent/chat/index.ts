@@ -277,7 +277,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Live stream → MessagePart translator. Owns the timeline state
   // (partsById, blockIndexToPartId, etc.) so this file only sees
   // the entry points it actually drives.
-  const parser = createStreamParser({ onPart, onTextDelta, onThinkingDelta })
+  const parser = createStreamParser({
+    onPart,
+    onTextDelta,
+    onThinkingDelta,
+    // Lets the parser notice when a different model answered than the one this
+    // run asked for — a silent substitution the SDK reports as a plain success.
+    requestedModel: args.model,
+  })
 
   const unlistens: UnlistenFn[] = []
 

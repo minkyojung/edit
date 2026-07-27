@@ -499,13 +499,19 @@ export interface NoticePart {
   id: string
   ts: number
   type: 'notice'
-  kind: 'permission-denied' | 'model-fallback' | 'info'
+  kind: 'permission-denied' | 'model-fallback' | 'model-unavailable' | 'info'
   /** permission-denied: the blocked tool, and the human reason when the SDK
    * provided one (`decision_reason`). */
   toolName?: string
   reason?: string
-  /** model-fallback: the model the SDK switched to after a refusal. */
+  /** model-fallback / model-unavailable: the model that actually answered. */
   fallbackModel?: string
+  /** model-unavailable: the model the user picked, which didn't serve. Distinct
+   * from `model-fallback` (a safety refusal on an available model) — here the
+   * requested model simply isn't offered through this path, and the reply came
+   * from a different one WITHOUT any error. The picker would otherwise keep
+   * claiming a model that never answers. */
+  requestedModel?: string
   /** info: the SDK's `content`, and its render level (drives prominence — the
    * transcript-only `info` level is filtered out before a part is created). */
   text?: string

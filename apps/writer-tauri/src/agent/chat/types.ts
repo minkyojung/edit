@@ -246,6 +246,11 @@ export interface ChatEvent {
     direction?: 'retry' | 'revert' | 'sticky'
     // assistant / user — message.content is an array of content blocks
     message?: {
+      // The model that actually PRODUCED this message (the standard Anthropic
+      // response field). Not always the one the run asked for: requesting a
+      // model the CLI no longer serves returns a successful turn from a
+      // substitute, and this is the only place that difference shows up.
+      model?: string
       content?: Array<{
         type: string
         text?: string
