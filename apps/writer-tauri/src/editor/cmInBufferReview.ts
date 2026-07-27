@@ -134,8 +134,17 @@ const matField = StateField.define<ProposalMat[]>({
   update(value, tr) {
     let next = value
     if (tr.docChanged) {
-      // Track existing ranges INWARD as the doc changes around them.
-      next = value.map((m) => remapMat(m, tr.changes, INWARD))
+      // Track existing ranges INWARD as the doc changes around them, then discard any
+      // proposal the edit left with NOTHING on either side. An edit spanning both red
+      // and green clamps all four positions into the deletion, and a mat with no red
+      // and no green describes no text: `build` still drew its ✓/✕ pair — a widget
+      // offering to accept or reject something invisible — and `isMaterialized` kept
+      // reporting true, so the applier went on believing the editor owned a proposal
+      // that no longer existed. Empty on ONE side is normal and stays: a pure append
+      // has no red, a deletion proposal has no green.
+      next = value
+        .map((m) => remapMat(m, tr.changes, INWARD))
+        .filter((m) => m.hunks.some((h) => h.redTo > h.redFrom || h.greenTo > h.greenFrom))
     }
     for (const e of tr.effects) {
       if (e.is(setMat)) next = e.value
@@ -436,8 +445,13 @@ function build(state: EditorState): DecorationSet {
 }
 
 // ── Freeze the red (old) text — same rule as Stage 1 ─────────────────────────
+// Gated on USER events only: accept, reject and the reconciler all edit red on
+// purpose and dispatch without a userEvent, so they must pass through.
+// `move` covers drag-and-drop, which CodeMirror reports as `move.drop` rather than
+// as a delete — dragging a selection that overlapped red used to carry the original
+// text out from under the proposal while typing into it was refused.
 const freezeOldText = EditorState.changeFilter.of((tr) => {
-  if (!(tr.isUserEvent('input') || tr.isUserEvent('delete'))) return true
+  if (!(tr.isUserEvent('input') || tr.isUserEvent('delete') || tr.isUserEvent('move'))) return true
   const mats = tr.startState.field(matField, false)
   if (!mats?.length) return true
   const ranges: number[] = []
