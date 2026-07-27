@@ -1056,6 +1056,21 @@ export function GalleryPage() {
                 fallbackModel: 'claude-opus-4-8',
               }}
             />
+            {/* Sits next to model-fallback on purpose: both say "a different
+                model answered", and the pair shows why they're separate kinds —
+                a safety refusal names only the substitute, an unavailable model
+                has to name the user's choice too or the row reads as unrelated
+                to what they picked. */}
+            <NoticeRow
+              part={{
+                id: 'n2b',
+                ts: 0,
+                type: 'notice',
+                kind: 'model-unavailable',
+                requestedModel: 'claude-opus-4-1-20250805',
+                fallbackModel: 'claude-opus-4-8',
+              }}
+            />
             <NoticeRow
               part={{
                 id: 'n3',

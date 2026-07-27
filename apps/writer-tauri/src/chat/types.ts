@@ -15,7 +15,7 @@
 
 // Fetched-catalog facts, consulted by the lookups below. modelFacts imports
 // nothing, so this direction can't cycle.
-import { modelFactsFor } from '@/chat/modelFacts'
+import { familyKey, modelFactsFor } from '@/chat/modelFacts'
 
 /** Models the user can pick from in the PromptInput model selector.
  * Kept narrow + explicit so the UI can display friendly labels without
@@ -71,7 +71,10 @@ export function labelForModel(model: string): string {
     const stripped = fromCatalog.replace(/^claude\s+/i, '').trim()
     return stripped || fromCatalog
   }
-  return model.replace(/^claude-/, '')
+  // Last resort: the bare id. Drop the release-date suffix too — these labels
+  // land mid-sentence in the activity rows ("… is unavailable — answered with
+  // …"), where a raw `opus-4-1-20250805` reads as a leaked internal id.
+  return familyKey(model).replace(/^claude-/, '')
 }
 
 /** One model the account can actually use, as reported by the Claude Agent
