@@ -77,6 +77,22 @@ const dropChange = StateEffect.define<string>()
 const addMat = StateEffect.define<ProposalMat>({
   map: (mat, changes) => remapMat(mat, changes, INWARD),
 })
+// Materialize a freshly-planned proposal (the reconciler's INSERT step). Distinct
+// from `addMat` because the two carry coordinates in DIFFERENT spaces, and one
+// effect cannot serve both:
+//   • addMat is an UNDO artifact. Its payload is in post-decision coordinates and
+//     arrives alongside the undo's own re-insertion changes, so the field expands it
+//     OUTWARD through them.
+//   • putMat comes from planAdditional, whose mats are already in POST-insertion
+//     coordinates, dispatched in the SAME transaction as those insertions. Mapping it
+//     would be wrong twice over — and in fact threw, because a green range sits past
+//     the end of the pre-change document (`Position N is out of range for changeset
+//     of length M`). That exception escaped `reconcile`, so NO proposal ever appeared
+//     in the buffer: the review card rendered from the store while the editor stayed
+//     blank. Every replace/add proposal hit it.
+// Never enters history (materialization is dispatched addToHistory:false), so it
+// needs no `map` and is deliberately not inverted by reviewUndoLink.
+const putMat = StateEffect.define<ProposalMat>()
 // Test-only initial materialization; never dispatched in production and never flows
 // through invertedEffects/history, so it needs no `map`.
 const setMat = StateEffect.define<ProposalMat[]>()
@@ -92,7 +108,10 @@ const matField = StateField.define<ProposalMat[]>({
     for (const e of tr.effects) {
       if (e.is(setMat)) next = e.value
       else if (e.is(dropChange)) next = next.filter((m) => m.changeId !== e.value)
-      else if (e.is(addMat)) {
+      else if (e.is(putMat)) {
+        // Already in this transaction's POST-change space — take it verbatim.
+        next = [...next.filter((m) => m.changeId !== e.value.changeId), e.value]
+      } else if (e.is(addMat)) {
         // The payload is in this transaction's PRE-change (post-decision) space. Map it
         // OUTWARD through the transaction's own changes so a red/green range that was
         // collapsed onto the re-insertion point re-expands to cover the restored text.
@@ -412,10 +431,13 @@ export function cmInBufferReview(slug: string): Extension {
     fresh.forEach((c) => insertedFingerprint.set(c.id, contentFingerprint(c)))
     // Materializing is a SYSTEM action — keep it OUT of undo history so Cmd-Z hits
     // the user's own last edit, not "remove the proposal that just appeared".
-    // addMat (not setMat) so existing proposals are preserved + position-mapped.
+    // putMat (not setMat) so existing proposals are preserved + position-mapped, and
+    // not addMat: planAdditional's mats are already in post-insertion coordinates, so
+    // addMat's OUTWARD remap would map a green range past the end of the pre-change
+    // document and throw.
     view.dispatch({
       changes: plan.insertions,
-      effects: plan.mats.map((m) => addMat.of(m)),
+      effects: plan.mats.map((m) => putMat.of(m)),
       annotations: Transaction.addToHistory.of(false),
     })
   }
