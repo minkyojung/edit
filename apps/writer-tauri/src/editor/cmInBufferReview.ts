@@ -41,12 +41,9 @@ const reopenEffect = StateEffect.define<{ id: string; was: 'accept' | 'reject' }
 //   • INWARD  (start +1, end −1): boundary insertions fall OUTSIDE the range — used
 //     to track already-materialized ranges as the user types near them (a keystroke
 //     at a boundary must not silently swallow into red/green).
-//   • OUTWARD (start −1, end +1): a range that collapsed onto an insertion point
-//     RE-EXPANDS to cover the inserted text — used when replaying an addMat over the
-//     undo transaction that re-inserts the very red/green text the range describes.
+//   Re-expansion across an undo is NOT a single association pair — see expandMat.
 type MatAssoc = { start: 1 | -1; end: 1 | -1 }
 const INWARD: MatAssoc = { start: 1, end: -1 }
-const OUTWARD: MatAssoc = { start: -1, end: 1 }
 function remapMat(mat: ProposalMat, changes: ChangeDesc, a: MatAssoc): ProposalMat {
   return {
     changeId: mat.changeId,
@@ -55,6 +52,37 @@ function remapMat(mat: ProposalMat, changes: ChangeDesc, a: MatAssoc): ProposalM
       redTo: changes.mapPos(h.redTo, a.end),
       greenFrom: changes.mapPos(h.greenFrom, a.start),
       greenTo: changes.mapPos(h.greenTo, a.end),
+      kind: h.kind,
+    })),
+  }
+}
+
+/** Re-expand a mat that a decision collapsed, across the undo that re-inserts the
+ * deleted side. Red and green need OPPOSITE associations, and which side gets which
+ * depends on WHICH side is coming back — one pair cannot serve both:
+ *
+ *   accept undone (red returns, inserted at the collapse point p):
+ *     red must span the re-inserted text  → redFrom stays at p (−1), redTo follows (+1)
+ *     green must sit AFTER it             → greenFrom must follow the insertion (+1)
+ *
+ *   reject undone (green returns at point q, immediately after red):
+ *     red must NOT grow into it           → redTo stays at q (−1)
+ *     green must span it                  → greenFrom stays (−1), greenTo follows (+1)
+ *
+ * Using a single {start:−1, end:+1} for both — as this did — puts greenFrom BEFORE the
+ * re-inserted red on an accept-undo, so green covers the whole document. `savedBodyOf`
+ * strips green, so the body saved to disk became empty: undoing an accept silently
+ * emptied the note on the next flush. */
+function expandMat(mat: ProposalMat, changes: ChangeDesc, restores: 'red' | 'green'): ProposalMat {
+  const red: MatAssoc = restores === 'red' ? { start: -1, end: 1 } : { start: -1, end: -1 }
+  const green: MatAssoc = restores === 'red' ? { start: 1, end: 1 } : { start: -1, end: 1 }
+  return {
+    changeId: mat.changeId,
+    hunks: mat.hunks.map((h) => ({
+      redFrom: changes.mapPos(h.redFrom, red.start),
+      redTo: changes.mapPos(h.redTo, red.end),
+      greenFrom: changes.mapPos(h.greenFrom, green.start),
+      greenTo: changes.mapPos(h.greenTo, green.end),
       kind: h.kind,
     })),
   }
@@ -74,8 +102,12 @@ const dropChange = StateEffect.define<string>()
 //     restores the red text at the right place but matField points at the wrong
 //     coordinates → savedBodyOf strips the wrong "green" into the saved body.
 //   • the field re-expands it OUTWARD through the undo's own changes on apply (below).
-const addMat = StateEffect.define<ProposalMat>({
-  map: (mat, changes) => remapMat(mat, changes, INWARD),
+//   • `restores` names the side the undo will re-insert (red for an undone accept,
+//     green for an undone reject) — the field needs it to expand the two sides in
+//     opposite directions. See expandMat.
+type RestoreMat = { mat: ProposalMat; restores: 'red' | 'green' }
+const addMat = StateEffect.define<RestoreMat>({
+  map: ({ mat, restores }, changes) => ({ mat: remapMat(mat, changes, INWARD), restores }),
 })
 // Materialize a freshly-planned proposal (the reconciler's INSERT step). Distinct
 // from `addMat` because the two carry coordinates in DIFFERENT spaces, and one
@@ -112,10 +144,12 @@ const matField = StateField.define<ProposalMat[]>({
         // Already in this transaction's POST-change space — take it verbatim.
         next = [...next.filter((m) => m.changeId !== e.value.changeId), e.value]
       } else if (e.is(addMat)) {
-        // The payload is in this transaction's PRE-change (post-decision) space. Map it
-        // OUTWARD through the transaction's own changes so a red/green range that was
-        // collapsed onto the re-insertion point re-expands to cover the restored text.
-        const mat = tr.docChanged ? remapMat(e.value, tr.changes, OUTWARD) : e.value
+        // The payload is in this transaction's PRE-change (post-decision) space. Expand
+        // it across the transaction's own changes so the side that was deleted by the
+        // decision re-covers the text this undo just put back.
+        const mat = tr.docChanged
+          ? expandMat(e.value.mat, tr.changes, e.value.restores)
+          : e.value.mat
         next = [...next.filter((m) => m.changeId !== mat.changeId), mat]
       }
     }
@@ -185,11 +219,14 @@ const reviewUndoLink = invertedEffects.of((tr) => {
     // and is recovered by that outward re-expansion.
     if (e.is(dropChange)) {
       const mat = tr.startState.field(matField).find((m) => m.changeId === e.value)
-      if (mat) out.push(addMat.of(remapMat(mat, tr.changes, INWARD)))
+      // Which side this undo will put back decides how the field re-expands the mat:
+      // an accept deleted the RED, a reject deleted the GREEN.
+      const restores = tr.effects.some((x) => x.is(rejectEffect)) ? 'green' : 'red'
+      if (mat) out.push(addMat.of({ mat: remapMat(mat, tr.changes, INWARD), restores }))
     }
     // The inverse of re-adding (an undo's effect) is dropping again — so REDO of
     // an accept/reject drops the change once more, keeping matField ↔ text in step.
-    if (e.is(addMat)) out.push(dropChange.of(e.value.changeId))
+    if (e.is(addMat)) out.push(dropChange.of(e.value.mat.changeId))
   }
   return out
 })
