@@ -9,6 +9,7 @@
 // the ORIGINAL clean doc exactly — that's what we SAVE while pending, so disk only
 // ever holds accepted text.
 
+import { ChangeSet, Text } from '@codemirror/state'
 import { computeCmHunks } from './cmHunks'
 import type { PendingChange } from '@/state/pendingChangesStore'
 
@@ -28,38 +29,6 @@ export type ProposalPlan = {
   mats: ProposalMat[]
 }
 
-/** Map a position in the CLEAN doc (the real doc with `greens` removed) back to
- * the REAL doc — shift it past every existing green run that precedes it. The
- * inverse of stripRanges' coordinate effect.
- *
- * A clean position that lands exactly ON a green's insertion point is AMBIGUOUS:
- * the green occupies no clean-space width, so "just before it" and "just after it"
- * are the same clean number but different real ones. `assoc` picks, the same way
- * CodeMirror's `mapPos` does:
- *   • 'before' (default) — a range END stops short of the green.
- *   • 'after'            — a range START begins past it.
- * Defaulting both to 'before' let a second proposal's red start at the FIRST
- * proposal's green: its red span then covered the earlier proposal's text, so
- * accepting the second one deleted the first one's suggestion along with it. */
-export function cleanToReal(
-  cleanPos: number,
-  greens: { from: number; to: number }[],
-  assoc: 'before' | 'after' = 'before',
-): number {
-  let real = 0
-  let clean = 0
-  for (const g of [...greens].sort((a, b) => a.from - b.from)) {
-    const seg = g.from - real // non-green run before this green
-    const boundary = clean + seg
-    if (cleanPos < boundary || (cleanPos === boundary && assoc === 'before')) {
-      return real + (cleanPos - clean)
-    }
-    clean += seg
-    real = g.to
-  }
-  return real + (cleanPos - clean)
-}
-
 /** Plan fresh proposals to sit ALONGSIDE already-materialized ones. `existingGreens`
  * are the green ranges already in `realDoc`; we plan against the clean doc (real
  * minus those) and translate every position back into real coordinates (past the
@@ -77,24 +46,49 @@ export function planAdditional(
     .flatMap((c) => computeCmHunks(cleanDoc, c).map((h) => ({ changeId: c.id, h })))
     .sort((a, b) => a.h.from - b.h.from)
 
-  const insertions: { from: number; insert: string }[] = []
+  // Two coordinate moves, both delegated to CodeMirror rather than open-coded.
+  // `unstrip` is the inverse of removing the existing greens, so it maps CLEAN
+  // positions onto the REAL document; `insert` then carries those through this
+  // batch's own insertions. `mapPos` takes the association as an argument, which is
+  // the whole point: a position sitting exactly on an insertion is ambiguous, and the
+  // two bugs this replaced both came from resolving that ambiguity by hand — once in
+  // the clean→real step (a second proposal's red began at the first one's green) and
+  // once in the running `freshOffset` total.
+  const sortedGreens = [...existingGreens].sort((a, b) => a.from - b.from)
+  const strip = ChangeSet.of(
+    sortedGreens.map((g) => ({ from: g.from, to: g.to })),
+    realDoc.length,
+  )
+  const unstrip = strip.invert(Text.of(realDoc.split('\n')))
+
+  // Pass 1 — red in PRE-insert real coordinates, plus the insertions themselves
+  // (which CM applies as a set, so they stay in those coordinates).
+  const staged = tagged.map(({ changeId, h }) => ({
+    changeId,
+    h,
+    redFrom: unstrip.mapPos(h.from, 1), // a start begins past a green sitting there
+    redTo: unstrip.mapPos(h.to, -1), // an end stops before it
+  }))
+  const insertions = staged
+    .filter((s) => s.h.kind !== 'delete' && !!s.h.after)
+    .map((s) => ({ from: s.redTo, insert: s.h.after! }))
+
+  // Pass 2 — carry the red ranges through those insertions. Green is the text each
+  // insertion put in, so it starts where its own red ends.
+  const insert = ChangeSet.of(insertions, realDoc.length)
   const byChange = new Map<string, ProposalHunk[]>()
-  let freshOffset = 0 // fresh green inserted earlier in this batch (shifts later real positions)
-  for (const { changeId, h } of tagged) {
-    // A red START must begin past an existing green sitting at that point; a red END
-    // must stop before one. See cleanToReal.
-    const redFrom = cleanToReal(h.from, existingGreens, 'after') + freshOffset
-    const redTo = cleanToReal(h.to, existingGreens, 'before') + freshOffset
-    let greenFrom = redTo
-    let greenTo = redTo
-    if (h.kind !== 'delete' && h.after) {
-      insertions.push({ from: cleanToReal(h.to, existingGreens), insert: h.after }) // original real coord
-      greenFrom = redTo
-      greenTo = redTo + h.after.length
-      freshOffset += h.after.length
-    }
-    if (!byChange.has(changeId)) byChange.set(changeId, [])
-    byChange.get(changeId)!.push({ redFrom, redTo, greenFrom, greenTo, kind: h.kind })
+  for (const s of staged) {
+    const redFrom = insert.mapPos(s.redFrom, 1)
+    const redTo = insert.mapPos(s.redTo, -1)
+    const green = s.h.kind !== 'delete' && s.h.after ? s.h.after.length : 0
+    if (!byChange.has(s.changeId)) byChange.set(s.changeId, [])
+    byChange.get(s.changeId)!.push({
+      redFrom,
+      redTo,
+      greenFrom: redTo,
+      greenTo: redTo + green,
+      kind: s.h.kind,
+    })
   }
   return { insertions, mats: [...byChange.entries()].map(([changeId, hunks]) => ({ changeId, hunks })) }
 }
