@@ -49,6 +49,7 @@ import {
   mergeEditIntoStagedBody,
   toVaultRelative,
 } from './toPendingChange'
+import { checkEditPlacement, describeRefusal } from './checkPlacement'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useThreadsStore } from '@/state/threadsStore'
 import { useFastModeStore } from '@/state/fastModeStore'
@@ -472,17 +473,30 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 return prior
               }
               const currentAfter = current.edits[0]?.after ?? ''
-              const mergedBody = mergeEditIntoStagedBody(
+              const { text: mergedBody, placement } = mergeEditIntoStagedBody(
                 currentAfter,
                 e.payload.toolName,
                 e.payload.input,
               )
-              if (mergedBody === currentAfter) {
-                // The tool's edit didn't land against the staged body (e.g.
-                // an Edit whose old_string isn't there) — surface it (A2's
-                // principle: don't silently no-op) instead of pretending it
-                // merged.
+              if (placement.kind === 'noop') {
+                // Nothing left to do — typically this call repeats what the
+                // PREVIOUS call this turn already staged. Report success: a
+                // refusal here would have the model re-propose an edit that is
+                // already in the staged body, forever.
+                ackOk = true
+                return prior
+              }
+              if (placement.kind !== 'ok') {
+                // The tool's edit didn't land against the staged body — surface
+                // it (A2's principle: don't silently no-op) AND tell the model
+                // why, in the same words the first edit of the turn would get.
                 notify.markCantApply()
+                ackReason = describeRefusal(
+                  placement,
+                  typeof filePathRaw === 'string' ? filePathRaw : prior.pageSlug,
+                  currentAfter,
+                  current.edits.length,
+                )
                 return prior
               }
               if (current.status === 'pending') {
@@ -570,6 +584,29 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 '[chat] edit-pending unmappable; no decision surface',
                 { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
               )
+              return null
+            }
+
+            // Does this actually fit the document? Until now an unplaceable
+            // proposal was pushed anyway: the chat card rendered, the editor
+            // drew nothing (cmInBufferReview returns early on empty hunks), and
+            // the model was told "queued". Check BEFORE pushing so there is no
+            // card to leave stranded, and hand the reason to the model instead.
+            // Fails open — see checkEditPlacement.
+            //
+            // Skipped for a note we just created: its body is whatever this
+            // proposal stages, so there is no prior text an anchor could miss —
+            // and a refusal here would abandon the freshly created file as an
+            // empty orphan.
+            const fit = createdNewNote
+              ? ({ ok: true } as const)
+              : await checkEditPlacement(
+                  mapped.pageSlug,
+                  mapped,
+                  typeof filePathRaw === 'string' ? filePathRaw : mapped.pageSlug,
+                )
+            if (!fit.ok) {
+              ackReason = fit.reason
               return null
             }
 

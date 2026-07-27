@@ -10,7 +10,8 @@
 
 import { diffLines } from 'diff'
 import { looseFindRange, locateLoose } from '@/lib/looseMatch'
-import type { PendingChange } from '@/state/pendingChangesStore'
+import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
+import type { Placement } from '@/lib/editPlacement'
 
 export type CmHunk = {
   /** Char offset into the live doc where the hunk starts. */
@@ -67,21 +68,6 @@ export function scrollOffsetForChange(docText: string, change: PendingChange): n
   return null
 }
 
-/** Why a change did or didn't land, for the ONE edit that explains it.
- *
- * The three failures are not interchangeable when reported to the model:
- *   - `absent`    — the targeted text isn't there. Show what IS there.
- *   - `ambiguous` — it's there several times. Ask for more surrounding context.
- *   - `noop`      — nothing to do (already reads the way the model wants).
- * `noop` in particular must be reported as SUCCESS. Refusing it starts a retry
- * loop the model cannot escape: it re-reads, sees the text already correct,
- * proposes the same edit, and is refused again. */
-export type Placement =
-  | { kind: 'ok' }
-  | { kind: 'noop' }
-  | { kind: 'absent'; editIndex: number; target: string }
-  | { kind: 'ambiguous'; editIndex: number; target: string }
-
 /** Apply a change's edits to `docText`, returning both the resulting text and
  * WHY it turned out that way.
  *
@@ -96,7 +82,7 @@ export type Placement =
  * and the first failure is what gets reported. */
 export function placeEdits(
   docText: string,
-  change: PendingChange,
+  change: { edits: PendingEdit[] },
 ): { text: string; placement: Placement } {
   let text = docText
   let failure: Placement | null = null

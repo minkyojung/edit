@@ -14,7 +14,8 @@
 
 import { diffLines, structuredPatch } from 'diff'
 import type { DiffLine } from './git'
-import { looseReplace } from './looseMatch'
+import { locateLoose } from './looseMatch'
+import type { Placement } from '@/lib/editPlacement'
 import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
 
 /** diffLines tokenises by line; a string whose last line lacks a
@@ -71,25 +72,46 @@ export function diffPairsToLines(
  * not) — harmless only because production `add` edits target empty new notes. See
  * the divergence note on `cmHunks.resolveAddInsertion` before unifying. */
 export function applyEditsToText(snapshot: string, edits: PendingEdit[]): string {
+  return placeEditsInSnapshot(snapshot, edits).text
+}
+
+/** `applyEditsToText` plus WHY it came out that way.
+ *
+ * Mirrors `cmHunks.placeEdits` — one walk producing both the text and the
+ * verdict, so the answer given to the model and the text the user is shown can
+ * never come from two different notions of "did this edit land". The two walks
+ * stay separate (their `add` branches genuinely differ, see the note above);
+ * only the verdict vocabulary is shared. */
+export function placeEditsInSnapshot(
+  snapshot: string,
+  edits: PendingEdit[],
+): { text: string; placement: Placement } {
   let doc = snapshot
-  for (const e of edits) {
+  let failure: Placement | null = null
+  for (let i = 0; i < edits.length; i++) {
+    const e = edits[i]
     if (e.kind === 'add') {
       const body = e.after ?? ''
       doc = doc.length > 0 ? `${doc}\n\n${body}` : body
-    } else if (e.kind === 'replace') {
-      if (!e.before) {
-        doc = e.after ?? '' // whole-file replace
+    } else if (e.kind === 'replace' && !e.before) {
+      doc = e.after ?? '' // whole-file replace — nothing to locate
+    } else if ((e.kind === 'replace' || e.kind === 'delete') && e.before) {
+      const replacement = e.kind === 'delete' ? '' : (e.after ?? '')
+      const m = locateLoose(doc, e.before)
+      if (m.kind === 'found') {
+        doc = doc.slice(0, m.start) + replacement + doc.slice(m.end)
+      } else if (m.kind === 'ambiguous') {
+        failure ??= { kind: 'ambiguous', editIndex: i, target: e.before }
+      } else if (replacement && doc.includes(replacement)) {
+        // Already made — most often by the PREVIOUS tool call this same turn,
+        // which is exactly the situation this merge path exists to handle.
       } else {
-        // null = before wasn't found, or matched more than once (ambiguous) —
-        // looseReplace refuses rather than guess; leave doc unchanged for
-        // this edit, same as the real apply path would.
-        doc = looseReplace(doc, e.before, e.after ?? '') ?? doc
+        failure ??= { kind: 'absent', editIndex: i, target: e.before }
       }
-    } else if (e.kind === 'delete' && e.before) {
-      doc = looseReplace(doc, e.before, '') ?? doc
     }
   }
-  return doc
+  const placement: Placement = failure ?? (doc === snapshot ? { kind: 'noop' } : { kind: 'ok' })
+  return { text: doc, placement }
 }
 
 /** Count non-overlapping occurrences of `needle` in `haystack`. */
