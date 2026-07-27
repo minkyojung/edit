@@ -97,8 +97,14 @@ export class MermaidWidget extends WidgetType {
   }
 }
 
+// The info string of the fence that OPENS at `fenceFrom`. Read from the fence
+// position rather than the line text: an indented fence (one inside a list item)
+// starts partway into its line, so anchoring the regex at the line start matched
+// nothing and this returned the whole "```mermaid" — never equal to 'mermaid', so
+// a diagram in a list silently never rendered.
 function fenceInfo(state: EditorState, fenceFrom: number): string {
-  return state.doc.lineAt(fenceFrom).text.replace(/^(```|~~~)/, '').trim()
+  const line = state.doc.lineAt(fenceFrom)
+  return state.doc.sliceString(fenceFrom, line.to).replace(/^(```|~~~)/, '').trim()
 }
 
 function fenceBodyCode(state: EditorState, from: number, to: number): string {
@@ -117,6 +123,13 @@ function build(state: EditorState): DecorationSet {
       if (fenceInfo(state, node.from) !== 'mermaid') return
       const lineFrom = state.doc.lineAt(node.from)
       const lineTo = state.doc.lineAt(Math.min(node.to, state.doc.length))
+      // A block replace has to span WHOLE LINES, so whatever sits between the line
+      // start and the fence is hidden with it. Indentation is fine — that is how a
+      // fence inside a list item looks. A container MARKER is not: inside a
+      // blockquote the replace would start at column 0 and swallow the `>`, erasing
+      // the quote. Non-blank in front → the line belongs to a container that owns
+      // those columns, so leave the fence raw.
+      if (state.doc.sliceString(lineFrom.from, node.from).trim() !== '') return
       // Pending AI proposal: a proposed fence must read as a diff, not render as a
       // diagram. Gate on the range we would REPLACE, not the node.
       if (touchesProofRawRange(state, lineFrom.from, lineTo.to)) return

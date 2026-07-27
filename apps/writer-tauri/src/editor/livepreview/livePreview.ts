@@ -54,6 +54,16 @@ export const LIST_MARKER_END_PAD = 0.35
 // unchanged, so cmTheme needs no change.
 export const LIST_MARKER_SPACE = 0.25
 
+// Side (em) of the drawn task checkbox. The box is a `::after` pseudo-element, so
+// it can never be an event target and the click has to be hit-tested against its
+// rect in JS — which means the geometry exists in two places at once. Both read
+// this constant (and LIST_MARKER_END_PAD for the inset) so they cannot drift, as
+// they already had: when the three markers' insets were unified to
+// LIST_MARKER_END_PAD (0.35em), the hit-test kept the task marker's old 0.15em, so
+// the clickable box sat ~0.2em right of the drawn one — the left sliver of the box
+// didn't respond and a click just outside it toggled.
+export const TASK_BOX_EM = 1.05
+
 /** lezer parses `[[Title]]` as a `Link` ([Title]) wrapped in an extra `[`…`]`.
  * Detect that so the grammar Link/LinkMark handling can bail and leave wikilinks
  * entirely to the regex overlay (otherwise both fire → double styling, overlapping
@@ -637,10 +647,12 @@ export const taskCheckboxClick = EditorView.domEventHandlers({
     const end = view.coordsAtPos(markerTo) // right edge of the hidden marker
     if (!end) return false
     const fs = parseFloat(getComputedStyle(view.contentDOM).fontSize) || 16
-    const boxRight = end.left - 0.15 * fs
-    const boxLeft = boxRight - 1.05 * fs
+    // Mirrors `.cm-task-marker::after` in cmTheme — same two constants, so the box
+    // you see and the box you can click are the same box.
+    const boxRight = end.left - LIST_MARKER_END_PAD * fs
+    const boxLeft = boxRight - TASK_BOX_EM * fs
     const cy = (end.top + end.bottom) / 2
-    const halfH = 0.525 * fs + 2 // +2px vertical tolerance
+    const halfH = (TASK_BOX_EM / 2) * fs + 2 // +2px vertical tolerance
     if (event.clientX < boxLeft || event.clientX > boxRight) return false
     if (event.clientY < cy - halfH || event.clientY > cy + halfH) return false
     event.preventDefault()

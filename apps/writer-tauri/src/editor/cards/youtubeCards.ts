@@ -118,6 +118,13 @@ function build(state: EditorState): DecorationSet {
       if (!embed) return undefined
       const lineFrom = state.doc.lineAt(node.from)
       const lineTo = state.doc.lineAt(Math.min(node.to, state.doc.length))
+      // A block replace has to span WHOLE LINES, so everything between the line
+      // start and the URL is hidden along with it. Leading whitespace is harmless
+      // (indentation), but a container's marker is not: inside a blockquote the
+      // replace started at column 0 and swallowed the `>`, so embedding a video in
+      // a quote made the quote itself disappear. Anything non-blank in front means
+      // the URL belongs to a container that owns those columns — leave it raw.
+      if (state.doc.sliceString(lineFrom.from, node.from).trim() !== '') return false
       // Pending AI proposal: a proposed URL must read as a diff, not play. Gate on
       // the range we would REPLACE, not the node — the replace is what would seal
       // the red/green marks and the accept/reject buttons out of view.

@@ -22,7 +22,13 @@ import { EditorView } from '@codemirror/view'
 import { cursorCharRight } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
-import { _buildDecos, livePreviewV2, taskCheckboxClick } from './livePreview'
+import {
+  _buildDecos,
+  livePreviewV2,
+  taskCheckboxClick,
+  LIST_MARKER_END_PAD,
+  TASK_BOX_EM,
+} from './livePreview'
 
 function stateFor(doc: string, anchor = doc.length, extra: unknown[] = []) {
   return EditorState.create({
@@ -116,7 +122,12 @@ describe('T0.4 — which mousedown handler consumes the click', () => {
     }
   }
 
-  // boxRight = 100 - 0.15*16 = 97.6 ; boxLeft = 97.6 - 1.05*16 = 80.8 ; cy = 18
+  // The drawn box, from cmTheme: inset LIST_MARKER_END_PAD (0.35em) from the marker
+  // column's right edge, TASK_BOX_EM (1.05em) square. At fs=16 with the marker's
+  // right edge at x=100 that is boxRight = 94.4, boxLeft = 77.6, cy = 18.
+  const boxRight = 100 - LIST_MARKER_END_PAD * 16
+  const boxLeft = boxRight - TASK_BOX_EM * 16
+
   it('a click inside the drawn box is consumed and toggles `[ ]` → `[x]`', () => {
     const { view, click } = setup()
     expect(click(90, 18)).toBe(false) // taskCheckboxClick won; sentinel never ran
@@ -134,6 +145,25 @@ describe('T0.4 — which mousedown handler consumes the click', () => {
   it('a click above the box falls through', () => {
     const { view, click } = setup()
     expect(click(90, 0)).toBe(true)
+    expect(view.state.doc.toString()).toBe(LINE)
+    view.destroy()
+  })
+
+  // The two slivers the drifted constant got wrong. The hit-test used to inset by
+  // 0.15em while the CSS drew at 0.35em, putting the clickable box ~3.2px right of
+  // the drawn one: its left edge was dead, and a click just outside its right edge
+  // toggled. Both are one pixel inside/outside the DRAWN box, so they fail against
+  // the old geometry and pass against the shared constants.
+  it('the drawn box\'s LEFT edge responds', () => {
+    const { view, click } = setup()
+    expect(click(boxLeft + 1, 18)).toBe(false) // consumed
+    expect(view.state.doc.toString()).toBe('- [x] task')
+    view.destroy()
+  })
+
+  it('just right of the drawn box does NOT toggle', () => {
+    const { view, click } = setup()
+    expect(click(boxRight + 1, 18)).toBe(true) // fell through
     expect(view.state.doc.toString()).toBe(LINE)
     view.destroy()
   })
