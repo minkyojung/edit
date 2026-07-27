@@ -15,6 +15,9 @@
 // rules below are testable without a running app.
 
 import { CHAT_EFFORTS, type ChatEffort } from '@/chat/types'
+import { familyKey } from '@/chat/modelFacts'
+
+export { familyKey }
 
 /** One catalog row, mirroring the Rust `ModelEntry` (serde camelCase). */
 export interface ModelEntry {
@@ -40,14 +43,6 @@ export interface MergedModel {
   /** False for a model only the built-in list knows — either the fetch failed,
    * or the account can't see it. */
   inCatalog: boolean
-}
-
-/** Identity key for deduping. The catalog spells some models with a release
- * date (`claude-haiku-4-5-20251001`) while the app sends the bare form
- * (`claude-haiku-4-5`); both are accepted by the SDK and both mean the same
- * model, so a naive union would show it twice in the picker. */
-export function familyKey(id: string): string {
-  return id.replace(/-\d{8}$/, '')
 }
 
 /** Catalog efforts are plain strings and may include tiers we deliberately

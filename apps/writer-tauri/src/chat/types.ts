@@ -13,6 +13,10 @@
 // a mid-write crash truncates at most one trailing turn rather
 // than corrupting the file.
 
+// Fetched-catalog facts, consulted by the lookups below. modelFacts imports
+// nothing, so this direction can't cycle.
+import { modelFactsFor } from '@/chat/modelFacts'
+
 /** Models the user can pick from in the PromptInput model selector.
  * Kept narrow + explicit so the UI can display friendly labels without
  * round-tripping through agent ids. The sidecar accepts the raw id. */
@@ -46,13 +50,19 @@ export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
 
 export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-5'
 
-/** Display name for a model id. Reads the built-in table first, then degrades to
- * the bare id minus its `claude-` prefix — never an empty string. Indexing
- * CHAT_MODEL_LABELS directly is what made an unrecognized id (a thread saved
- * before a model was added, a persisted setting, a slash command naming a model
- * we don't list) render as a blank button. Callers should use this instead. */
+/** Display name for a model id, in order of freshness: the fetched catalog, the
+ * built-in table, then the bare id minus its `claude-` prefix — never an empty
+ * string. Indexing CHAT_MODEL_LABELS directly is what made an unrecognized id
+ * (a thread saved before a model was added, a persisted setting, a slash command
+ * naming a model we don't list) render as a blank button.
+ *
+ * The built-in table is kept ahead of the raw id but BEHIND the catalog: our
+ * labels are terser than the API's ("Opus 4.8" vs "Claude Opus 4.8") for models
+ * we know, while the catalog is the only source for one we don't. */
 export function labelForModel(model: string): string {
-  return CHAT_MODEL_LABELS[model as ChatModel] ?? model.replace(/^claude-/, '')
+  const known = CHAT_MODEL_LABELS[model as ChatModel]
+  if (known) return known
+  return modelFactsFor(model)?.displayName ?? model.replace(/^claude-/, '')
 }
 
 /** One model the account can actually use, as reported by the Claude Agent
@@ -134,10 +144,21 @@ export const EFFORTS_BY_MODEL: Record<ChatModel, readonly ChatEffort[]> = {
 const FALLBACK_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high']
 
 /** Takes a plain string, not ChatModel: a persisted thread, a slash-command
- * frontmatter field, or (soon) a runtime-fetched catalog can all carry an id
- * that isn't in our built-in union. Falling back keeps those paths alive. */
+ * frontmatter field, or the runtime-fetched catalog can all carry an id that
+ * isn't in our built-in union. Falling back keeps those paths alive.
+ *
+ * The built-in table wins over the catalog for models we ship with, because it
+ * encodes a product decision the API can't: `max` is a real tier the catalog
+ * reports, but we don't expose it (disproportionate token/time cost for a
+ * writing tool). For a model we DON'T know, the catalog's tiers are the only
+ * information available and beat guessing. */
 export function effortsForModel(model: string): readonly ChatEffort[] {
-  return EFFORTS_BY_MODEL[model as ChatModel] ?? FALLBACK_EFFORTS
+  const known = EFFORTS_BY_MODEL[model as ChatModel]
+  if (known) return known
+  const fromCatalog = modelFactsFor(model)?.efforts?.filter((e): e is ChatEffort =>
+    (CHAT_EFFORTS as readonly string[]).includes(e),
+  )
+  return fromCatalog && fromCatalog.length > 0 ? fromCatalog : FALLBACK_EFFORTS
 }
 
 /** Snap an effort to one the model supports, falling back to its highest

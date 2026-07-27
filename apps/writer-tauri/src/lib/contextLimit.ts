@@ -11,6 +11,8 @@
 // Unknown ids fall back to the conservative 200k so the gauge never
 // under-reports how full the window is.
 
+import { modelFactsFor } from '@/chat/modelFacts'
+
 const DEFAULT_CONTEXT_LIMIT = 200_000
 const MILLION = 1_000_000
 
@@ -25,6 +27,14 @@ const CONTEXT_LIMITS: Record<string, number> = {
   'claude-fable-5': MILLION,
 }
 
+/** Window size for a model id.
+ *
+ * The fetched catalog wins here — unlike labels and effort tiers, this is a
+ * plain fact with no product judgement in it, and the hand-maintained table is
+ * exactly the thing that goes stale. It's also the one lookup whose fallback is
+ * actively WRONG rather than merely plain: an id absent from the table silently
+ * reports 200k, so every 1M-window model we hadn't added yet made the context
+ * gauge read ~5x too full. */
 export function contextLimitForModel(model: string): number {
-  return CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
+  return modelFactsFor(model)?.maxInputTokens ?? CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
 }

@@ -19,8 +19,9 @@
 
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
-import type { ModelInfo } from '@/chat/types'
-import type { ModelEntry } from '@/chat/modelCatalog'
+import { CHAT_MODELS, type ModelInfo } from '@/chat/types'
+import { mergeModelCatalog, type ModelEntry } from '@/chat/modelCatalog'
+import { setModelFacts } from '@/chat/modelFacts'
 
 const CATALOG_CACHE_KEY = 'writer-tauri:model-catalog'
 
@@ -49,6 +50,15 @@ function writeCachedCatalog(entries: ModelEntry[]): void {
   }
 }
 
+/** Merge with the built-in list and publish, so the non-React lookups
+ * (labelForModel / effortsForModel / contextLimitForModel) see the fresh facts.
+ * Called for the cached catalog at startup as well as each successful fetch —
+ * otherwise the first paint after a cold start would still read stale built-in
+ * values until the network came back. */
+function publishFacts(entries: ModelEntry[]): void {
+  setModelFacts(mergeModelCatalog(CHAT_MODELS, entries))
+}
+
 interface AvailableModelsState {
   /** Account-accessible models per the SDK handshake, or null when not yet
    * loaded / load failed. */
@@ -62,9 +72,15 @@ interface AvailableModelsState {
   load: () => Promise<void>
 }
 
+// Read the cache once, at module load, and publish it before any component
+// renders — a cold start offline should still show the models a previous
+// session discovered, not the list this binary shipped with.
+const cachedCatalog = readCachedCatalog()
+if (cachedCatalog) publishFacts(cachedCatalog)
+
 export const useAvailableModelsStore = create<AvailableModelsState>((set, get) => ({
   models: null,
-  catalog: readCachedCatalog(),
+  catalog: cachedCatalog,
   loading: false,
   load: async () => {
     if (get().loading) return
@@ -90,6 +106,7 @@ export const useAvailableModelsStore = create<AvailableModelsState>((set, get) =
         // keep whatever was cached rather than blanking it.
         if (list.length > 0) {
           set({ catalog: list })
+          publishFacts(list)
           writeCachedCatalog(list)
         }
       })
