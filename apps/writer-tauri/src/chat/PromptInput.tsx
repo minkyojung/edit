@@ -138,6 +138,17 @@ interface Props {
   viewingFilePath?: string | null
   /** Detach the viewed file from the chat's context. Called by the chip's X. */
   onClearViewingFile?: () => void
+  /** Vault-relative path of the note the user is currently editing, when it's
+   * attached to the chat. This chip is what makes the note context visible at
+   * all: without it the note rides along invisibly and a mismatch between what
+   * you're reading and what the AI sees is unnoticeable until it answers about
+   * the wrong file. Null when detached, or off a note route. */
+  currentNotePath?: string | null
+  /** Display name for the note chip ("Monday, July 27", a wiki title) — the
+   * path is the tooltip. */
+  currentNoteLabel?: string | null
+  /** Detach the open note from the chat's context. Called by the chip's X. */
+  onClearCurrentNote?: () => void
 }
 
 // Chip label: first ~24 chars of the selection on a single line, with an
@@ -193,6 +204,9 @@ export function PromptInput({
   onClearSelection,
   viewingFilePath,
   onClearViewingFile,
+  currentNotePath,
+  currentNoteLabel,
+  onClearCurrentNote,
 }: Props) {
   // Composer draft (text / attachments / pasted text / mentions) is scoped to
   // the active thread via chatDraftStore, NOT local useState — otherwise it
@@ -581,7 +595,7 @@ export function PromptInput({
           row that scrolls sideways when they overflow — the modern chip-bar
           pattern — instead of stacking vertically and growing the composer.
           Each chip is shrink-0 so it keeps its size and the row scrolls. */}
-      {(viewingFilePath || selectionText || attachments.length > 0 || pastedTexts.length > 0 || mentions.length > 0) && (
+      {(currentNotePath || viewingFilePath || selectionText || attachments.length > 0 || pastedTexts.length > 0 || mentions.length > 0) && (
         <div
           className={cn(
             'flex items-center gap-1.5 overflow-x-auto',
@@ -618,6 +632,15 @@ export function PromptInput({
           removeLabel="Remove pasted text"
         />
       ))}
+      {currentNotePath && (
+        <ContextChip
+          icon={IconFileText}
+          label={currentNoteLabel?.trim() || (currentNotePath.split('/').pop() ?? currentNotePath)}
+          tooltip={currentNotePath}
+          onRemove={onClearCurrentNote}
+          removeLabel="Remove this note from context"
+        />
+      )}
       {viewingFilePath && (
         <ContextChip
           icon={FILE_KIND_ICON[classifyAsset(viewingFilePath)]}

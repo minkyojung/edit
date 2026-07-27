@@ -31,7 +31,7 @@ import {
   getPersistentQueryEnabled,
 } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
-import { pathForDoc, pathToKnownSlug, type DocStatus } from '@/lib/docPaths'
+import { pathForDoc, pathForSlug, pathToKnownSlug, type DocStatus } from '@/lib/docPaths'
 import { queryNotes } from '@/lib/queryNotes'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
@@ -71,10 +71,12 @@ import {
   attachedFilesBlock,
   buildUserPrompt,
   composeSystemBlocks,
+  currentNoteBlock,
   referencedFilesBlock,
   shouldResumeSession,
   truncateDocForPrompt,
 } from './systemPrompt'
+import { markNoteBodyShown, needsNoteBody } from './noteContextLedger'
 import { createStreamParser } from './streamParser'
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
@@ -118,6 +120,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       'query_notes',
     ],
     appendDocument = true,
+    attachCurrentNote = true,
     viewingFilePath,
     selectionText,
     mentionPaths,
@@ -150,15 +153,31 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     .find((t) => t.role === 'user' && !t.synthetic)
     ?.content?.trim()
 
-  // "Current page" text: the caller-supplied page markdown (the Read Later
-  // queue passes a generated article list), else the open doc's body via the
-  // canonical reader — the live editor when one is mounted, so the model sees
-  // what's on screen (not the mirror, which lags mid-edit).
+  // Two different things are called "the page", and they travel by different
+  // channels:
+  //   - A caller-supplied synthetic page (the Read Later queue's article list,
+  //     the wiki-handoff content) is fixed for the life of that run, so it can
+  //     ride the system prompt's DOCUMENT block as before.
+  //   - The OPEN NOTE changes whenever the user navigates, and a persistent
+  //     thread's system prompt is frozen at its first turn — so it rides the
+  //     per-turn user message instead (see currentNoteBlock below).
+  const isSyntheticPage = pageContextMarkdown != null
+  // The open doc's body via the canonical reader — the live editor when one is
+  // mounted, so the model sees what's on screen (not the mirror, which lags
+  // mid-edit). Wait for the handle first: `readDocBody` returns '' for a doc
+  // that hasn't loaded yet, and the active slug comes from the URL, which flips
+  // before the load finishes — without this a send fired right after navigating
+  // would inject an empty body and the model would "see" a blank note.
+  if (!isSyntheticPage && slug) {
+    await useDocsStore.getState().ensureHandle(slug)
+    try {
+      await useDocsStore.getState().handles[slug]?.contentReady
+    } catch {
+      // Hydration failed — fall through with whatever readDocBody has. The
+      // model still gets the path and can Read the file itself.
+    }
+  }
   const docText = pageContextMarkdown ?? (slug ? readDocBody(slug) : '')
-  // Record what the model is shown for this note as the compare-and-swap base:
-  // a later whole-doc overwrite is refused if the live body diverged from this
-  // (the user edited it while the model generated).
-  if (slug) setModelBase(slug, docText)
   const docForPrompt = truncateDocForPrompt(docText)
   // Resolve this thread's agent (role) — the prompt body + memory
   // namespace come from here. Currently always the built-in default,
@@ -202,10 +221,48 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // resolve "this note" / "here" deictically while staying free to act on other notes
   // via its tools. Null on the queue route or before the catalog hydrates.
   const knownDocs = useDocsStore.getState().knownDocs
-  const currentDoc = slug ? knownDocs.find((d) => d.slug === slug) : undefined
-  const currentFilePath = currentDoc
-    ? pathForDoc(currentDoc, (s) => knownDocs.find((d) => d.slug === s))
-    : null
+  const currentFilePath = pathForSlug(slug, knownDocs)
+
+  // The open note's per-turn block. The PATH goes out every turn — it's a line
+  // of text, and it's the one thing the model must never be wrong about. The
+  // BODY goes out only when this thread hasn't already been shown this exact
+  // content, because an SDK session is append-only: re-sending it every turn
+  // would leave a copy per turn in the history, most of them stale.
+  //
+  // `setModelBase` is stamped under EXACTLY that same condition, and this
+  // pairing is load-bearing. It records the body the model was shown, and a
+  // later whole-doc overwrite is refused if the live body has diverged from it.
+  // Stamping it for a body we didn't send would claim the model had seen edits
+  // it never saw, and the guard would wave through an overwrite that silently
+  // discards them.
+  //
+  // Every path below stamps the base ONLY where the model is actually handed
+  // the text. When nothing is handed over — chip detached, slug not in the
+  // catalog — no base is recorded at all, and the guard falls back to "no CAS
+  // for this note": it can then fail to protect, which is the old behaviour,
+  // but it can never protect against the wrong baseline.
+  let currentNote = ''
+  if (isSyntheticPage) {
+    // Queue article list / wiki handoff: fixed for this run and still delivered
+    // through the system prompt's DOCUMENT block, so the base is what we're
+    // about to show.
+    if (slug) setModelBase(slug, docText)
+  } else if (attachCurrentNote && slug && currentFilePath) {
+    const shownEarlier = !needsNoteBody(threadId, slug, docText)
+    // `appendDocument: false` means the caller is supplying the note text
+    // itself — a slash command renders `{{document}}` into its own prompt — so
+    // sending it here too would put the whole note in the turn twice.
+    const sendBody = appendDocument && !shownEarlier
+    currentNote = currentNoteBlock(
+      currentFilePath,
+      sendBody ? docForPrompt : undefined,
+      shownEarlier,
+    )
+    if (sendBody) {
+      setModelBase(slug, docText)
+      markNoteBodyShown(threadId, slug, docText)
+    }
+  }
 
   // @-mentioned files. Resolve each path back to its doc so we can inject the
   // in-memory body when the note is open/loaded (fresher than disk — the
@@ -226,11 +283,16 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   // Per-turn file context rides the USER message, not the system prompt. A
   // persistent thread freezes its system prompt at the first turn's value (the
-  // SDK has no setSystemPrompt), so @-mentions / attachments added on a later
-  // turn only reach the model through the per-turn user message. Order: host
-  // note → user text → referenced files → attached files. Empty blocks (no
-  // mentions / attachments, or a null outcome note) drop out via filter.
+  // SDK has no setSystemPrompt), so the open note / @-mentions / attachments
+  // added on a later turn only reach the model through the per-turn user
+  // message. Order: current note → host note → user text → referenced files →
+  // attached files. The current note leads because it's ambient orientation:
+  // both the outcome note and the user's own text can say "this note", so what
+  // "this" refers to has to be established before either of them. Empty blocks
+  // (no mentions / attachments, no open note, a null outcome note) drop out via
+  // filter.
   const prompt = [
+    currentNote,
     outcome.note,
     basePrompt,
     referencedFilesBlock(mentionFiles),
@@ -252,12 +314,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // Name the configured knowledge-base folder so the model files durable
     // synthesized knowledge there (authoritative over the CLAUDE.md schema).
     knowledgeBaseFolder: getKnowledgeBaseFolder(),
-    // Viewing a non-markdown file (PDF/image/…) → there's no doc body to
-    // pin, and `view` may still hold the previously-open note's text, so
-    // suppress the DOCUMENT block to avoid feeding stale, wrong context.
-    // The VIEWING FILE block tells the model to Read the file instead.
-    appendDocument: viewingFilePath ? false : appendDocument,
-    currentFilePath,
+    // The DOCUMENT block now carries ONLY a caller-supplied synthetic page (the
+    // Read Later queue's article list, the wiki-handoff content), which is fixed
+    // for the run and so is safe to freeze into the system prompt. The open
+    // note left this channel: it changes as the user navigates, and a persistent
+    // thread's system prompt never updates — it rides `currentNoteBlock` in the
+    // user message instead. Viewing a non-markdown file (PDF/image/…) suppresses
+    // the block outright; the VIEWING FILE block tells the model to Read it.
+    appendDocument: viewingFilePath ? false : isSyntheticPage && appendDocument,
     viewingFilePath,
     selectionText,
     today: todayLocalDate(),

@@ -311,11 +311,7 @@ function AppContent() {
     >
       <>
         <RouteSyncBridge />
-        <AppShell
-          oauthStatus="unauthenticated"
-          collabHandle={activeHandle}
-          collabStatus={activeStatus}
-        >
+        <AppShell oauthStatus="unauthenticated" collabStatus={activeStatus}>
           <Routes>
             {/* Root + legacy /notes both redirect to today's Day view.
                 todayLocalDate() is called on each render so a session

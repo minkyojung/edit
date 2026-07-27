@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import {
   attachedFilesBlock,
   composeSystemBlocks,
+  currentNoteBlock,
   referencedFilesBlock,
   type SystemBlocksArgs,
 } from './systemPrompt'
@@ -94,16 +95,30 @@ describe('composeSystemBlocks — growing blocks ordered last (cache stability)'
   })
 })
 
-// Per-turn file context (attachments + @-mentions) must NOT live in the system
-// prompt: a persistent thread freezes its system prompt at the first turn, so
-// files added on a later turn would never reach the model there. They ride the
-// USER message via the block helpers below. These tests pin that channel so a
-// future refactor can't quietly move them back into the frozen system prompt.
+// Per-turn file context (the open note, attachments, @-mentions) must NOT live
+// in the system prompt: a persistent thread freezes its system prompt at the
+// first turn, so anything added on a later turn would never reach the model
+// there. They ride the USER message via the block helpers below. These tests
+// pin that channel so a future refactor can't quietly move them back into the
+// frozen system prompt.
 describe('per-turn file context rides the user message, not the system prompt', () => {
   it('composeSystemBlocks never emits ATTACHED / REFERENCED file blocks', () => {
     const out = text(composeSystemBlocks(args({ vaultRoot: '/v', appendDocument: false })))
     expect(out).not.toContain('--- ATTACHED FILES ---')
     expect(out).not.toContain('--- REFERENCED FILES ---')
+  })
+
+  // The regression this whole change exists to prevent: the open note used to
+  // ride the (frozen) system prompt, so a thread started on note A kept telling
+  // the model "the current note is A" forever — even after the user moved to B.
+  it('composeSystemBlocks never names the open note', () => {
+    const out = text(
+      composeSystemBlocks(
+        args({ vaultRoot: '/v', appendDocument: true, docForPrompt: 'BODY' }),
+      ),
+    )
+    expect(out).not.toContain('--- CURRENT NOTE ---')
+    expect(out).not.toContain('--- CURRENT FILE ---')
   })
 
   it('attachedFilesBlock renders the paths and Read instruction; empty → ""', () => {
@@ -121,5 +136,58 @@ describe('per-turn file context rides the user message, not the system prompt', 
     expect(inlined).toContain('BODY_TEXT')
     const readIt = referencedFilesBlock([{ path: 'wiki/B.md' }])
     expect(readIt).toContain('`wiki/B.md` — Read this exact path')
+  })
+})
+
+describe('currentNoteBlock', () => {
+  it('names the note on every turn, with or without a body', () => {
+    const withBody = currentNoteBlock('wiki/A.md', 'BODY_TEXT')
+    expect(withBody).toContain('--- CURRENT NOTE ---')
+    expect(withBody).toContain('`wiki/A.md`')
+    expect(withBody).toContain('BODY_TEXT')
+
+    const pathOnly = currentNoteBlock('wiki/A.md')
+    expect(pathOnly).toContain('--- CURRENT NOTE ---')
+    expect(pathOnly).toContain('`wiki/A.md`')
+    expect(pathOnly).not.toContain('BODY_TEXT')
+  })
+
+  // Two different reasons the body can be absent, and claiming the wrong one
+  // either sends the model to re-Read what it has, or lets it answer about a
+  // note whose text it was never given.
+  it('says the body is unchanged only when it really was sent earlier', () => {
+    expect(currentNoteBlock('wiki/A.md', undefined, true)).toContain('has not changed')
+  })
+
+  it('claims nothing about content when the body rode another channel', () => {
+    // e.g. a slash command that rendered {{document}} into its own prompt.
+    const block = currentNoteBlock('wiki/A.md', undefined, false)
+    expect(block).toContain('`wiki/A.md`')
+    expect(block).not.toContain('has not changed')
+    expect(block).not.toContain('content')
+  })
+
+  // A session is append-only: earlier turns' blocks stay in the history naming
+  // whatever note was open THEN. Since we can't retract them, each block has to
+  // date itself and claim precedence, or the model sees N competing
+  // present-tense claims about which note is current.
+  it('dates itself and supersedes earlier copies', () => {
+    const block = currentNoteBlock('wiki/A.md', 'BODY')
+    expect(block).toContain('As of this message')
+    expect(block).toContain('out of date')
+    expect(block).toContain('stale')
+  })
+
+  // Riding the user message means the text is subject to prompt-injection
+  // defenses: imperative, out-of-band-sounding instructions can get surfaced to
+  // the user instead of acted on. Keep it stating facts.
+  it('reads as statements, not as commands to the model', () => {
+    const block = currentNoteBlock('wiki/A.md', 'BODY')
+    expect(block).not.toMatch(/\bYou (must|should|will)\b/)
+    expect(block).not.toMatch(/\btarget it\b/i)
+  })
+
+  it('returns "" for an empty path', () => {
+    expect(currentNoteBlock('')).toBe('')
   })
 })

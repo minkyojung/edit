@@ -48,6 +48,11 @@ interface UseChatRunnerDeps {
    * the proposal listener can route by slug instead of relying on a
    * captured (and soon-stale) view reference after doc switch. */
   slug: string | null
+  /** Whether the open note is described to the model this turn. False once the
+   * user detaches its chip in the composer; the same flag hides the chip, so
+   * what the user sees attached and what the model is told can't drift apart.
+   * Doesn't affect `slug` — edits still route, the note is just not narrated. */
+  attachCurrentNote: boolean
   /** Vault-relative path of a non-markdown file open in the FileViewer
    * (`/file/:rel`) route — null on every other surface. Forwarded to runChat
    * so the agent knows which file the user is looking at. */
@@ -98,6 +103,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
   const {
     isQueue,
     slug,
+    attachCurrentNote,
     viewingFilePath,
     selectionText,
     activeThreadModel,
@@ -318,6 +324,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           slug: slug ?? QUEUE_SLUG,
           // On the queue, feed the saved-article list as the "current page".
           pageContextMarkdown: isQueue ? buildQueueContextMarkdown() : undefined,
+          attachCurrentNote,
           viewingFilePath,
           // Free-chat only: slash commands already fold the selection into
           // their rendered body via {{selection}}, so passing it here too
@@ -440,7 +447,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [isQueue, slug, viewingFilePath, selectionText, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [isQueue, slug, attachCurrentNote, viewingFilePath, selectionText, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { run }

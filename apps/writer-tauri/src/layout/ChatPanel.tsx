@@ -50,7 +50,7 @@ import {
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { useVaultCommands } from '@/state/vaultCommandsStore'
-import { pathForDoc } from '@/lib/docPaths'
+import { pathForSlug } from '@/lib/docPaths'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import {
@@ -103,6 +103,26 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   }, [routeFilePath])
   // What the chat actually sees / the chip renders: null once detached.
   const viewingFilePath = routeFilePath && !fileChipDismissed ? routeFilePath : null
+  // The open note, same shape: the URL slug is the source of truth and a
+  // dismissal rides on top, so navigating to another note re-attaches.
+  //
+  // Unlike the file chip this is NOT reset on send — the note isn't a one-shot
+  // attachment, it's where the user still is. Detaching only stops the note
+  // being described to the model; `slug` itself is untouched, so edit routing
+  // and run bookkeeping still work and the model can act on the note if asked
+  // to by name.
+  const [noteChipDismissed, setNoteChipDismissed] = useState(false)
+  useEffect(() => {
+    setNoteChipDismissed(false)
+  }, [slug])
+  const attachCurrentNote = !noteChipDismissed
+  // ONE derivation feeds both the chip and the payload. They used to come from
+  // different sources (a prop for the chip, `slug` for the run), which is how
+  // they were free to disagree — the whole failure this fixes. `runChat`
+  // resolves the path from the same slug through the same `pathForSlug`, so a
+  // null here (unknown slug, unplaceable doc) means no chip AND no block.
+  const knownDocs = useDocsStore((s) => s.knownDocs)
+  const currentNotePath = attachCurrentNote ? pathForSlug(slug, knownDocs) : null
   // The editor's live selection (text + line range), editor-agnostic: the
   // active editor (CodeMirror) publishes it to this store, so the chat reads it
   // without a PM `editorView`. Drives the selection chip, the slash-command
@@ -215,6 +235,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   const runner = useChatRunner({
     isQueue,
     slug,
+    attachCurrentNote,
     viewingFilePath,
     selectionText,
     activeThreadModel,
@@ -583,11 +604,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     args: string,
     history: ChatTurn[],
   ) {
-    const knownDocs = useDocsStore.getState().knownDocs
-    const doc = slug ? knownDocs.find((d) => d.slug === slug) : undefined
-    const notePath = doc
-      ? pathForDoc(doc, (s) => knownDocs.find((d) => d.slug === s))
-      : null
+    const notePath = pathForSlug(slug, useDocsStore.getState().knownDocs)
     const arg = args.trim() || notePath || ''
     const overrides: RunOverrides = {
       systemPrompt: '',
@@ -1028,6 +1045,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             onClearSelection={handleClearSelection}
             viewingFilePath={viewingFilePath}
             onClearViewingFile={() => setFileChipDismissed(true)}
+            currentNotePath={currentNotePath}
+            currentNoteLabel={noteLabel}
+            onClearCurrentNote={() => setNoteChipDismissed(true)}
           />
         )}
       </div>

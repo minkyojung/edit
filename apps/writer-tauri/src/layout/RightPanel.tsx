@@ -13,6 +13,7 @@
 
 import { useEffect } from 'react'
 import { useLayoutStore } from '@/state/layoutStore'
+import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { useThreads, type UseThreadsResult } from '@/hooks/useThreads'
 import { useActiveThread } from '@/hooks/useActiveThread'
 import { useThreadsStore } from '@/state/threadsStore'
@@ -22,11 +23,16 @@ import { ArchivedThreadsPopover } from '@/chat/ArchivedThreadsPopover'
 import { notify } from '@/lib/notify'
 import { ChatPanel } from './ChatPanel'
 
-interface Props {
-  slug: string | null
-}
-
-export function RightPanel({ slug }: Props) {
+export function RightPanel() {
+  // Which note the chat is attached to comes from the URL, not from the doc
+  // handle. The URL is this app's declared source of truth for "which doc is
+  // open" (docsStore deliberately stores no activeSlug), and it changes
+  // synchronously on navigation — whereas the handle is populated
+  // asynchronously, so sourcing from it left the chat pointing at nothing for
+  // the first frames after a switch. The editor header already reads the slug
+  // this way (EditorTabs), which is why it could show the new note's title
+  // while the chat was still on the old one.
+  const slug = useActiveSlug()
   // Threads are owned here, not in ChatPanel, so the picker can live in
   // the shared top bar that sits above BOTH the chat transcript and the
   // history view. useActiveThread holds a single useState — calling it

@@ -93,6 +93,12 @@ export interface RunChatArgs {
    * embed `{{document}}` in their body should pass false to avoid the
    * document showing up twice. */
   appendDocument?: boolean
+  /** Whether to describe the open note (`slug`) to the model this turn, as a
+   * `--- CURRENT NOTE ---` block on the USER message. Defaults to true. False
+   * when the user detached the composer's note chip — the same flag drives the
+   * chip, so what's shown attached and what's actually sent stay identical.
+   * Independent of `slug`, which still routes edits either way. */
+  attachCurrentNote?: boolean
   /** Vault-relative path of a non-markdown file the user is viewing in the
    * FileViewer (`/file/:rel`) route — a PDF, image, audio, etc. There's no
    * editor/slug for these, so this is the only signal the agent gets that a

@@ -9,14 +9,13 @@ import { EditorHeader } from './EditorHeader'
 import { CloseConfirmDialog } from '@/components/CloseConfirmDialog'
 import { useLayoutStore } from '@/state/layoutStore'
 import { useWindowModeStore } from '@/state/windowModeStore'
-import type { CollabHandle, CollabStatus } from '@/hooks/useCollabDoc'
+import type { CollabStatus } from '@/hooks/useCollabDoc'
 
 interface AppShellProps {
   children: React.ReactNode
   bottomLeft?: React.ReactNode
   documentContext?: string | null
   oauthStatus?: 'authenticated' | 'unauthenticated' | 'checking'
-  collabHandle?: CollabHandle | null
   collabStatus?: CollabStatus
 }
 
@@ -63,7 +62,7 @@ const loadWidth = (key: string, def: number, lo: number, hi: number): number => 
   return Number.isFinite(n) ? clamp(n, lo, hi) : def
 }
 
-export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: AppShellProps) {
+export function AppShell({ children, bottomLeft, collabStatus }: AppShellProps) {
   const { sidebarOpen, contextPanelOpen, setSidebar, setContextPanel, togglePanels } =
     useLayoutStore()
   // Compact (Raycast-Notes) mode hides the sidebar + right panel so only the
@@ -347,7 +346,7 @@ export function AppShell({ children, bottomLeft, collabHandle, collabStatus }: A
               FallbackComponent={PanelErrorFallback}
               onError={(error, info) => console.error('[right-panel] error', error, info)}
             >
-              <RightPanel slug={collabHandle?.slug ?? null} />
+              <RightPanel />
             </ErrorBoundary>
           </div>
         </div>
