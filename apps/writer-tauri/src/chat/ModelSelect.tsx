@@ -17,7 +17,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { CHAT_MODELS, labelForModel, type ChatModel, type ModelInfo } from '@/chat/types'
-import { mergeModelCatalog, splitByRecency, type MergedModel } from '@/chat/modelCatalog'
+import {
+  familyKey,
+  meetsVersionFloor,
+  mergeModelCatalog,
+  splitByRecency,
+  type MergedModel,
+} from '@/chat/modelCatalog'
 import { useAvailableModelsStore } from '@/state/availableModelsStore'
 import { cn } from '@/lib/utils'
 
@@ -59,11 +65,19 @@ export function ModelSelect({ value, onChange, disabled }: Props) {
     const isDisabled = (id: string) =>
       (available ?? []).some((a) => isDisabledFlag(a) && idMatches(a.value, id))
 
-    const visible = merged.filter((m) => !isDisabled(m.id))
+    // Drop models older than their family floor — the catalog reaches back to
+    // Opus 4.1, which answers as Opus 4.8. The SELECTED model is exempt: a
+    // thread pinned to an old model would otherwise have no matching row, and
+    // the trigger would render a checkmark against nothing.
+    const visible = merged.filter(
+      (m) => !isDisabled(m.id) && (meetsVersionFloor(m.id) || familyKey(m.id) === familyKey(value)),
+    )
     // Never strand the user with an empty picker if every model somehow reads
     // as disabled (unexpected payload shape).
     return splitByRecency(visible.length > 0 ? visible : merged, CHAT_MODELS)
-  }, [available, catalog])
+    // `value` is a dependency because the floor exempts the selected model —
+    // switching threads changes which below-floor row must stay visible.
+  }, [available, catalog, value])
 
   const renderItem = (m: MergedModel) => (
     <DropdownMenuItem
