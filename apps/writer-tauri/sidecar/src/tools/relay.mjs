@@ -94,7 +94,7 @@ export function extractPendingId(toolResponse) {
 export function buildProposeEditTool(getRunId, emit, vaultPath, registerAck) {
   return tool(
     'propose_edit',
-    'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — Read it first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works exactly like the built-in Edit tool. The host locates old_string and applies the change in place, then queues it for user review. Returns immediately — do not wait for the user. `reason`: a short one-line note recorded in the VERSION HISTORY (the commit log) for this edit — say what changed and why in plain terms. It is NOT shown in your chat reply; it is the audit trail so the user can later see why a change was made. Keep it specific ("Fixed the typo in the intro", "Added the 2026 pricing row"), not generic.',
+    'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — Read it first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works like the built-in Edit tool with ONE difference that matters: the change is STAGED for the user to review, and the file on disk stays unchanged until they accept it. So after a successful call, do NOT re-read the file to check your edit landed — it will still show the old text, and that is the expected state, not a failure. Returns immediately — do not wait for the user. `reason`: a short one-line note recorded in the VERSION HISTORY (the commit log) for this edit — say what changed and why in plain terms. It is NOT shown in your chat reply; it is the audit trail so the user can later see why a change was made. Keep it specific ("Fixed the typo in the intro", "Added the 2026 pricing row"), not generic.',
     {
       file_path: z.string(),
       old_string: z.string(),
@@ -118,11 +118,20 @@ export function buildProposeEditTool(getRunId, emit, vaultPath, registerAck) {
         }),
       )
       registerAck(pendingId)
+      // The second sentence is load-bearing, not politeness. Edits are STAGED: the
+      // file on disk is deliberately left untouched until the user accepts. A model
+      // that re-reads to confirm therefore sees its edit missing, concludes the call
+      // failed, and proposes the same edit again — which registers a SECOND review
+      // card for one logical edit. Say plainly that an unchanged file is the expected
+      // state so the verification never happens.
       return {
         content: [
           {
             type: 'text',
-            text: `Edit queued for user review (id: ${pendingId}).`,
+            text:
+              `Edit queued for user review (id: ${pendingId}). ` +
+              `The file is intentionally NOT modified until the user accepts, so do not re-read it to verify — ` +
+              `it will still show the old text and that does not mean this call failed. Do not propose this edit again.`,
           },
         ],
       }
@@ -200,7 +209,10 @@ export function buildProposeWriteTool(getRunId, emit, registerAck) {
         content: [
           {
             type: 'text',
-            text: `Write queued for user review (id: ${pendingId}).`,
+            text:
+              `Write queued for user review (id: ${pendingId}). ` +
+              `The file is intentionally NOT modified until the user accepts, so do not re-read it to verify — ` +
+              `it will still show the old content and that does not mean this call failed. Do not propose this write again.`,
           },
         ],
       }
@@ -301,7 +313,10 @@ export function buildProposeMultiEditTool(getRunId, emit, vaultPath, registerAck
         content: [
           {
             type: 'text',
-            text: `MultiEdit queued for user review (id: ${pendingId}).`,
+            text:
+              `MultiEdit queued for user review (id: ${pendingId}). ` +
+              `The file is intentionally NOT modified until the user accepts, so do not re-read it to verify — ` +
+              `it will still show the old text and that does not mean this call failed. Do not propose these edits again.`,
           },
         ],
       }

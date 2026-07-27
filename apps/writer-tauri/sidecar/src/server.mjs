@@ -1644,6 +1644,13 @@ export class Server {
                 },
               }
             }
+            // ok:false means the host could NOT stage the proposal at all — no review
+            // card exists and the file is untouched. Say both parts explicitly: the
+            // tool already returned an optimistic "queued for user review", and that
+            // text is still in the transcript, so a vague error leaves the model
+            // believing something is pending when nothing is. Re-reading IS the right
+            // move here (unlike after a successful stage, where the file is unchanged
+            // by design) — the anchor genuinely isn't where the model thought.
             return {
               hookSpecificOutput: {
                 hookEventName: 'PostToolUse',
@@ -1652,9 +1659,11 @@ export class Server {
                     {
                       type: 'text',
                       text:
-                        '(error: this proposal could not be queued for review' +
+                        '(error: this proposal was NOT queued' +
                         (reason ? ` — ${reason}` : '') +
-                        '. Re-read the file and retry.)',
+                        '. Disregard the "queued for user review" message above: no review ' +
+                        'card was created and the file is unchanged. Re-read the file to see ' +
+                        'its current content, then propose the edit again against that text.)',
                     },
                   ],
                 },
