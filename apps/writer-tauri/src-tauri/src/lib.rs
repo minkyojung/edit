@@ -6,6 +6,7 @@ mod fetch_url;
 mod git;
 mod github;
 mod google_oauth;
+mod models_catalog;
 mod oauth;
 mod os_trash;
 mod reveal;
@@ -81,6 +82,10 @@ pub fn run() {
             google_oauth::notify_signup,
             claude_sidecar::commands::claude_chat_start,
             claude_sidecar::commands::claude_list_models,
+            // Distinct from claude_list_models above: that one reports what the
+            // SDK handshake says the account may use (and lags a release by
+            // days); this one is the authoritative catalog, GET /v1/models.
+            models_catalog::anthropic_list_models,
             claude_sidecar::commands::claude_chat_cancel,
             claude_sidecar::commands::claude_chat_close_thread,
             claude_sidecar::commands::claude_chat_stop_task,
