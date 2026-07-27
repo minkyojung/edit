@@ -77,6 +77,15 @@ export async function checkEditPlacement(
   change: { edits: PendingEdit[] },
   label: string,
 ): Promise<EditCheck> {
+  // A check that adjudicates and a check that fails open look IDENTICAL from
+  // outside when the edit was fine anyway — which is the common case. Without
+  // this line there is no way to tell a working check from one that silently
+  // punts on every call, and the second is indistinguishable from not having
+  // built it. Logged in DEV only; the refusal path below logs unconditionally,
+  // being a consequential decision.
+  const trace = (outcome: string) => {
+    if (import.meta.env.DEV) console.log('[placement]', outcome, label)
+  }
   let body: string
   try {
     await useDocsStore.getState().ensureHandle(pageSlug)
@@ -85,17 +94,31 @@ export async function checkEditPlacement(
     // catch below returns ok — so no test can tell this line from its absence.
     // Kept because arriving at the right answer via a TypeError is an accident,
     // not a policy, and the next edit to that catch could quietly end it.
-    if (!handle) return { ok: true }
+    if (!handle) {
+      trace('open:no-handle')
+      return { ok: true }
+    }
     await handle.contentReady
     body = readDocBody(pageSlug)
   } catch {
+    trace('open:hydration-failed')
     return { ok: true }
   }
   // An empty body is indistinguishable from a hydration that quietly produced
   // nothing, so it is not evidence the anchor is missing.
-  if (!body) return { ok: true }
+  if (!body) {
+    trace('open:empty-body')
+    return { ok: true }
+  }
 
   const { placement } = placeEdits(body, change)
-  if (placement.kind === 'ok' || placement.kind === 'noop') return { ok: true }
+  if (placement.kind === 'ok' || placement.kind === 'noop') {
+    trace(`checked:${placement.kind}`)
+    return { ok: true }
+  }
+  console.warn('[placement] refused', placement.kind, label, {
+    target: placement.target,
+    editIndex: placement.editIndex,
+  })
   return { ok: false, reason: describeRefusal(placement, label, body, change.edits.length) }
 }
