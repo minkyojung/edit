@@ -177,6 +177,113 @@ export function savedBodyOf(state: EditorState): string {
  * a pure-insertion accept has an empty red range and thus no doc change. CmEditor's
  * save listener must re-mirror on these, or an auto-accepted append to the open
  * note is silently dropped. */
+// ── Invariant checks (dev only) ──────────────────────────────────────────────
+// `proposalPlan.ts` states the contract this subsystem lives by: the buffer minus
+// the green ranges is exactly the accepted body, which is what gets saved. Four
+// separate data-loss bugs violated it, and every one was invisible on screen —
+// the buffer looked right and the corruption only appeared in the file the 500 ms
+// flush wrote. Nothing checked the contract at runtime, so each was found by hand.
+//
+// These predicates make it checkable. They take plain VALUES rather than an
+// EditorState so they are unit-testable without mounting an editor, and so the
+// test suite can prove the safety net still works instead of trusting that it does.
+
+export type MatViolation = {
+  kind: 'bounds' | 'red-green' | 'cross-mat' | 'saved-drift'
+  detail: string
+}
+
+/** Structural checks over the materialized proposals.
+ *
+ *  • bounds     — every offset addresses real document positions.
+ *  • red-green  — within one proposal, green starts at or after red ends
+ *                 (planAdditional builds `greenFrom = redTo`, so anything else means
+ *                 a remap went wrong). Undoing an accept once produced a green that
+ *                 covered its own red AND the whole document, which made the saved
+ *                 body empty.
+ *  • cross-mat  — two proposals never overlap. A second proposal's red once began at
+ *                 the first proposal's green, so accepting it deleted the earlier
+ *                 suggestion too.
+ *
+ * Deliberately NOT checked: that the red text equals the change's `before`. Hunks
+ * come from a LINE-level diff, so red legitimately includes the trailing newline
+ * (`before` "고맙습니다." vs red "고맙습니다.\n") — asserting equality would fire on
+ * every healthy proposal, and a check that cries wolf gets ignored. */
+export function checkMatInvariants(mats: ProposalMat[], docLength: number): MatViolation[] {
+  const out: MatViolation[] = []
+  const spans: { id: string; from: number; to: number }[] = []
+  for (const m of mats) {
+    for (const h of m.hunks) {
+      const at = `${m.changeId} r[${h.redFrom},${h.redTo}) g[${h.greenFrom},${h.greenTo})`
+      for (const [name, pos] of [
+        ['redFrom', h.redFrom],
+        ['redTo', h.redTo],
+        ['greenFrom', h.greenFrom],
+        ['greenTo', h.greenTo],
+      ] as const) {
+        if (pos < 0 || pos > docLength) {
+          out.push({ kind: 'bounds', detail: `${at} — ${name}=${pos} outside [0,${docLength}]` })
+        }
+      }
+      if (h.redFrom > h.redTo) out.push({ kind: 'bounds', detail: `${at} — red inverted` })
+      if (h.greenFrom > h.greenTo) out.push({ kind: 'bounds', detail: `${at} — green inverted` })
+      if (h.redTo > h.greenFrom) out.push({ kind: 'red-green', detail: `${at} — green starts inside red` })
+      if (h.redTo > h.redFrom) spans.push({ id: m.changeId, from: h.redFrom, to: h.redTo })
+      if (h.greenTo > h.greenFrom) spans.push({ id: m.changeId, from: h.greenFrom, to: h.greenTo })
+    }
+  }
+  spans.sort((a, b) => a.from - b.from || a.to - b.to)
+  for (let i = 1; i < spans.length; i++) {
+    const prev = spans[i - 1]
+    const cur = spans[i]
+    if (cur.id !== prev.id && cur.from < prev.to) {
+      out.push({
+        kind: 'cross-mat',
+        detail: `${prev.id}[${prev.from},${prev.to}) overlaps ${cur.id}[${cur.from},${cur.to})`,
+      })
+    }
+  }
+  return out
+}
+
+/** True when every transaction in an update is one THIS module dispatched to move a
+ * proposal in or out of the buffer — materialize and refresh, which are kept out of
+ * undo history and carry no decision. Such an update must leave the saved body byte
+ * for byte identical: it only adds or removes green, which the save path excludes
+ * either way. Refresh once deleted the RED as well, so the saved body went from the
+ * note's text to empty with nothing on screen to show for it. */
+export function isSystemTx(transactions: readonly Transaction[]): boolean {
+  return (
+    transactions.length > 0 &&
+    transactions.every(
+      (t) => t.annotation(Transaction.addToHistory) === false && !isDecisionTx([t]),
+    )
+  )
+}
+
+/** Watch every update against the contract and REPORT — never throw. This runs while
+ * the user is typing; killing the editor mid-edit would itself lose work, which is the
+ * exact failure it exists to prevent. Dev-only, so a violation is loud where it can be
+ * acted on and absent from the shipped bundle. */
+function invariantWatch(slug: string): Extension {
+  return EditorView.updateListener.of((u) => {
+    const violations = checkMatInvariants(u.state.field(matField), u.state.doc.length)
+    if (isSystemTx(u.transactions)) {
+      const before = savedBodyOf(u.startState)
+      const after = savedBodyOf(u.state)
+      if (before !== after) {
+        violations.push({
+          kind: 'saved-drift',
+          detail: `saved body moved on a system transaction: ${JSON.stringify(before)} → ${JSON.stringify(after)}`,
+        })
+      }
+    }
+    for (const v of violations) {
+      console.error(`[cm-review] invariant (${v.kind}) on ${slug}: ${v.detail}`)
+    }
+  })
+}
+
 export function isDecisionTx(transactions: readonly Transaction[]): boolean {
   return transactions.some((t) =>
     t.effects.some((e) => e.is(acceptEffect) || e.is(rejectEffect)),
@@ -506,6 +613,10 @@ export function cmInBufferReview(slug: string): Extension {
   )
 
   return [
+    // Contract watchdog, dev only. Built inside the branch rather than above it so
+    // production constructs nothing at all — not relying on the minifier to notice
+    // an unused const.
+    ...(import.meta.env.DEV ? [invariantWatch(slug)] : []),
     matField,
     freezeOldText,
     EditorView.decorations.compute([matField], build),
