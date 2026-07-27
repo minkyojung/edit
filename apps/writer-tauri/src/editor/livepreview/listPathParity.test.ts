@@ -59,9 +59,31 @@ const padOf = (d: Deco) => Number(/padding-left:([\d.]+)em/.exec(d.style ?? '')!
 const lineDecos = (ds: Deco[]) => ds.filter((d) => d.class === 'cm-list-line')
 
 describe('the harness really does split the two paths', () => {
-  it('with a tree the ListMark branch renders; without one the fallback does', () => {
+  it('both arms render a plain bullet', () => {
     expect(listBits(viaTree('- item')).length).toBeGreaterThan(0)
     expect(listBits(viaFallback('- item')).length).toBeGreaterThan(0)
+  })
+
+  // Without this, the parity suite is satisfiable by DELETING the Lezer branch:
+  // `listLinesDone` would stay empty, the fallback would render those lines in BOTH
+  // arms, and every "identical decorations" assertion would hold trivially.
+  //
+  // The discriminator has to be something only the ListMark branch can produce.
+  // Depth is it: Lezer counts ancestor lists, the fallback divides the indent by the
+  // indent unit. At an indent that is not a multiple of the unit the two disagree —
+  // which is B7's documented residual, and doubles as proof the tree arm is really
+  // running the tree branch.
+  it('the tree arm is really the tree — it derives depth from ancestors', () => {
+    const doc = '- a\n    - b' // 4-space indent, 2-space unit
+    const treePads = lineDecos(viaTree(doc)).map(padOf)
+    const fbPads = lineDecos(viaFallback(doc)).map(padOf)
+    expect(treePads[1], 'ancestor count → one level in').toBeLessThan(fbPads[1])
+  })
+
+  it('the tree arm owns the lines it renders — the fallback does not double up', () => {
+    // One line, one `cm-list-line`. If the ListMark branch stopped populating
+    // listLinesDone, the fallback would add a second.
+    expect(lineDecos(viaTree('- item'))).toHaveLength(1)
   })
 })
 

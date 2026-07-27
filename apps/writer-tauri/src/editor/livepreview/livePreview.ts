@@ -212,12 +212,22 @@ function buildDecos(
   // the parser catches up a keystroke later.
   const listLinesDone = new Set<number>()
   const tree = syntaxTree(state)
-  const mark = (from: number, to: number, cls: string) => {
-    if (to > from) out.push(Decoration.mark({ class: cls }).range(from, to))
+  // Proposal gate, at the point of EMISSION rather than per node. The node-level
+  // check below can only classify the node's own span, but branches routinely
+  // decorate beyond it: the ListMark branch is entered for the marker yet marks
+  // `- [ ]` (marker + 4) and strikes a completed task's body to end of line, and
+  // HeaderMark/QuoteMark hide one char past the node for the trailing space. A
+  // proposal covering only a task's body therefore slipped through and got struck
+  // through and muted — which in a red/green diff reads as "deleted". Checking each
+  // span as it is emitted makes that unrepresentable instead of something every new
+  // branch has to remember.
+  const emit = (from: number, to: number, deco: Decoration) => {
+    if (to <= from) return
+    if (touchesProofRawRange(state, from, to)) return
+    out.push(deco.range(from, to))
   }
-  const hide = (from: number, to: number) => {
-    if (to > from) out.push(HIDE.range(from, to))
-  }
+  const mark = (from: number, to: number, cls: string) => emit(from, to, Decoration.mark({ class: cls }))
+  const hide = (from: number, to: number) => emit(from, to, HIDE)
   // `edges` also tags the first/last line with `${cls}-first` / `${cls}-last`, so a
   // per-line-backgrounded block (code) can round its outer corners + pad top/bottom
   // and read as one card instead of stacked rectangles.

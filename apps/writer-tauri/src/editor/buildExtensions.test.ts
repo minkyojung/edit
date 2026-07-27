@@ -37,13 +37,17 @@ describe('buildEditorExtensions — order contract', () => {
   })
 
   // The constraint the comments at buildExtensions.ts:143/:149 actually state, and
-  // which was unpinnable until `smartEnterKeymap` got a name: both pickers bind
-  // Enter at Prec.highest, exactly like smartEnter, so the ONLY thing deciding who
-  // claims the key is registration order. Each picker returns false when its menu
-  // is closed, so smartEnter still runs the rest of the time — but if either moved
-  // after smartEnter, Enter would continue the list instead of confirming the
-  // highlighted menu item, and nothing else in this suite would notice.
-  it('slash and wikilink pickers claim Enter BEFORE smartEnter', () => {
+  // which was unpinnable until `smartEnterKeymap` got a name: all three bind Enter
+  // at Prec.highest, so the ONLY thing deciding who claims the key is registration
+  // ORDER. Each picker returns false when its menu is closed, so smartEnter still
+  // runs the rest of the time — but if either moved after smartEnter, Enter would
+  // continue the list instead of confirming the highlighted menu item.
+  //
+  // SCOPE: this asserts order, which is the half that was unprotected. It does NOT
+  // assert precedence — lowering slashKeymap's Prec would still let smartEnter win
+  // and this would stay green. That needs a behavioral test (dispatch Enter with the
+  // menu open and assert the menu consumed it), which is the follow-up.
+  it('slash and wikilink pickers are REGISTERED before smartEnter', () => {
     const idx = (e: unknown) => ext.indexOf(e as (typeof ext)[number])
     expect(idx(smartEnterKeymap)).toBeGreaterThanOrEqual(0)
     expect(idx(slashKeymap)).toBeLessThan(idx(smartEnterKeymap))

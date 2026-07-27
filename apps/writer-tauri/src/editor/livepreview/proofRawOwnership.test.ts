@@ -79,6 +79,29 @@ describe('B2 — a proposal overlapping PART of a table', () => {
   })
 })
 
+describe('partial overlap must not leak through a construct left raw', () => {
+  // Found in review. Classifying a node `partial` and returning `undefined` makes
+  // the walk DESCEND — which is right for a container like Document or an ordinary
+  // paragraph, but wrong for something this layer replaces wholesale. An Image in a
+  // table cell classifies `none` on its own, so descending into a table the layer
+  // deliberately left raw rendered the image as a widget floating in markdown text.
+  it('an image inside a partially-proposed table does not render', () => {
+    const doc = '| a | b |\n| - | - |\n| ![alt](x.png) | 2 |\n'
+    // Line-aligned range over the header row only — exactly what diffLines produces.
+    const view = mount(doc, [{ from: 0, to: 10 }], [blocksV2])
+    expect(tableIn(view), 'table stays raw').toBeNull()
+    expect(view.contentDOM.querySelector('img'), 'and nothing inside it renders either').toBeNull()
+    view.destroy()
+  })
+
+  it('an image in an untouched paragraph still renders (partial still descends)', () => {
+    const doc = 'proposed line\n\n![alt](x.png)\n'
+    const view = mount(doc, [{ from: 0, to: 13 }], [blocksV2])
+    expect(view.contentDOM.querySelector('img')).not.toBeNull()
+    view.destroy()
+  })
+})
+
 describe('B3 — cards ignore the raw-range contract entirely', () => {
   it('a proposed YouTube URL shows as a diff, not a player', () => {
     const doc = `intro\n\n${YT}\n`

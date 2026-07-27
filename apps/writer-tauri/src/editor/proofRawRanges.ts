@@ -46,11 +46,9 @@ export type ProofRawOverlap = 'none' | 'partial' | 'inside'
  * inside that replace — unreachable. */
 export function proofRawOverlap(state: EditorState, from: number, to: number): ProofRawOverlap {
   let partial = false
-  for (const provide of state.facet(proofRawRangeProvider)) {
-    for (const r of provide(state)) {
-      if (from >= r.from && from < r.to && to <= r.to) return 'inside'
-      if (from < r.to && to > r.from) partial = true
-    }
+  for (const r of rawRangesOf(state)) {
+    if (from >= r.from && from < r.to && to <= r.to) return 'inside'
+    if (from < r.to && to > r.from) partial = true
   }
   return partial ? 'partial' : 'none'
 }
@@ -62,10 +60,21 @@ export function touchesProofRawRange(state: EditorState, from: number, to: numbe
   return proofRawOverlap(state, from, to) !== 'none'
 }
 
+// Memoized per state. The queries above are called once per decoration emitted —
+// thousands of times per viewport rebuild, i.e. per keystroke — and the review
+// layer's provider BUILDS a fresh array on every call (`[...red, ...green]`), so
+// asking it directly from the hot path allocated three arrays per query. A state
+// is immutable, so its ranges are too; compute once and reuse. Keyed weakly so
+// superseded states are collectable.
+const rawRangeCache = new WeakMap<EditorState, RawRange[]>()
+
 function rawRangesOf(state: EditorState): RawRange[] {
-  const out: RawRange[] = []
-  for (const provide of state.facet(proofRawRangeProvider)) out.push(...provide(state))
-  return out
+  let cached = rawRangeCache.get(state)
+  if (cached) return cached
+  cached = []
+  for (const provide of state.facet(proofRawRangeProvider)) cached.push(...provide(state))
+  rawRangeCache.set(state, cached)
+  return cached
 }
 
 /** Did the pending proposals themselves change across this transaction?

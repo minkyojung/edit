@@ -73,6 +73,43 @@ describe('livePreview raw-range guard', () => {
   })
 })
 
+describe('decorations are gated at the point of emission', () => {
+  // Found in review. The node-level gate can only classify the node's own span, but
+  // branches decorate beyond it — the ListMark branch is entered for the marker yet
+  // marks `- [ ]` and strikes a completed task's body to end of line. A proposal
+  // covering only the body was therefore struck through and muted, which inside a
+  // red/green diff reads as "deleted".
+  it('a proposal over a task BODY is not struck through', () => {
+    const doc = '- [x] done text'
+    const bodyFrom = doc.indexOf('done')
+    const withProposal = decosFor(doc, [{ from: bodyFrom, to: doc.length }])
+    const clean = decosFor(doc, [])
+    expect(clean.some((r) => r.value.spec.class === 'cm-task-done'), 'control: normally struck').toBe(true)
+    expect(withProposal.some((r) => r.value.spec.class === 'cm-task-done')).toBe(false)
+  })
+
+  it('a proposal over a task MARKER does not hide the proposal text', () => {
+    // `.cm-task-marker` is visibility:hidden, so marking proposal characters with it
+    // would make them invisible.
+    const doc = '- [x] done text'
+    const decos = decosFor(doc, [{ from: 2, to: doc.length }])
+    expect(decos.some((r) => r.value.spec.class?.includes('cm-task-marker'))).toBe(false)
+  })
+
+  it('the one-char overshoot on a heading marker is gated too', () => {
+    // HeaderMark hides `#` PLUS the trailing space — one char past the node — so a
+    // proposal starting at that space is missed by a node-level check. The trailing
+    // `tail` keeps the caret off the heading line; on the caret's own line the
+    // markers are revealed and nothing is hidden at all, which would make this
+    // assertion vacuous.
+    const doc = '## Heading\n\ntail'
+    const hidesAtZero = (raw: RawRange[]) =>
+      decosFor(doc, raw).filter((r) => r.from === 0 && r.value.spec.class === undefined)
+    expect(hidesAtZero([]), 'control: `## ` is normally hidden').toHaveLength(1)
+    expect(hidesAtZero([{ from: 2, to: 10 }])).toHaveLength(0)
+  })
+})
+
 describe('blocks raw-range guard', () => {
   const TABLE = '| a | b |\n| - | - |\n| 1 | 2 |'
 

@@ -46,7 +46,17 @@ function build(state: EditorState): DecorationSet {
       // table widget, or the accept/reject buttons end up sealed inside a block
       // replace where they can't be seen or clicked.
       const raw = proofRawOverlap(state, node.from, node.to)
-      if (raw !== 'none') return raw === 'inside' ? false : undefined
+      if (raw === 'inside') return false
+      if (raw === 'partial') {
+        // A construct this layer replaces WHOLESALE is all-or-nothing. Descending
+        // into a table left raw would let an Image in one of its cells render as a
+        // widget floating in the markdown text we deliberately did not touch, so
+        // stop here. Containers we do NOT replace (Document, an ordinary Paragraph)
+        // still descend, which is the whole point of `partial` — content clear of
+        // the proposal keeps rendering.
+        if (node.name === 'Table' || node.name === 'Image') return false
+        return undefined
+      }
       // Image — same model as the media card. Two modes:
       //  • editing (cursor OR selection touching it) → KEEP the raw `![...](...)`
       //    source visible AND show the image preview as a block right below it
