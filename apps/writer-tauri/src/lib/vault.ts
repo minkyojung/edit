@@ -147,23 +147,30 @@ export async function revealVaultFile(relPath: string): Promise<void> {
   await invoke('reveal_in_finder', { path: await vaultAbsPath(relPath) })
 }
 
-/** Window (ms) during which a content-hash we recently wrote stays
- * in the echo-suppression set. macOS fsevents can coalesce + delay
- * events under load by 1-3 seconds, so the window must comfortably
- * cover that. The cost of a false negative (genuine external edit
- * with identical bytes suppressed) is essentially zero — if the
- * external edit produced the same content, there's no functional
- * difference to "our own write". The cost of a false positive (our
- * own write looks external) is much higher — a reload would wipe
- * in-memory state. */
-const RECENT_WRITE_WINDOW_MS = 30_000
-
-/** Track content hashes of recent writes. Echo suppression compares
- * the *bytes on disk at event time* to the bytes we just wrote — so
- * path differences (canonicalisation, symlinks, trailing slashes)
- * stop mattering. Same byte content → same hash → suppressed. The
- * VS Code approach. */
-const recentWriteHashes = new Map<string, number>()
+/** What we believe each file currently contains, as a content hash, keyed by
+ * vault-relative path. One value per path — the LATEST — never a history.
+ *
+ * This is the echo filter: an fsevent whose on-disk content already matches our
+ * belief has nothing to tell us, so it's dropped. Our own writes are recognised
+ * for free, because writing is exactly when the belief is updated.
+ *
+ * It replaces a set of every hash written in the last 30 seconds, which was
+ * unsound rather than merely imprecise. A *history* of contents we once wrote
+ * overlaps the contents an external tool may legitimately restore — and
+ * restoring an earlier version is precisely what version control does for a
+ * living. So `git revert`, or the undo-ai-change skill, could put back a body
+ * we'd written seconds earlier and the event would be swallowed: the editor
+ * kept the newer text and the next flush wrote it back, undoing the undo. No
+ * window fixes that, because tolerating coalesced fsevents wants a LONG window
+ * and not swallowing a revert wants a SHORT one. Neither VS Code, Zed, nor Git
+ * has such a window; all three compare against one current token (VS Code's
+ * `lastResolvedFileStat.etag`, Zed's `DiskState { mtime, size }`, Git's stat
+ * cache with a content-comparison backstop).
+ *
+ * Keyed by PATH, which the hash set was not: it matched content anywhere, so a
+ * write of some bytes to one file suppressed an external write of the same
+ * bytes to another. */
+const knownDiskHashes = new Map<string, string>()
 
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   // Web Crypto types BufferSource as `ArrayBuffer | ArrayBufferView<ArrayBuffer>`.
@@ -190,14 +197,11 @@ export async function hashContent(text: string): Promise<string> {
   return sha256Hex(new TextEncoder().encode(text))
 }
 
-/** Record the hash of bytes we just wrote so the watcher can
- * recognise the resulting fsevent as our own and suppress it.
- * Called from inside each `writeVault*` helper *before* the actual
- * write hits disk, so the hash is in place by the time the OS
- * delivers the resulting event. */
-async function markOurRecentContent(bytes: Uint8Array): Promise<void> {
-  const hash = await sha256Hex(bytes)
-  recentWriteHashes.set(hash, Date.now())
+/** Record what we now believe `relPath` contains. Called from inside each
+ * `writeVault*` helper *before* the write hits disk, so the belief is in place
+ * by the time the OS delivers the resulting event. */
+async function noteDiskContent(relPath: string, bytes: Uint8Array): Promise<void> {
+  knownDiskHashes.set(relPath, await sha256Hex(bytes))
 }
 
 /** Did the on-disk content at `relPath` come from one of our recent
@@ -206,20 +210,20 @@ async function markOurRecentContent(bytes: Uint8Array): Promise<void> {
  *
  * Stale entries are lazily pruned on read so the Map doesn't grow
  * unbounded over long sessions. */
-export async function isOurRecentWrite(relPath: string): Promise<boolean> {
+export async function isDiskContentKnown(relPath: string): Promise<boolean> {
   try {
-    const path = await resolveVaultPath(relPath)
-    const bytes = await readFile(path)
+    const bytes = await readFile(await resolveVaultPath(relPath))
     const hash = await sha256Hex(bytes)
-    const t = recentWriteHashes.get(hash)
-    if (t === undefined) return false
-    if (Date.now() - t > RECENT_WRITE_WINDOW_MS) {
-      recentWriteHashes.delete(hash)
-      return false
-    }
-    return true
+    if (knownDiskHashes.get(relPath) === hash) return true
+    // Disk holds something we didn't know about: a real change. Adopt it as the
+    // new belief so a coalesced duplicate of the same event doesn't dispatch
+    // twice — the caller is about to handle this content.
+    knownDiskHashes.set(relPath, hash)
+    return false
   } catch {
-    // File doesn't exist or read failed — can't be our recent write.
+    // Gone or unreadable — nothing to compare, so it isn't a match. Forget the
+    // belief; a file recreated later must not be mistaken for still-known.
+    knownDiskHashes.delete(relPath)
     return false
   }
 }
@@ -234,9 +238,8 @@ export async function isOurRecentWrite(relPath: string): Promise<boolean> {
  *
  * If the rename fails after a successful tmp write, the tmp file is
  * cleaned up so the vault doesn't accumulate `.tmp` cruft. The
- * `recentWrites` flag is set BEFORE rename so the watcher event for
- * the rename is reliably caught — see comment on
- * RECENT_WRITE_WINDOW_MS for the timing budget. */
+ * Our belief about the file's content is recorded BEFORE the rename, so it is
+ * already in place when the OS delivers the resulting event. */
 async function atomicWriteText(absPath: string, content: string): Promise<void> {
   const tmp = `${absPath}.tmp`
   await writeTextFile(tmp, content)
@@ -257,10 +260,9 @@ async function atomicWriteText(absPath: string, content: string): Promise<void> 
 
 /** Write a vault file as UTF-8 text, atomically. Existing file is
  * replaced as one operation — consumers never see a partial write
- * even if the process crashes mid-rename. Also stamps the path into
- * {@link recentWrites} so the file watcher's echo filter
- * ({@link isOurRecentWrite}) can suppress the inevitable fsevents
- * fire that follows. */
+ * even if the process crashes mid-rename. Also records what we now believe the
+ * file holds ({@link isDiskContentKnown}) so the file watcher drops the
+ * inevitable fsevent that follows. */
 export async function writeVaultFile(relPath: string, content: string): Promise<void> {
   const path = await resolveVaultPath(relPath)
   // Ensure the parent directory exists. Nested doc layouts —
@@ -270,7 +272,7 @@ export async function writeVaultFile(relPath: string, content: string): Promise<
   // exists, so this stays idempotent on the common steady-state write.
   const parent = await dirname(path)
   await mkdir(parent, { recursive: true })
-  await markOurRecentContent(new TextEncoder().encode(content))
+  await noteDiskContent(relPath, new TextEncoder().encode(content))
   await atomicWriteText(path, content)
   scheduleAutoCommit(relPath)
 }
@@ -297,9 +299,8 @@ export async function writeVaultFile(relPath: string, content: string): Promise<
  * write a single full line at a time so the file remains parseable
  * line-by-line after any crash.
  *
- * Like the atomic helpers, the path is stamped into
- * {@link recentWrites} so the file watcher ignores the resulting
- * fsevent. */
+ * Like the atomic helpers, it records what the file now holds so the watcher
+ * ignores the resulting fsevent. */
 export async function appendVaultFile(
   relPath: string,
   content: string,
@@ -307,8 +308,8 @@ export async function appendVaultFile(
   const path = await resolveVaultPath(relPath)
   const parent = await dirname(path)
   await mkdir(parent, { recursive: true })
-  // With content-hash echo we need the post-append bytes to mark
-  // before the write lands. Read existing, concatenate, mark, write
+  // We need the post-append bytes to record as our belief before the write
+  // lands. Read existing, concatenate, mark, write
   // atomically. Loses the "OS-level append" semantics but our chat
   // threads are O(KB) so the read-modify-write cost is negligible.
   let existing: Uint8Array
@@ -321,7 +322,7 @@ export async function appendVaultFile(
   const combined = new Uint8Array(existing.length + appendBytes.length)
   combined.set(existing)
   combined.set(appendBytes, existing.length)
-  await markOurRecentContent(combined)
+  await noteDiskContent(relPath, combined)
   await writeTextFile(path, new TextDecoder().decode(combined))
   scheduleAutoCommit(relPath)
 }
@@ -357,7 +358,7 @@ export async function writeVaultBinary(
   const path = await resolveVaultPath(relPath)
   const parent = await dirname(path)
   await mkdir(parent, { recursive: true })
-  await markOurRecentContent(data)
+  await noteDiskContent(relPath, data)
   await atomicWriteBinary(path, data)
   // .ydoc files are gitignored so this debounce will mostly resolve
   // to a no-op commit, but image / video / audio binaries (the other
@@ -379,8 +380,8 @@ export async function readVaultBinary(relPath: string): Promise<Uint8Array> {
  * Without this, every title edit would create a fresh file and
  * orphan the old one.
  *
- * Both the source and destination get marked in {@link recentWrites}
- * so the future file watcher's echo filter suppresses both events. */
+ * The destination's belief is carried over so the resulting fsevent is
+ * recognised as ours; see the body for why the source cannot be. */
 export async function renameVaultFile(
   fromRel: string,
   toRel: string,
@@ -389,16 +390,22 @@ export async function renameVaultFile(
   const toAbs = await resolveVaultPath(toRel)
   const parent = await dirname(toAbs)
   await mkdir(parent, { recursive: true })
-  // Pre-mark the file's content so the rename's fsevent is recognised
-  // as ours. Rename doesn't change content, so the same hash matches
-  // events for both the source removal and the destination creation.
+  // Move our belief along with the file: rename doesn't change content, so
+  // whatever we knew `fromRel` to hold is what `toRel` now holds. Recorded
+  // before the rename so it's in place when the OS delivers the create event.
+  //
+  // Only the DESTINATION can be recognised this way. The source's event is a
+  // removal — there is nothing left at that path to compare — so it dispatches
+  // and the watcher's move-correlation handles it. That was already true of the
+  // hash filter this replaces, despite its comment claiming both were covered:
+  // it also read the file at the path, which by then was gone.
   try {
     const bytes = await readFile(fromAbs)
-    await markOurRecentContent(bytes)
+    await noteDiskContent(toRel, bytes)
   } catch {
-    // If we can't read the source, the rename will fail anyway and
-    // there are no events to suppress.
+    // If we can't read the source, the rename will fail anyway.
   }
+  knownDiskHashes.delete(fromRel)
   await rename(fromAbs, toAbs)
   // Schedule using the destination — that's what's visible in git
   // after the rename. The source removal is part of the same staged
@@ -531,6 +538,6 @@ if (import.meta.env.DEV) {
     list: listVaultDir,
     exists: vaultFileExists,
     delete: deleteVaultFile,
-    isRecentWrite: isOurRecentWrite,
+    isDiskContentKnown,
   }
 }

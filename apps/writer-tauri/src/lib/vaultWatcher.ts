@@ -15,9 +15,10 @@
  *     CONFLICT: instead of clobbering either side, it marks the slug
  *     and surfaces a toast with a "Reload" action.
  *
- * Own writes are suppressed via `isOurRecentWrite()` (content-hash
- * based) from `vault.ts` — without it every 2s flush tick would
- * ping-pong back as a phantom "external change". External wiki changes
+ * Own writes are dropped via `isDiskContentKnown()` from `vault.ts`: it holds
+ * one belief per path about what that file contains, updated on every write, so
+ * an event whose on-disk content already matches has nothing to report. Without
+ * it every flush tick would ping-pong back as a phantom "external change". External wiki changes
  * also invalidate the Tier 1 index, and create/remove bursts refresh
  * the folder inventory (debounced).
  *
@@ -39,7 +40,7 @@ import { invalidateWikiIndex } from '@/state/wikiIndex'
 import { invalidateVaultTimeline } from '@/state/vaultTimeline'
 import {
   hashContent,
-  isOurRecentWrite,
+  isDiskContentKnown,
   listVaultTreeRecursive,
   readVaultFile,
   vaultFileExists,
@@ -147,28 +148,31 @@ export async function startVaultWatcher(): Promise<() => void> {
   return unwatch
 }
 
-/** Filter the candidate paths by reading each from disk and
- * comparing the content hash against `recentWriteHashes` (the
- * VS Code-style content-based echo). Anything whose on-disk bytes
- * match a recent write of ours is suppressed; the rest is treated
- * as a real external edit and dispatched to the handlers. */
+/** Filter the candidate paths by reading each from disk and comparing against
+ * what we believe that file holds. Anything already matching our belief has
+ * nothing to tell us and is dropped; the rest is a real external change and is
+ * dispatched.
+ *
+ * The question is "is this what I already know?", NOT "did I write this
+ * content at some point recently" — see `knownDiskHashes` for why the second
+ * one silently swallowed `git revert`. */
 async function resolveAndDispatch(
   event: { type: unknown },
   candidates: string[],
   rawPaths: string[],
 ): Promise<void> {
   const checks = await Promise.all(
-    candidates.map(async (rel) => ({ rel, ours: await isOurRecentWrite(rel) })),
+    candidates.map(async (rel) => ({ rel, ours: await isDiskContentKnown(rel) })),
   )
   const external = checks.filter((c) => !c.ours).map((c) => c.rel)
   if (external.length === 0) {
-    console.log('[watch] echo suppressed', candidates)
+    console.log('[watch] already known', candidates)
     return
   }
-  // Echo suppression failed — flag it so we can diagnose if a real
-  // external-edit case is hiding behind a content-hash collision or
-  // a write that wasn't routed through markOurRecentContent.
-  console.warn('[watch] echo MISS', { external, rawPaths })
+  // Not a name for a failure: these are paths whose content differs from what
+  // we knew, which is exactly what the watcher exists to catch. Logged because
+  // an unexpected one still points at a write that skipped the vault helpers.
+  console.log('[watch] external change', { external, rawPaths })
   dispatchEvent(event, external)
 }
 
