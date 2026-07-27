@@ -99,11 +99,6 @@ export interface SystemBlocksArgs {
    * image, audio, …). Unlike `currentFilePath`, there's no text body to inject
    * — the model is told to Read the path on demand to interpret it. */
   viewingFilePath?: string | null
-  /** Text the user has selected in the editor when sending a free-chat turn.
-   * Injected as a high-salience `--- SELECTION ---` block so "explain this" /
-   * "rewrite this" resolve to the selection, not the whole document. Slash
-   * commands handle selection via `{{selection}}` and don't pass this. */
-  selectionText?: string | null
   /** Today's date as local `YYYY-MM-DD` (from `todayLocalDate()`). Injected
    * past the cache boundary so the model can resolve "today" / "today's
    * daily note" without guessing — and so the daily-changing value never
@@ -116,7 +111,7 @@ export interface SystemBlocksArgs {
  * Anchor ordering by cache stability (most-stable → most-mutable):
  *   prefix (stable):   systemBody(persona) → claudeMd → folder blocks →
  *                      SELF PROFILE → PREFERENCES
- *   suffix (dynamic):  today → viewing file → selection → document
+ *   suffix (dynamic):  today → viewing file → document
  *
  * `systemBody` (FREE_CHAT_PROMPT) and `claudeMd` (the Karpathy / Claude Code
  * schema — vault layout, operations, tool usage, conventions) are app-static,
@@ -145,7 +140,6 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     knowledgeBaseFolder,
     appendDocument,
     viewingFilePath,
-    selectionText,
     today,
   } = args
   const prefix: string[] = []
@@ -254,21 +248,13 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `and images directly). Treat it as read-only — don't try to edit it.`,
     )
   }
-  if (selectionText && selectionText.trim()) {
-    dynamic.push(
-      `--- SELECTION ---\n` +
-        `The user has selected this passage in the document. When they say "this", ` +
-        `"here", "this part", or ask to explain / rewrite / fix without naming a target, ` +
-        `they mean THIS selection — focus on it (the full document follows for context):\n\n` +
-        selectionText,
-    )
-  }
-  // NOTE: the open note, @-mentioned files and attached files are NOT injected
-  // here. They belong to a specific turn, but a persistent thread freezes its
-  // system prompt at the first turn's value (the SDK has no setSystemPrompt),
-  // so anything added on a later turn would never reach the model through this
-  // channel. They ride the USER message instead — see currentNoteBlock /
-  // attachedFilesBlock / referencedFilesBlock, built into the prompt in runChat.
+  // NOTE: the open note, the selection, @-mentioned files and attached files
+  // are NOT injected here. They belong to a specific turn, but a persistent
+  // thread freezes its system prompt at the first turn's value (the SDK has no
+  // setSystemPrompt), so anything added on a later turn would never reach the
+  // model through this channel. They ride the USER message instead — see
+  // currentNoteBlock / selectionBlock / attachedFilesBlock /
+  // referencedFilesBlock, built into the prompt in runChat.
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)
 
   if (dynamic.length > 0) {
@@ -342,6 +328,37 @@ export function currentNoteBlock(
     lines.push(`Its content was included earlier in this conversation and has not changed since.`)
   }
   return lines.join('\n')
+}
+
+/** The `--- SELECTION ---` block for the passage highlighted in the editor.
+ *
+ * Rides the USER message for the same reason {@link currentNoteBlock} does — a
+ * persistent thread's system prompt is fixed at its first turn — and the
+ * mismatch bites harder here: a selection changes every time the user drags,
+ * so a frozen one is wrong far more often than a frozen note.
+ *
+ * Unlike the note body, the selection is sent IN FULL every turn and no ledger
+ * gates it. It's small, it's the highest-signal thing in the prompt, and it
+ * can't be reconstructed from a path — which is why every comparable product
+ * sends selection text verbatim even when it sends only a path for the file.
+ * Re-sending also removes a class of desync bug outright, so the delta the note
+ * body needs would be a poor trade here.
+ *
+ * Same self-dating and latest-wins framing as the note block: earlier turns'
+ * selections stay in the history and can't be retracted, so this one has to say
+ * when it was true and that it supersedes them.
+ */
+export function selectionBlock(selectionText: string | null | undefined): string {
+  if (!selectionText || !selectionText.trim()) return ''
+  return (
+    `--- SELECTION ---\n` +
+    `As of this message, the user has this passage selected in the editor. ` +
+    `"this", "here", and "this part" refer to it when they don't name a target, ` +
+    `and a request to explain / rewrite / fix without one is about this passage ` +
+    `rather than the whole note. If an earlier message in this conversation shows ` +
+    `a different selection, that message is out of date and this one is current:` +
+    `\n\n${selectionText}`
+  )
 }
 
 /** The `--- ATTACHED FILES ---` block for files the user attached to a turn

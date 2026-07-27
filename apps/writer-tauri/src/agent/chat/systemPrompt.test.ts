@@ -13,6 +13,7 @@ import {
   composeSystemBlocks,
   currentNoteBlock,
   referencedFilesBlock,
+  selectionBlock,
   type SystemBlocksArgs,
 } from './systemPrompt'
 
@@ -108,6 +109,13 @@ describe('per-turn file context rides the user message, not the system prompt', 
     expect(out).not.toContain('--- REFERENCED FILES ---')
   })
 
+  // A selection changes on every drag, so a frozen one is wrong even more
+  // often than a frozen note was.
+  it('composeSystemBlocks never emits the SELECTION block', () => {
+    const out = text(composeSystemBlocks(args({ vaultRoot: '/v' })))
+    expect(out).not.toContain('--- SELECTION ---')
+  })
+
   // The regression this whole change exists to prevent: the open note used to
   // ride the (frozen) system prompt, so a thread started on note A kept telling
   // the model "the current note is A" forever — even after the user moved to B.
@@ -189,5 +197,41 @@ describe('currentNoteBlock', () => {
 
   it('returns "" for an empty path', () => {
     expect(currentNoteBlock('')).toBe('')
+  })
+})
+
+describe('selectionBlock', () => {
+  it('sends the selected text verbatim', () => {
+    const block = selectionBlock('the quick brown fox')
+    expect(block).toContain('--- SELECTION ---')
+    expect(block).toContain('the quick brown fox')
+  })
+
+  // Same append-only problem as the note: a selection from turn 1 is still
+  // sitting in the history when the user drags a new one on turn 6.
+  it('dates itself and supersedes earlier selections', () => {
+    const block = selectionBlock('passage')
+    expect(block).toContain('As of this message')
+    expect(block).toContain('out of date')
+  })
+
+  it('reads as statements, not as commands to the model', () => {
+    const block = selectionBlock('passage')
+    expect(block).not.toMatch(/\bYou (must|should|will)\b/)
+    expect(block).not.toMatch(/\bfocus on it\b/i)
+  })
+
+  // It used to promise "the full document follows for context" — true only
+  // while the doc rode the system prompt right behind it. For an open note it
+  // no longer does, so the block must not claim otherwise.
+  it('does not promise that the document follows', () => {
+    expect(selectionBlock('passage')).not.toContain('follows for context')
+  })
+
+  it('returns "" for empty or whitespace-only selections', () => {
+    expect(selectionBlock(null)).toBe('')
+    expect(selectionBlock(undefined)).toBe('')
+    expect(selectionBlock('')).toBe('')
+    expect(selectionBlock('   \n  ')).toBe('')
   })
 })

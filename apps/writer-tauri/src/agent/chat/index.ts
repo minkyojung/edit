@@ -73,6 +73,7 @@ import {
   composeSystemBlocks,
   currentNoteBlock,
   referencedFilesBlock,
+  selectionBlock,
   shouldResumeSession,
   truncateDocForPrompt,
 } from './systemPrompt'
@@ -281,18 +282,22 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     return { path, body: body && body.trim() ? body : undefined }
   })
 
-  // Per-turn file context rides the USER message, not the system prompt. A
+  // Per-turn context rides the USER message, not the system prompt. A
   // persistent thread freezes its system prompt at the first turn's value (the
-  // SDK has no setSystemPrompt), so the open note / @-mentions / attachments
-  // added on a later turn only reach the model through the per-turn user
-  // message. Order: current note → host note → user text → referenced files →
-  // attached files. The current note leads because it's ambient orientation:
-  // both the outcome note and the user's own text can say "this note", so what
-  // "this" refers to has to be established before either of them. Empty blocks
-  // (no mentions / attachments, no open note, a null outcome note) drop out via
-  // filter.
+  // SDK has no setSystemPrompt), so the open note / selection / @-mentions /
+  // attachments as of a LATER turn only reach the model through the per-turn
+  // user message. Order: current note → selection → host note → user text →
+  // referenced files → attached files.
+  //
+  // Note and selection lead because they're ambient orientation, and they're in
+  // that order because the selection narrows the note: both the outcome note
+  // and the user's own text can say "this", so what "this" points at has to be
+  // established before either of them, from the outside in. Empty blocks (no
+  // mentions / attachments, no open note, no selection, a null outcome note)
+  // drop out via filter.
   const prompt = [
     currentNote,
+    selectionBlock(selectionText),
     outcome.note,
     basePrompt,
     referencedFilesBlock(mentionFiles),
@@ -323,7 +328,6 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // the block outright; the VIEWING FILE block tells the model to Read it.
     appendDocument: viewingFilePath ? false : isSyntheticPage && appendDocument,
     viewingFilePath,
-    selectionText,
     today: todayLocalDate(),
   })
   const runId = crypto.randomUUID()

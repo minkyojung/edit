@@ -107,7 +107,9 @@ export interface RunChatArgs {
    * Null/omitted on every other surface. */
   viewingFilePath?: string | null
   /** Editor text the user had selected when sending a free-chat turn. Injected
-   * as a `--- SELECTION ---` block so "explain this" targets the selection. Only
+   * as a `--- SELECTION ---` block on the USER message (not the system prompt,
+   * which a persistent thread freezes at its first turn — and a selection
+   * changes on every drag) so "explain this" targets what's selected NOW. Only
    * passed for free chat — slash commands embed selection via `{{selection}}`. */
   selectionText?: string | null
   /** Vault-relative paths the user @-mentioned in the composer. Injected as a

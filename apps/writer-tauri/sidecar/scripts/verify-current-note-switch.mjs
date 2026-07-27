@@ -169,6 +169,20 @@ function turn(prompt) {
   })
 }
 
+// Mirrors selectionBlock() in src/agent/chat/systemPrompt.ts — same copy
+// caveat as currentNoteBlock above.
+function selectionBlock(text) {
+  return (
+    `--- SELECTION ---\n` +
+    `As of this message, the user has this passage selected in the editor. ` +
+    `"this", "here", and "this part" refer to it when they don't name a target, ` +
+    `and a request to explain / rewrite / fix without one is about this passage ` +
+    `rather than the whole note. If an earlier message in this conversation shows ` +
+    `a different selection, that message is out of date and this one is current:` +
+    `\n\n${text}`
+  )
+}
+
 const mentionsA = (t) => /lighthouse/i.test(t)
 const mentionsB = (t) => /beekeeping/i.test(t)
 
@@ -208,6 +222,29 @@ try {
   recalledBody
     ? ok('turn 3 → answered from the body sent earlier (path-only turn keeps content)')
     : bad('turn 3 lost the note body when it was omitted', t3.trim())
+
+  // ── Turns 4-5: the selection moves mid-conversation ────────────────────
+  // The same freeze applied to the selection, and bit harder: a selection
+  // changes on every drag, so a frozen one is stale almost immediately.
+  console.log('\n  … turn 4 (selects the first line of B)')
+  const t4 = await turn(
+    `${currentNoteBlock(B_REL, undefined, true)}\n${selectionBlock('The hive swarmed in April')}` +
+      `\n\nQuote the selected passage back to me exactly, nothing else.`,
+  )
+  console.log(`    → ${t4.trim().replace(/\n/g, ' ')}`)
+  const t4ok = /swarmed in April/i.test(t4) && !/queen/i.test(t4)
+  t4ok ? ok('turn 4 → quoted the first selection') : bad('turn 4 quoted the wrong text', t4.trim())
+
+  console.log('\n  … turn 5 (user drags a NEW selection — same thread)')
+  const t5 = await turn(
+    `${currentNoteBlock(B_REL, undefined, true)}\n${selectionBlock('the queen was replaced')}` +
+      `\n\nQuote the selected passage back to me exactly, nothing else.`,
+  )
+  console.log(`    → ${t5.trim().replace(/\n/g, ' ')}`)
+  const t5ok = /queen was replaced/i.test(t5) && !/swarmed/i.test(t5)
+  t5ok
+    ? ok('turn 5 → quoted the NEW selection, not the frozen one')
+    : bad('turn 5 answered with the OLD selection — still frozen', t5.trim())
 
   await request('shutdown', {}).catch(() => {})
 } catch (err) {
