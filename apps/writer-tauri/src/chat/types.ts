@@ -62,7 +62,16 @@ export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-5'
 export function labelForModel(model: string): string {
   const known = CHAT_MODEL_LABELS[model as ChatModel]
   if (known) return known
-  return modelFactsFor(model)?.displayName ?? model.replace(/^claude-/, '')
+  const fromCatalog = modelFactsFor(model)?.displayName
+  if (fromCatalog) {
+    // The API spells them "Claude Opus 4.7" where our table says "Opus 4.7".
+    // Without this the picker mixes both conventions in one list — the models
+    // we ship with read one way and the ones the catalog supplied read another,
+    // which looks like two different lists rather than one.
+    const stripped = fromCatalog.replace(/^claude\s+/i, '').trim()
+    return stripped || fromCatalog
+  }
+  return model.replace(/^claude-/, '')
 }
 
 /** One model the account can actually use, as reported by the Claude Agent

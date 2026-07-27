@@ -33,10 +33,23 @@ describe('with a catalog', () => {
         efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       },
     ])
-    expect(labelForModel('claude-opus-9')).toBe('Claude Opus 9')
+    // "Claude " is stripped so it reads like our own labels — see below.
+    expect(labelForModel('claude-opus-9')).toBe('Opus 9')
     expect(contextLimitForModel('claude-opus-9')).toBe(2_000_000)
     // `max` is a real tier the API reports but this app deliberately hides.
     expect(effortsForModel('claude-opus-9')).toEqual(['low', 'medium', 'high', 'xhigh'])
+  })
+
+  // The API says "Claude Opus 4.7" where our table says "Opus 4.7"; mixing both
+  // in one dropdown reads as two different lists.
+  it('drops the API\'s "Claude" prefix so catalog names match our house style', () => {
+    setModelFacts([{ id: 'claude-opus-4-7', displayName: 'Claude Opus 4.7' }])
+    expect(labelForModel('claude-opus-4-7')).toBe('Opus 4.7')
+  })
+
+  it('keeps a display name that is only "Claude" rather than rendering empty', () => {
+    setModelFacts([{ id: 'claude-mystery', displayName: 'Claude' }])
+    expect(labelForModel('claude-mystery')).toBe('Claude')
   })
 
   it('matches a dated catalog id against the bare id the app sends', () => {
