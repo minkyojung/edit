@@ -423,10 +423,17 @@ export function cmInBufferReview(slug: string): Extension {
     //    body — see mergeEditIntoStagedBody — while this editor was already
     //    showing the first call's preview). Without this, the buffer would
     //    silently keep showing the stale text forever, and Keep would commit
-    //    that stale text, discarding the merge. Remove the old red/green
-    //    hunks entirely (both sides — not just one, unlike CLEANUP) and drop
-    //    the recorded fingerprint so the INSERT step below re-materializes it
-    //    fresh with the CURRENT content on the next pass.
+    //    that stale text, discarding the merge.
+    //
+    //    Un-materializing means deleting ONLY THE GREEN. Materialization inserts
+    //    exactly one thing — the proposal text — while the red is the document's
+    //    own pre-existing content that was merely marked. Deleting the red too (as
+    //    this did) destroys the user's text, and nothing puts it back: the INSERT
+    //    step below re-inserts green only, and re-planning against a document whose
+    //    original text is gone finds no anchor, so it silently does nothing. A
+    //    second same-turn edit to one note therefore emptied it. Deleting just the
+    //    green returns the buffer to its clean state, which is exactly what INSERT
+    //    expects to plan against.
     const stale = mats.filter(
       (m) =>
         pendingIds.has(m.changeId) &&
@@ -439,7 +446,6 @@ export function cmInBufferReview(slug: string): Extension {
       for (const m of stale) {
         effects.push(dropChange.of(m.changeId))
         for (const h of m.hunks) {
-          if (h.redTo > h.redFrom) dels.push({ from: h.redFrom, to: h.redTo })
           if (h.greenTo > h.greenFrom) dels.push({ from: h.greenFrom, to: h.greenTo })
         }
         insertedFingerprint.delete(m.changeId)
