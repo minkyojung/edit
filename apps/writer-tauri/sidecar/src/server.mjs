@@ -1752,12 +1752,30 @@ export class Server {
   // Cancel the CURRENT turn of a persistent thread without killing the thread.
   // A graceful interrupt() stops the foreground turn's generation; the SDK
   // settles it to a clean `result`, which #settleTurn maps to CANCELLED
-  // (rec.cancelRequested). Background subagent tasks run in the same subprocess
-  // and SURVIVE the interrupt (verified) — they keep running and deliver their
-  // task_notification. Only a genuinely wedged stream (no result within the
+  // (rec.cancelRequested). Only a genuinely wedged stream (no result within the
   // grace window) escalates to a hard teardown, and even then ONLY when no
-  // background work is in flight (see the backstop), so a cancel never severs a
-  // running background task.
+  // background work is in flight (see the backstop).
+  //
+  // WARNING — in-process background subagents do NOT survive this. An earlier
+  // revision of this comment claimed they did ("SURVIVE the interrupt
+  // (verified)"); that is false on SDK 0.3.187 / CLI 2.1.187. Measured
+  // 2026-07-27: interrupting a foreground turn while a `background: true`
+  // subagent is mid-flight kills it — the SDK emits
+  // task_updated{status:"killed"} then task_notification{status:"stopped"} for
+  // that task in the same tick as the cancel.
+  //
+  // The cause is upstream and can't be fixed here: the CLI links each task's
+  // AbortController as a CHILD of the turn's, so interrupt()'s abort reason
+  // cascades into them. It's a regression (0.2.140 preserved them), tracked at
+  // anthropics/claude-agent-sdk-typescript#352, still open. This version has no
+  // opt-out — no `preserveBackgroundTasks`, no `interruptForeground`, and
+  // `query.backgroundTasks()` is measured NOT to shield a task. Detached
+  // `run_in_background` shells survive only by being separate OS processes.
+  //
+  // So the backstop below is necessary but not sufficient: it stops US from
+  // severing background work, while the interrupt itself may already have.
+  // Nothing ships a `background: true` agent today, so this is latent — but
+  // anyone adding one should re-measure before relying on cancel semantics.
   #cancelPersistentTurn(runId, threadId) {
     const rec = this.activeThreads.get(threadId)
     // Stale cancel (turn already settled / different turn now live) → no-op.

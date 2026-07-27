@@ -141,12 +141,37 @@ async function scenario5_cancelKeepsBackground() {
     prompt: 'Delegate to the slowcounter subagent via Task, then one sentence it runs in background. Do not wait.',
   }, 3)
   await waitFor(() => ev.task.some((t) => t.kind === 'started' && t.subagentType))
-  await sleep(1500)
+  const bgTaskId = ev.task.find((t) => t.kind === 'started' && t.subagentType)?.taskId
+  // Let r1 SETTLE before sending r2. Without this, r2 is still sitting in the
+  // turn queue when the cancel arrives, #cancelPersistentTurn sees
+  // currentRunId !== runId and no-ops — so the scenario silently tested nothing.
+  await waitFor(() => ev.done.some((d) => d.runId === r1), 60000)
   send('chat', { runId: r2, threadId: tid, persistentQuery: true, vaultPath: vault, builtinTools: ['Bash', 'Task'], prompt: 'Write a long essay about the sea.' }, 4)
+  await waitFor(() => server.activeThreads.get(tid)?.currentRunId === r2, 30000)
   await sleep(1500)
   send('chat/cancel', { runId: r2 })
-  const bgSurvived = await waitFor(() => ev.task.some((t) => t.kind === 'notification' && t.outputFile), 40000)
-  check('background task delivered its notification after the cancel', bgSurvived)
+  await waitFor(() => ev.err.some((e) => e.runId === r2 && e.code === 'CANCELLED'), 30000)
+  check('the cancel actually landed on the live turn', ev.err.some((e) => e.runId === r2 && e.code === 'CANCELLED'))
+
+  // KNOWN UPSTREAM DEFECT — this asserts what the SDK currently DOES, not what
+  // we want. On 0.3.187 / CLI 2.1.187, interrupt() cascades its abort into the
+  // in-process background subagent and kills it (task_updated{status:'killed'}
+  // → task_notification{status:'stopped'}), because the CLI links each task's
+  // AbortController as a child of the turn's. Regression from 0.2.140; tracked
+  // at anthropics/claude-agent-sdk-typescript#352, still open, no opt-out on
+  // this version.
+  //
+  // Pinned deliberately: when Anthropic fixes it, the task will survive and
+  // THIS CHECK WILL FAIL — that failure is the signal to delete this block,
+  // restore the "background survives cancel" assertion, and revisit the
+  // WARNING comment on #cancelPersistentTurn in server.mjs.
+  await waitFor(() => ev.task.some((t) => t.taskId === bgTaskId && t.kind === 'notification'), 40000)
+  const bgNotif = ev.task.find((t) => t.taskId === bgTaskId && t.kind === 'notification')
+  check(
+    'background subagent is KILLED by the cancel (known SDK defect #352)',
+    bgNotif?.status === 'stopped',
+    bgNotif ? `status=${bgNotif.status}` : 'no notification for the background task',
+  )
   send("chat/close-thread", { threadId: tid })
   await sleep(400)
 }
