@@ -16,7 +16,7 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
 import { Facet, type EditorState, type Line, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from './wikilinkComplete'
-import { proofRawOverlap, touchesProofRawRange } from '@/editor/proofRawRanges'
+import { proofRawOverlap, touchesProofRawRange, proofRawRangesChanged } from '@/editor/proofRawRanges'
 import { cursorInRange } from './cursorRange'
 
 const HIDE = Decoration.replace({})
@@ -570,7 +570,21 @@ function previewPlugin(inlineOnly: boolean) {
         // up (instead of staying raw until an unrelated edit). This is the canonical CM
         // signal, NOT a forced parse, so the list-marker regex fallback is untouched.
         const treeChanged = syntaxTree(u.startState) != syntaxTree(u.state)
-        if (u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged || treeChanged || this.paused) {
+        // Pending-proposal ranges gate what may be decorated at all, and they change
+        // on effect-only transactions (materializing or dropping a proposal), which
+        // none of the signals above observe. Without this the whole viewport keeps
+        // decorations built under the OLD proposal state — a dropped proposal's text
+        // would stay raw, and a new one would render as committed content.
+        const rawChanged = proofRawRangesChanged(u.startState, u.state)
+        if (
+          u.docChanged ||
+          u.viewportChanged ||
+          u.selectionSet ||
+          u.focusChanged ||
+          treeChanged ||
+          rawChanged ||
+          this.paused
+        ) {
           if (u.view.composing) {
             this.deco = this.deco.map(u.changes)
             this.paused = true
