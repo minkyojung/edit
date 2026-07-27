@@ -121,6 +121,57 @@ export function mergeModelCatalog(
   return merged.sort(byNewestFirst)
 }
 
+// ── Version floor ─────────────────────────────────────────────────────────────
+//
+// The catalog reaches back further than this app should offer. Opus 4.1 is the
+// clearest case: it's still listed, but asking for it returns a successful turn
+// written by Opus 4.8 — the picker would be naming a model that never answers.
+//
+// A per-family MINIMUM handles that without a hand-maintained allowlist: it
+// names a floor once, and every future release clears it automatically. The
+// alternative — listing every model we accept — is the exact thing this whole
+// change set exists to delete.
+
+/** Lowest version offered per family. A family absent here has no floor: an
+ * unrecognized family must never be hidden, or the next new line of models
+ * disappears behind a rule written before it existed. */
+const VERSION_FLOOR: Record<string, readonly number[]> = {
+  opus: [4, 6],
+  sonnet: [4, 6],
+  haiku: [4, 5],
+}
+
+/** `claude-opus-4-8` → `{ family: 'opus', version: [4, 8] }`. Null for anything
+ * that doesn't fit the current naming (including the old `claude-3-opus-…`
+ * shape) — callers treat that as "no opinion", never as "hide". */
+export function parseModelVersion(id: string): { family: string; version: number[] } | null {
+  // Strip the release-date suffix FIRST: `claude-haiku-4-5-20251001` would
+  // otherwise parse 20251001 as a third version segment.
+  const m = /^claude-([a-z]+)-(\d+(?:-\d+)*)$/.exec(familyKey(id))
+  if (!m) return null
+  return { family: m[1], version: m[2].split('-').map(Number) }
+}
+
+/** Segment-wise comparison. NOT numeric: read as decimals, a future 4.10 would
+ * sort below 4.8 (4.1 < 4.8) and silently drop a newer model. */
+function compareVersions(a: readonly number[], b: readonly number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+/** Is this model recent enough to offer? Unparseable ids and unknown families
+ * pass — the default is always to show. */
+export function meetsVersionFloor(id: string): boolean {
+  const parsed = parseModelVersion(id)
+  if (!parsed) return true
+  const floor = VERSION_FLOOR[parsed.family]
+  if (!floor) return true
+  return compareVersions(parsed.version, floor) >= 0
+}
+
 /**
  * Split a merged list into what the picker shows up front and what it tucks
  * behind an "Older" heading.
