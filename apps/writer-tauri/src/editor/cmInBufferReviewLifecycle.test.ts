@@ -11,7 +11,8 @@ import { EditorView } from '@codemirror/view'
 import { history } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
 import { GFM } from '@lezer/markdown'
-import { cmInBufferReview, savedBodyOf } from './cmInBufferReview'
+import { cmInBufferReview, savedBodyOf, _matField } from './cmInBufferReview'
+import { redRangesOf } from './proposalPlan'
 import { usePendingChangesStore, type PendingChange } from '@/state/pendingChangesStore'
 
 const SLUG = 'inbox/Note'
@@ -92,6 +93,33 @@ describe('reconcile lifecycle', () => {
     // c1 committed, c2 still staged — its green must stay out of the saved body.
     expect(savedBodyOf(view.state)).toBe('ALPHA\n\nbeta')
     expect(view.state.doc.toString()).toContain('BETA')
+    view.destroy()
+  })
+
+  it('a second proposal on the NEXT line does not swallow the first one', async () => {
+    // The screenshot case: "고맙습니다를 스페인어로, 반갑습니다를 영어로 바꿔줘".
+    // The first proposal's green is inserted between the two lines, so the second
+    // proposal's red begins exactly at that insertion point in clean coordinates.
+    // Resolving that boundary as "before the green" made the second red start at the
+    // FIRST proposal's text: the editor struck it through, and accepting the second
+    // proposal would have deleted the first one's suggestion with it.
+    const view = mount('고맙습니다.\n반갑습니다.')
+    await settle()
+    usePendingChangesStore.getState().push(pc('c1', '고맙습니다.', 'Gracias.'))
+    await settle()
+    usePendingChangesStore.getState().push(pc('c2', '반갑습니다.', 'Nice to meet you.'))
+    await settle()
+
+    const doc = view.state.doc.toString()
+    const reds = redRangesOf(view.state.field(_matField)).map((r) => doc.slice(r.from, r.to))
+    expect(reds).toContain('반갑습니다.')
+    expect(reds.some((t) => t.includes('Gracias'))).toBe(false)
+
+    // And deciding one must leave the other's proposal intact.
+    usePendingChangesStore.getState().accept('c2')
+    await settle()
+    expect(view.state.doc.toString()).toContain('Gracias.')
+    expect(savedBodyOf(view.state)).toBe('고맙습니다.\nNice to meet you.')
     view.destroy()
   })
 

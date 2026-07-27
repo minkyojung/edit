@@ -30,13 +30,30 @@ export type ProposalPlan = {
 
 /** Map a position in the CLEAN doc (the real doc with `greens` removed) back to
  * the REAL doc — shift it past every existing green run that precedes it. The
- * inverse of stripRanges' coordinate effect. */
-export function cleanToReal(cleanPos: number, greens: { from: number; to: number }[]): number {
+ * inverse of stripRanges' coordinate effect.
+ *
+ * A clean position that lands exactly ON a green's insertion point is AMBIGUOUS:
+ * the green occupies no clean-space width, so "just before it" and "just after it"
+ * are the same clean number but different real ones. `assoc` picks, the same way
+ * CodeMirror's `mapPos` does:
+ *   • 'before' (default) — a range END stops short of the green.
+ *   • 'after'            — a range START begins past it.
+ * Defaulting both to 'before' let a second proposal's red start at the FIRST
+ * proposal's green: its red span then covered the earlier proposal's text, so
+ * accepting the second one deleted the first one's suggestion along with it. */
+export function cleanToReal(
+  cleanPos: number,
+  greens: { from: number; to: number }[],
+  assoc: 'before' | 'after' = 'before',
+): number {
   let real = 0
   let clean = 0
   for (const g of [...greens].sort((a, b) => a.from - b.from)) {
     const seg = g.from - real // non-green run before this green
-    if (cleanPos <= clean + seg) return real + (cleanPos - clean)
+    const boundary = clean + seg
+    if (cleanPos < boundary || (cleanPos === boundary && assoc === 'before')) {
+      return real + (cleanPos - clean)
+    }
     clean += seg
     real = g.to
   }
@@ -64,8 +81,10 @@ export function planAdditional(
   const byChange = new Map<string, ProposalHunk[]>()
   let freshOffset = 0 // fresh green inserted earlier in this batch (shifts later real positions)
   for (const { changeId, h } of tagged) {
-    const redFrom = cleanToReal(h.from, existingGreens) + freshOffset
-    const redTo = cleanToReal(h.to, existingGreens) + freshOffset
+    // A red START must begin past an existing green sitting at that point; a red END
+    // must stop before one. See cleanToReal.
+    const redFrom = cleanToReal(h.from, existingGreens, 'after') + freshOffset
+    const redTo = cleanToReal(h.to, existingGreens, 'before') + freshOffset
     let greenFrom = redTo
     let greenTo = redTo
     if (h.kind !== 'delete' && h.after) {
