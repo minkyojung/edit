@@ -31,7 +31,7 @@ import { cmInBufferReview, shouldRemirror } from '@/editor/cmInBufferReview'
 import { openLinkSafely } from '@/editor/linkUtils'
 import { slashMenu, slashKeymap } from '@/editor/slashMenu'
 import { wikilinkMenu, wikilinkKeymap } from '@/editor/wikilinkMenu'
-import { smartEnter, shiftEnter } from '@/editor/extensions/listEnter'
+import { smartEnterKeymap } from '@/editor/extensions/listEnter'
 import { imeListContinue } from '@/editor/extensions/imeListContinue'
 import { spaceWidthProbe } from '@/editor/extensions/spaceWidth'
 import { dedentContinuationBackward } from '@/editor/extensions/listBackspace'
@@ -157,12 +157,9 @@ export function buildEditorExtensions(deps: {
     // SHIFT-ENTER — continue the same list item on an INDENTED new line (real
     // continuation, not a flush-left lazy one); returns false off a list so the
     // default soft newline stands. Highest prec so it beats defaultKeymap's.
-    Prec.highest(
-      keymap.of([
-        { key: 'Enter', run: smartEnter },
-        { key: 'Shift-Enter', run: shiftEnter },
-      ]),
-    ),
+    // Defined in listEnter.ts rather than inline so buildExtensions.test.ts can
+    // identify it and pin the two "MUST precede smartEnter" constraints above.
+    smartEnterKeymap,
     // ⌘B/⌘I/⌘E/⌘⇧X wrap toggles (Prec.high → beats defaultKeymap). ⌘K
     // (link) is intentionally omitted: it opens the command palette.
     inlineFormatKeymapNoLink,

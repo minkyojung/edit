@@ -11,7 +11,8 @@
 //
 // MUST be bound at Prec.highest so it beats any other Enter handler.
 
-import { EditorView } from '@codemirror/view'
+import { EditorView, keymap } from '@codemirror/view'
+import { Prec } from '@codemirror/state'
 import { insertNewlineContinueMarkup } from '@codemirror/lang-markdown'
 import { insertNewlineAndIndent } from '@codemirror/commands'
 import { inCodeBlock } from './slashCommands'
@@ -227,3 +228,24 @@ export function shiftEnter(view: EditorView): boolean {
   if (handled) lastEnterHandledAt = performance.now()
   return handled
 }
+
+/**
+ * The Enter / Shift-Enter binding as a NAMED extension.
+ *
+ * This used to be an anonymous `Prec.highest(keymap.of([...]))` literal inside
+ * `buildEditorExtensions`. That made the two ordering constraints which name it —
+ * `slashKeymap` and `wikilinkKeymap` "MUST precede smartEnter", both at
+ * Prec.highest, so the winner is decided purely by registration order — literally
+ * unpinnable: `buildExtensions.test.ts` identifies extensions with `indexOf`, and
+ * there was no object to look up. Exporting it is a test-enablement move with no
+ * behavior change.
+ *
+ * Prec.highest so it beats defaultKeymap's Enter and Shift-Enter, and so CM's
+ * loose-list inference (`insertNewlineContinueMarkup`) never runs.
+ */
+export const smartEnterKeymap = Prec.highest(
+  keymap.of([
+    { key: 'Enter', run: smartEnter },
+    { key: 'Shift-Enter', run: shiftEnter },
+  ]),
+)
