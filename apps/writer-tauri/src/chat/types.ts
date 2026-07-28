@@ -13,12 +13,17 @@
 // a mid-write crash truncates at most one trailing turn rather
 // than corrupting the file.
 
+// Fetched-catalog facts, consulted by the lookups below. modelFacts imports
+// nothing, so this direction can't cycle.
+import { familyKey, modelFactsFor } from '@/chat/modelFacts'
+
 /** Models the user can pick from in the PromptInput model selector.
  * Kept narrow + explicit so the UI can display friendly labels without
  * round-tripping through agent ids. The sidecar accepts the raw id. */
 export type ChatModel =
   | 'claude-haiku-4-5'
   | 'claude-sonnet-5'
+  | 'claude-opus-5'
   | 'claude-opus-4-8'
   | 'claude-fable-5'
   // Legacy — kept selectable for threads created before Sonnet 5, but listed
@@ -28,6 +33,7 @@ export type ChatModel =
 export const CHAT_MODELS: readonly ChatModel[] = [
   'claude-haiku-4-5',
   'claude-sonnet-5',
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-fable-5',
   'claude-sonnet-4-6',
@@ -36,12 +42,40 @@ export const CHAT_MODELS: readonly ChatModel[] = [
 export const CHAT_MODEL_LABELS: Record<ChatModel, string> = {
   'claude-haiku-4-5': 'Haiku 4.5',
   'claude-sonnet-5': 'Sonnet 5',
+  'claude-opus-5': 'Opus 5',
   'claude-opus-4-8': 'Opus 4.8',
   'claude-fable-5': 'Fable 5',
   'claude-sonnet-4-6': 'Sonnet 4.6',
 }
 
 export const DEFAULT_CHAT_MODEL: ChatModel = 'claude-sonnet-5'
+
+/** Display name for a model id, in order of freshness: the fetched catalog, the
+ * built-in table, then the bare id minus its `claude-` prefix — never an empty
+ * string. Indexing CHAT_MODEL_LABELS directly is what made an unrecognized id
+ * (a thread saved before a model was added, a persisted setting, a slash command
+ * naming a model we don't list) render as a blank button.
+ *
+ * The built-in table is kept ahead of the raw id but BEHIND the catalog: our
+ * labels are terser than the API's ("Opus 4.8" vs "Claude Opus 4.8") for models
+ * we know, while the catalog is the only source for one we don't. */
+export function labelForModel(model: string): string {
+  const known = CHAT_MODEL_LABELS[model as ChatModel]
+  if (known) return known
+  const fromCatalog = modelFactsFor(model)?.displayName
+  if (fromCatalog) {
+    // The API spells them "Claude Opus 4.7" where our table says "Opus 4.7".
+    // Without this the picker mixes both conventions in one list — the models
+    // we ship with read one way and the ones the catalog supplied read another,
+    // which looks like two different lists rather than one.
+    const stripped = fromCatalog.replace(/^claude\s+/i, '').trim()
+    return stripped || fromCatalog
+  }
+  // Last resort: the bare id. Drop the release-date suffix too — these labels
+  // land mid-sentence in the activity rows ("… is unavailable — answered with
+  // …"), where a raw `opus-4-1-20250805` reads as a leaked internal id.
+  return familyKey(model).replace(/^claude-/, '')
+}
 
 /** One model the account can actually use, as reported by the Claude Agent
  * SDK's session-init handshake (query.supportedModels()). Only `value` is
@@ -70,7 +104,14 @@ export function normalizeModel(model: string | undefined): ChatModel {
 /** Fast mode = faster output without downgrading the model. The SDK marks
  * which models support it (`supportsFastMode`); in our lineup only Opus does.
  * Mirrors effortsForModel's client-side capability gating, so the toggle only
- * shows where it's real. */
+ * shows where it's real.
+ *
+ * Opus 5 is deliberately NOT listed yet: supportedModels() doesn't report it at
+ * all (it still describes Opus as 4.8), so there's no `supportsFastMode` flag to
+ * read, and a probe couldn't settle it either — a fastMode turn came back
+ * `fast_mode_state: 'off'` on Opus 4.8 too, which this account is flagged for.
+ * Offering a toggle that silently does nothing is worse than omitting it; flip
+ * this the moment the SDK handshake lists Opus 5 with the flag. */
 export function modelSupportsFastMode(model: ChatModel): boolean {
   return model === 'claude-opus-4-8'
 }
@@ -101,20 +142,42 @@ export const EFFORTS_BY_MODEL: Record<ChatModel, readonly ChatEffort[]> = {
   // Sonnet 5 is the first Sonnet-tier model to expose the extra `xhigh` gear;
   // Sonnet 4.6 tops out at `high`.
   'claude-sonnet-5': ['low', 'medium', 'high', 'xhigh'],
+  'claude-opus-5': ['low', 'medium', 'high', 'xhigh'],
   'claude-opus-4-8': ['low', 'medium', 'high', 'xhigh'],
   'claude-fable-5': ['low', 'medium', 'high', 'xhigh'],
   'claude-sonnet-4-6': ['low', 'medium', 'high'],
 }
 
-export function effortsForModel(model: ChatModel): readonly ChatEffort[] {
-  return EFFORTS_BY_MODEL[model]
+/** Efforts offered for a model we have no entry for. Every Claude model exposes
+ * at least low/medium/high, so this is the safe floor: an unknown id renders a
+ * working picker instead of crashing. `xhigh` is deliberately omitted — offering
+ * a gear the model may not have is worse than under-offering one it does (the
+ * catalog fills the real list in once it lands). */
+const FALLBACK_EFFORTS: readonly ChatEffort[] = ['low', 'medium', 'high']
+
+/** Takes a plain string, not ChatModel: a persisted thread, a slash-command
+ * frontmatter field, or the runtime-fetched catalog can all carry an id that
+ * isn't in our built-in union. Falling back keeps those paths alive.
+ *
+ * The built-in table wins over the catalog for models we ship with, because it
+ * encodes a product decision the API can't: `max` is a real tier the catalog
+ * reports, but we don't expose it (disproportionate token/time cost for a
+ * writing tool). For a model we DON'T know, the catalog's tiers are the only
+ * information available and beat guessing. */
+export function effortsForModel(model: string): readonly ChatEffort[] {
+  const known = EFFORTS_BY_MODEL[model as ChatModel]
+  if (known) return known
+  const fromCatalog = modelFactsFor(model)?.efforts?.filter((e): e is ChatEffort =>
+    (CHAT_EFFORTS as readonly string[]).includes(e),
+  )
+  return fromCatalog && fromCatalog.length > 0 ? fromCatalog : FALLBACK_EFFORTS
 }
 
 /** Snap an effort to one the model supports, falling back to its highest
  * level. Keeps a thread's stored `xhigh` from leaking into the UI / the SDK
  * call after the user switches to a model that tops out at `high`. */
-export function clampEffort(effort: ChatEffort, model: ChatModel): ChatEffort {
-  const allowed = EFFORTS_BY_MODEL[model]
+export function clampEffort(effort: ChatEffort, model: string): ChatEffort {
+  const allowed = effortsForModel(model)
   return allowed.includes(effort) ? effort : allowed[allowed.length - 1]
 }
 
@@ -439,13 +502,19 @@ export interface NoticePart {
   id: string
   ts: number
   type: 'notice'
-  kind: 'permission-denied' | 'model-fallback' | 'info'
+  kind: 'permission-denied' | 'model-fallback' | 'model-unavailable' | 'info'
   /** permission-denied: the blocked tool, and the human reason when the SDK
    * provided one (`decision_reason`). */
   toolName?: string
   reason?: string
-  /** model-fallback: the model the SDK switched to after a refusal. */
+  /** model-fallback / model-unavailable: the model that actually answered. */
   fallbackModel?: string
+  /** model-unavailable: the model the user picked, which didn't serve. Distinct
+   * from `model-fallback` (a safety refusal on an available model) — here the
+   * requested model simply isn't offered through this path, and the reply came
+   * from a different one WITHOUT any error. The picker would otherwise keep
+   * claiming a model that never answers. */
+  requestedModel?: string
   /** info: the SDK's `content`, and its render level (drives prominence — the
    * transcript-only `info` level is filtered out before a part is created). */
   text?: string

@@ -64,6 +64,13 @@ const systemPrompt = [
 
 // ── User turn: the reject HOST NOTE (mirrors buildEditOutcomeNote) + a
 //    correction that implies a DURABLE preference (casual, not formal). ─────
+//
+// The nudge is UNCONDITIONAL here; production gates it on `anyRejected`
+// (buildEditOutcomeNote.ts: `...(anyRejected ? ['', ...PREFERENCE_NUDGE_LINES] : [])`).
+// Sound, because every scenario in this file is a rejection — but the copy hides
+// that the gate exists at all, so a change to WHEN production emits the nudge
+// would leave this passing against a shape production no longer produces.
+// harnessProseParity.test.ts pins the wording; nothing pins the condition.
 // The reject REASON is itself part of the signal. A style reject (durable case)
 // implies a reusable rule; a factual reject (oneoff case) does not — so the
 // oneoff case must vary BOTH the reject reason and the follow-up message,
@@ -145,8 +152,12 @@ notifListeners.push((msg) => {
   if (m === 'chat/edit-pending' || m === 'chat/write-pending' || m === 'chat/skill-pending') {
     const fp = msg.params?.input?.file_path ?? msg.params?.name ?? '(skill)'
     allProposals.push({ method: m, fp })
-    const blob = JSON.stringify(msg.params ?? {})
-    if (blob.includes('preferences.md')) prefProposals.push({ method: m, params: msg.params })
+    // Match the TARGET, not the whole payload. This used to test
+    // `JSON.stringify(msg.params).includes('preferences.md')`, which also fires
+    // on a proposal against some OTHER file whose new_string merely mentions
+    // the name — inflating the durable case into a false pass and the one-off
+    // case into a false failure.
+    if (String(fp).includes('preferences.md')) prefProposals.push({ method: m, params: msg.params })
   }
 })
 
@@ -180,7 +191,11 @@ try {
   st === null ? ok('setToken') : bad('setToken', JSON.stringify(st))
 
   console.log('  … running chat turn (reject note + correction), waiting for proposals')
-  const r = await runChat('reject-pref-1')
+  // The runId doubles as the SDK session id, and the CLI rejects anything that
+  // isn't a UUID — "Error: Invalid session ID. Must be a valid UUID." A readable
+  // literal here kills the turn before the model runs, surfacing only as an opaque
+  // INTERNAL. verify-stale-retry hit this and fixed itself; the note never spread.
+  const r = await runChat(globalThis.crypto.randomUUID())
   if (r.kind !== 'ok') bad('chat run did not complete', JSON.stringify(r))
 
   console.log(`\n  case=${CASE}  proposals seen: ${JSON.stringify(allProposals)}`)
@@ -196,6 +211,14 @@ try {
       bad('durable correction produced NO preferences.md proposal', `${allProposals.length} other`)
     }
   } else {
+    // POSITIVE CONTROL. The verdict below is "no preferences.md proposal", which
+    // is equally true of a model that proposed nothing at all — declined, errored,
+    // or never had the relay tools registered. The one-off prompt asks for a real
+    // edit to the meeting note, so at least one proposal MUST have arrived for
+    // the restraint to mean anything.
+    allProposals.length > 0
+      ? ok(`the model did propose something (${allProposals.length}) — restraint is measurable`)
+      : bad('NO proposal at all — "no preferences.md edit" proves nothing here')
     // oneoff: a preferences.md proposal here would be spam.
     prefProposals.length === 0
       ? ok('one-off correction → NO preferences.md proposal (no spam)')

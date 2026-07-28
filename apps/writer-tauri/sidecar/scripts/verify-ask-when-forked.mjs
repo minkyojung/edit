@@ -134,7 +134,11 @@ try {
   st === null ? ok('setToken') : bad('setToken', JSON.stringify(st))
 
   console.log(`  … running chat turn (case=${CASE})`)
-  const r = await runChat('ask-fork-1')
+  // The runId doubles as the SDK session id, and the CLI rejects anything that
+  // isn't a UUID — "Error: Invalid session ID. Must be a valid UUID." A readable
+  // literal here kills the turn before the model runs, surfacing only as an opaque
+  // INTERNAL. verify-stale-retry hit this and fixed itself; the note never spread.
+  const r = await runChat(globalThis.crypto.randomUUID())
   if (r.kind === 'error') bad('chat errored', JSON.stringify(r))
 
   if (asked) {
@@ -143,6 +147,14 @@ try {
   } else {
     console.log(`\n  no AskUserQuestion. reply: ${assistantText.trim().slice(0, 200)}`)
   }
+
+  // LIVENESS, both branches. The clear-case verdict is "no question was asked",
+  // which is equally true of a model that declined, errored, or never had
+  // AskUserQuestion wired up at all — so on its own it proves nothing.
+  const didSomething = !!asked || assistantText.trim().length > 0
+  didSomething
+    ? ok('the turn produced a reply or a question')
+    : bad('the turn produced NEITHER — nothing was exercised, the verdict is meaningless')
 
   if (CASE === 'fork') {
     if (asked) {
@@ -153,6 +165,13 @@ try {
       bad('genuine fork → model did NOT ask (guessed instead)')
     }
   } else {
+    // POSITIVE CONTROL for the clear case. "It didn't ask" only means something
+    // if it did the work — otherwise a refusal scores identically to correct
+    // restraint. The dictated fix must show up in the reply.
+    const didTheFix = /launch/i.test(assistantText) && !/lanuch/i.test(assistantText)
+    didTheFix
+      ? ok('the dictated fix was performed (typo corrected in the reply)')
+      : bad('the reply does not show the correction — the model did not do the task')
     asked
       ? bad('dictated trivial fix wrongly triggered an AskUserQuestion')
       : ok('dictated trivial fix → no question (no spam)')

@@ -14,10 +14,8 @@ import { createArticle } from '@/state/articleService'
 import { captureYoutubeToNote } from '@/state/youtubeService'
 import { parseYoutubeId } from '@/lib/youtube'
 import { localizeArticleImages } from '@/lib/articleAssets'
-import { generateClientSlug } from '@/lib/slug'
-import { todayLocalDate } from '@/hooks/useDocMeta'
 import { notify } from '@/lib/notify'
-import { useDocsStore, type KnownDoc } from '@/state/docsStore'
+import { useDocsStore } from '@/state/docsStore'
 
 export interface SaveArticleResult {
   ok: boolean
@@ -109,27 +107,4 @@ async function localizeImagesInBackground(
   } catch (err) {
     console.warn('[readlater] image localization failed', err)
   }
-}
-
-/** Today's daily slug, creating the catalog entry if missing — WITHOUT
- * opening it as a tab (a read-later save shouldn't steal focus). The
- * append's ensureHandle + flush lands the daily file on disk. Mirrors
- * the creation half of docsStore `openDaily`, minus the activation.
- * Exported so other "drop a breadcrumb in today's daily" callers (e.g.
- * highlight → daily) reuse the exact same focus-free creation. */
-export function ensureTodayDailySlug(): string {
-  const today = todayLocalDate()
-  const existing = useDocsStore
-    .getState()
-    .knownDocs.find((d) => d.type === 'daily' && d.date === today)
-  if (existing) return existing.slug
-  const slug = generateClientSlug()
-  const daily: KnownDoc = {
-    slug,
-    type: 'daily',
-    date: today,
-    createdAt: new Date().toISOString(),
-  }
-  useDocsStore.setState((s) => ({ knownDocs: [...s.knownDocs, daily] }))
-  return slug
 }

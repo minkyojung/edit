@@ -11,6 +11,7 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
 
 import { cursorInRange } from '@/editor/livepreview/cursorRange'
+import { touchesProofRawRange, proofRawRangesChanged } from '@/editor/proofRawRanges'
 import { detectYoutubeEmbed } from '@/lib/youtube'
 import { useYoutubePlayerStore } from '@/state/youtubePlayerStore'
 
@@ -98,6 +99,12 @@ class YoutubeWidget extends WidgetType {
   ignoreEvent() {
     return true
   }
+  // 16:9 at the 640px max width ≈ 360px. Seeds the heightmap before the poster is
+  // measured so the scrollbar length and scrollTo/pos mapping don't jump on docs with
+  // several cards (converges to the real height after first measure).
+  get estimatedHeight() {
+    return 360
+  }
 }
 
 function build(state: EditorState): DecorationSet {
@@ -111,6 +118,17 @@ function build(state: EditorState): DecorationSet {
       if (!embed) return undefined
       const lineFrom = state.doc.lineAt(node.from)
       const lineTo = state.doc.lineAt(Math.min(node.to, state.doc.length))
+      // A block replace has to span WHOLE LINES, so everything between the line
+      // start and the URL is hidden along with it. Leading whitespace is harmless
+      // (indentation), but a container's marker is not: inside a blockquote the
+      // replace started at column 0 and swallowed the `>`, so embedding a video in
+      // a quote made the quote itself disappear. Anything non-blank in front means
+      // the URL belongs to a container that owns those columns — leave it raw.
+      if (state.doc.sliceString(lineFrom.from, node.from).trim() !== '') return false
+      // Pending AI proposal: a proposed URL must read as a diff, not play. Gate on
+      // the range we would REPLACE, not the node — the replace is what would seal
+      // the red/green marks and the accept/reject buttons out of view.
+      if (touchesProofRawRange(state, lineFrom.from, lineTo.to)) return false
       // Selection touching the card lines → show the raw URL (same edge-inclusive
       // predicate the v2 block layer uses, so every card reveals consistently).
       if (cursorInRange(state, lineFrom.from, lineTo.to)) return false
@@ -150,16 +168,41 @@ function touchesYoutube(tr: Transaction, mapped: DecorationSet): boolean {
   return touched
 }
 
+/** Does the selection sit on (or span) a line mentioning a YouTube URL — the reveal
+ * condition? Gates the selection-change rebuild: a caret move through plain prose can't
+ * change which embed reveals, so keep the mapped set instead of re-walking the whole
+ * syntax tree on every arrow/click. Superset of the card lines (same `youtu` predicate
+ * as touchesYoutube), so a reveal is never missed. Mirrors blocks.ts's
+ * `selectionNearBlock`. */
+function selectionNearYoutube(state: EditorState): boolean {
+  for (const r of state.selection.ranges) {
+    const first = state.doc.lineAt(r.from)
+    const last = r.to <= first.to ? first : state.doc.lineAt(r.to)
+    if (state.doc.sliceString(first.from, last.to).includes('youtu')) return true
+  }
+  return false
+}
+
 export const youtubeField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
+    // Pending-proposal ranges gate whether this card may render at all, and they
+    // change on effect-only transactions (a reject), which none of the gates below
+    // would catch — the card would stay raw until an unrelated edit.
+    if (proofRawRangesChanged(tr.startState, tr.state)) return build(tr.state)
     // Doc edit: keep the mapped (position-shifted) set unless the change could
     // add/remove/alter an embed — only then re-walk the tree. This is what stops
     // the per-keystroke full-document scan.
     if (tr.docChanged) return touchesYoutube(tr, mapped) ? build(tr.state) : mapped
-    // Caret moved (reveal): positions didn't shift, so rebuild without mapping.
-    if (tr.selection) return build(tr.state)
+    // Caret moved: rebuild ONLY when the selection enters or leaves a YouTube-URL line
+    // (before OR after the move) — otherwise a cursor move through plain prose kept
+    // re-walking the whole tree on every keystroke. Positions didn't shift, so no map.
+    if (tr.selection) {
+      return selectionNearYoutube(tr.startState) || selectionNearYoutube(tr.state)
+        ? build(tr.state)
+        : mapped
+    }
     // Parse-progress: the tree advanced (a bare YouTube URL line may now be a matching
     // Paragraph node) — rebuild so it renders as soon as the parser catches up. Cheap
     // pointer compare; only fires on pure parse-progress transactions (after the gates).

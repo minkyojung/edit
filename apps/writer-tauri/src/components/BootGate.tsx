@@ -159,8 +159,7 @@ export function BootGate({ children }: Props) {
   //
   // A vault must be selected before bootstrap so every doc it touches
   // (today's daily + system pages) can reach disk. VaultLauncher owns that
-  // choice now — a local folder, or restore-from-GitHub (which MUST run before
-  // anything fills the folder). This effect waits until a vault is in place.
+  // choice now. This effect waits until a vault is in place.
   useEffect(() => {
     // Wait until the vault path is both present AND verified to exist on
     // disk — never start the boot sequence against a missing folder.
@@ -170,8 +169,8 @@ export function BootGate({ children }: Props) {
       // the rust side fast-paths an existing `.git`) so every AI edit becomes a
       // revertible checkpoint. Best-effort — git missing / not installed
       // degrades to "no checkpoints" (the `.md` files stay the durable source)
-      // instead of blocking boot. This is LOCAL history only; GitHub
-      // backup/push stays disabled. Runs for every project kind.
+      // instead of blocking boot. Local history only — there is no remote
+      // backup. Runs for every project kind.
       try {
         await gitInit()
         // Migrate existing vaults (whose .gitignore predates the rule) so all

@@ -23,13 +23,10 @@ import { ensureProfileWikiSlug } from '@/state/wikiService'
 import { useActiveSlug } from '@/hooks/useActiveSlug'
 import { openDoc } from '@/lib/openDoc'
 import { ConnectClaudeDialog } from '@/components/auth/ConnectClaudeDialog'
-import { ConnectGitHubDialog } from '@/components/auth/ConnectGitHubDialog'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
-import { useGitHubAuth } from '@/hooks/useGitHubAuth'
 import { useGoogleAuth } from '@/hooks/useGoogleAuth'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useConnectDialog } from '@/stores/connectDialog'
-import { useConnectGitHubDialog } from '@/stores/connectGitHubDialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,9 +61,6 @@ export function AppSidebar() {
   // component; Settings → Connections is the surface that shows/manages the
   // identities, so we only keep the `refresh` callbacks the dialogs need.
   const { refresh } = useClaudeAuth()
-  const githubConnectOpen = useConnectGitHubDialog((s) => s.open)
-  const setGithubConnectOpen = useConnectGitHubDialog((s) => s.setOpen)
-  const { refresh: refreshGithub } = useGitHubAuth()
   // Every user signs in with Google, so the Profile row wears the Google
   // avatar + display name instead of a generic icon + "Profile" label.
   const { account: googleAccount } = useGoogleAuth()
@@ -358,13 +352,6 @@ export function AppSidebar() {
         <WhatsNewSidebar />
       </SidebarFooter>
       <ConnectClaudeDialog open={connectOpen} onOpenChange={setConnectOpen} onConnected={refresh} />
-      <ConnectGitHubDialog
-        open={githubConnectOpen}
-        onOpenChange={setGithubConnectOpen}
-        onConnected={() => {
-          void refreshGithub()
-        }}
-      />
     </Sidebar>
   )
 }

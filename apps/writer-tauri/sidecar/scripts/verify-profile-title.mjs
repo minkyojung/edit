@@ -1,8 +1,14 @@
-// Verifies the profile pipeline's NEW transport: pipeline.ts::callSection
-// now drives the title sidecar (claude_title → mode=title chat) instead of
-// the removed anthropic_messages_create direct path. This harness replays
-// exactly what callSection does against a live sidecar and checks the event
-// shapes callSection depends on:
+// Verifies the title sidecar's transport: a one-shot `claude_title` →
+// `mode=title` chat, used instead of the removed anthropic_messages_create
+// direct path.
+//
+// NAMING NOTE: this file used to say it mirrored `pipeline.ts::callSection`.
+// That symbol, and `pipeline.ts` itself, no longer exist anywhere in the repo —
+// the reference rotted silently while the harness kept passing, which is the
+// exact hazard a hand-copy carries. The live caller of this transport today is
+// `src/agent/generateThreadTitle.ts` (invokes `claude_title` at :98). This
+// harness replays that call shape against a live sidecar and checks the events
+// it depends on:
 //   - claude:event  → { event:{ type:'assistant', message:{ content:[{type:'text',text}] } } }
 //   - claude:done   → run settled ok
 //   - claude:error  → { code }
@@ -10,7 +16,7 @@
 // Two modes:
 //   • No token in env  → plumbing check only: initialize handshake works and a
 //     chat without a token is rejected with NO_TOKEN (proves the path is wired
-//     and returns the error shape callSection maps to a fatal).
+//     and returns the error shape the caller maps to a fatal).
 //   • CLAUDE_CODE_OAUTH_TOKEN set → full one-shot: initialize → setToken →
 //     chat with a profile-style systemPrompt+prompt → assert assistant text
 //     arrives and the run ends with done.
@@ -61,8 +67,11 @@ function request(method, params) {
   })
 }
 
-// Mirror of pipeline.ts::callSection — same event handling, over chat/* here
-// (the Rust bridge renames these to claude:* in the app; the inner shapes match).
+// Replays the caller's event handling over chat/* (the Rust bridge renames
+// these to claude:* in the app). This is a REIMPLEMENTATION, not an import —
+// if `generateThreadTitle.ts` changes which events it consumes or how it
+// settles, this will keep passing against the old shape. Re-read it when you
+// touch that file.
 function runSection(runId, systemPrompt, prompt) {
   let text = ''
   return new Promise((resolve) => {
@@ -116,7 +125,7 @@ try {
     st === null ? ok('setToken') : bad('setToken', JSON.stringify(st))
 
     // A realistic profile "voice" section call: invariant (system+posts) in
-    // systemPrompt, the varying instruction in prompt — exactly callSection's mapping.
+    // systemPrompt, the varying instruction in prompt — the caller's mapping.
     const systemPrompt =
       'You extract a writer’s profile from their posts.\n\n' +
       '# Post 1: On shipping\nI ship small and often. Perfect is the enemy of done.'

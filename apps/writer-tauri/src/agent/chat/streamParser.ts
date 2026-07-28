@@ -24,6 +24,7 @@ import type {
   ToolPart,
 } from '@/chat/types'
 import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
+import { familyKey } from '@/chat/modelFacts'
 import type { ChatEvent } from './types'
 
 /** Best-effort error text extraction from a tool_result content
@@ -119,10 +120,21 @@ export interface StreamParserArgs {
   onPart?: (part: MessagePart) => void
   onTextDelta?: (delta: string) => void
   onThinkingDelta?: (delta: string) => void
+  /** The model this run ASKED for. Compared against the model that actually
+   * answered (`message.model`, the standard Anthropic response field) so a
+   * silent substitution becomes visible. Omit to skip the check. */
+  requestedModel?: string
+  /** Fired once per run when the answering model differs from the requested one
+   * — the caller uses it to stop showing a model that never serves. */
+  onModelSubstituted?: (servedModel: string) => void
 }
 
 export function createStreamParser(args: StreamParserArgs): StreamParser {
-  const { onPart, onTextDelta, onThinkingDelta } = args
+  const { onPart, onTextDelta, onThinkingDelta, requestedModel, onModelSubstituted } = args
+  // The substitution notice fires at most once per run: the model is echoed on
+  // every assistant message, and a long turn would otherwise stack identical
+  // rows through the transcript.
+  let substitutionNoticed = false
 
   // Mutable mirror of the parts timeline — kept locally so we can
   // update an existing part (e.g. append a text delta) by reading
@@ -377,6 +389,34 @@ export function createStreamParser(args: StreamParserArgs): StreamParser {
       // 2) Assistant message.
       if (ev?.type === 'assistant') {
         const parentId = ev.parent_tool_use_id ?? undefined
+        // Did a DIFFERENT model answer than the one we asked for? This is not
+        // an error path: requesting a model the CLI no longer serves (an older
+        // one, say) returns a perfectly successful turn produced by a
+        // substitute, so the only evidence is this field. Checked before the
+        // main-thread early-return below, since that's where those messages
+        // leave. Compared on the family key so a dated spelling
+        // (claude-haiku-4-5-20251001) doesn't read as a substitution for the
+        // bare id we sent.
+        const served = ev.message?.model
+        if (
+          !parentId &&
+          !substitutionNoticed &&
+          requestedModel &&
+          typeof served === 'string' &&
+          served &&
+          familyKey(served) !== familyKey(requestedModel)
+        ) {
+          substitutionNoticed = true
+          upsertPart({
+            id: crypto.randomUUID(),
+            ts: Date.now(),
+            type: 'notice',
+            kind: 'model-unavailable',
+            requestedModel,
+            fallbackModel: served,
+          })
+          onModelSubstituted?.(served)
+        }
         // Main-thread assistant messages are already rendered token-by-token
         // from stream_event, so the consolidated copy is a no-op. SUBAGENT
         // messages (parentId set) are NOT streamed as partials we keep — with

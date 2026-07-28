@@ -19,8 +19,21 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import { StateField } from '@codemirror/state'
 import { PageHeader } from '@/layout/PageHeader'
 
-// Stash the React root on the DOM node so destroy() can unmount it (as in mermaidCards).
-type RootHost = HTMLElement & { _root?: Root }
+// Stash the React root (and the height observer) on the DOM node so destroy() can clean
+// them up (as in mermaidCards).
+type RootHost = HTMLElement & { _root?: Root; _ro?: ResizeObserver }
+
+// The header's React tree mounts asynchronously AND changes height over its lifetime
+// (properties added/removed, title wraps), so a one-shot measure isn't enough. Watch the
+// box and requestMeasure on any resize so the first body line never sits under the chrome
+// and the heightmap stays honest. Guarded for environments without ResizeObserver
+// (jsdom); disconnected in destroy.
+function observeHeight(dom: RootHost, view: EditorView): void {
+  if (dom._ro || typeof ResizeObserver === 'undefined') return
+  const ro = new ResizeObserver(() => view.requestMeasure())
+  ro.observe(dom)
+  dom._ro = ro
+}
 
 class PageHeaderWidget extends WidgetType {
   constructor(readonly slug: string) {
@@ -31,7 +44,7 @@ class PageHeaderWidget extends WidgetType {
   eq(other: PageHeaderWidget) {
     return other.slug === this.slug
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const dom = document.createElement('div') as RootHost
     dom.className = 'cm-page-header'
     // flow-root establishes a BFC so the header's inner margins (e.g. the title's
@@ -39,12 +52,15 @@ class PageHeaderWidget extends WidgetType {
     // bounding box, which EXCLUDES margin — without this the heightmap under-counts
     // and the first body line overlaps the header (the trap documented in cmTheme.ts).
     dom.style.display = 'flow-root'
+    observeHeight(dom, view)
     if (!dom._root) dom._root = createRoot(dom)
     dom._root.render(createElement(PageHeader, { slug: this.slug }))
     return dom
   }
   destroy(dom: HTMLElement) {
     const host = dom as RootHost
+    host._ro?.disconnect()
+    host._ro = undefined
     const root = host._root
     host._root = undefined
     // React forbids unmounting synchronously during a render/commit — defer.
@@ -55,6 +71,12 @@ class PageHeaderWidget extends WidgetType {
   // fire; returning true keeps CM from treating clicks/keys here as editor input.
   ignoreEvent() {
     return true
+  }
+  // The header (title + properties panel) mounts its React tree asynchronously, so CM
+  // first measures it empty. Seed a typical height so the first body line isn't laid
+  // out under the chrome before the commit lands (CM re-measures once the DOM settles).
+  get estimatedHeight() {
+    return 120
   }
 }
 

@@ -1,30 +1,20 @@
 // Approval-mode picker for the PromptInput footer. Three mutually-exclusive
 // ChatModes surfaced as a dropdown (Codex-style: icon + title + description +
-// check on the active one). Each row maps 1:1 to a ChatMode and to a Claude
-// Agent SDK `PermissionMode` (sdk.d.ts); the description states what the host
-// actually does in our staged-review architecture, not the raw SDK wording:
-//
-//   edit        → SDK 'default'      — proposals wait for Keep/Reject
-//   acceptEdits → SDK 'acceptEdits'  — proposals auto-apply the instant they land
-//   plan        → SDK 'plan'         — read-only; explores + writes a plan, no edits
+// check on the active one). The rows themselves live in chat/modes.ts, shared
+// with the composer's Shift+Tab shortcut so the two cycle in the same order.
 //
 // Disabled while a turn streams (a switch wouldn't apply until the next send).
 
-import {
-  IconHandStop,
-  IconWriting,
-  IconMap,
-  IconCheck,
-  IconChevronDown,
-  type IconProps,
-} from '@tabler/icons-react'
-import type { ComponentType } from 'react'
+import { IconCheck, IconChevronDown } from '@tabler/icons-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Kbd } from '@/components/ui/kbd'
+import { CHAT_MODES, chatModeOption } from '@/chat/modes'
 import type { ChatMode } from '@/chat/types'
 import { cn } from '@/lib/utils'
 
@@ -34,63 +24,65 @@ interface Props {
   disabled?: boolean
 }
 
-interface ModeOption {
-  mode: ChatMode
-  Icon: ComponentType<IconProps>
-  title: string
-  /** What the host actually does in this mode (not the raw SDK wording). */
-  description: string
-}
-
-const MODES: readonly ModeOption[] = [
-  {
-    mode: 'edit',
-    Icon: IconHandStop,
-    title: 'Ask for approval',
-    description: 'Review each edit before applying it',
-  },
-  {
-    mode: 'acceptEdits',
-    Icon: IconWriting,
-    title: 'Auto-accept edits',
-    description: 'Apply every edit automatically, no review',
-  },
-  {
-    mode: 'plan',
-    Icon: IconMap,
-    title: 'Plan',
-    description: 'Read-only — plan without making edits',
-  },
-]
-
 export function ModeToggle({ value, onChange, disabled }: Props) {
-  // Legacy threads may carry a mode no longer in MODES; fall back to the first.
-  const active = MODES.find((m) => m.mode === value) ?? MODES[0]
+  const active = chatModeOption(value)
   const TriggerIcon = active.Icon
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        disabled={disabled}
-        aria-label={`Edit approval: ${active.title}`}
-        className={cn(
-          'inline-flex h-8 items-center gap-2 rounded-full px-2.5 text-muted-foreground transition-colors',
-          'hover:bg-accent hover:text-foreground',
-          'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
-          'disabled:pointer-events-none disabled:opacity-50',
-        )}
-      >
-        <TriggerIcon className="size-[18px] shrink-0" stroke={1.5} />
-        {/* Selected label inherits the trigger's color (same as the icon).
-            Container query: shown only when the footer is wide enough; the
-            footer drops it to icon-only when space gets tight (no JS measure). */}
-        <span className="hidden whitespace-nowrap text-body font-medium @[440px]/footer:inline">
-          {active.title}
-        </span>
-        <IconChevronDown className="size-3.5 shrink-0 opacity-60" />
-      </DropdownMenuTrigger>
+      {/* Tooltip wraps the trigger (DropdownMenu is the outer context provider,
+          so the trigger still reaches it through TooltipTrigger's asChild).
+          This is where Shift+Tab is advertised: the shortcut fires from the
+          textarea, where nothing can announce itself, so the control it drives
+          has to carry the hint — same shape the Stop and Send buttons use. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger
+            disabled={disabled}
+            aria-label={`Edit approval: ${active.title}`}
+            aria-keyshortcuts="Shift+Tab"
+            className={cn(
+              'inline-flex h-8 items-center gap-2 rounded-full px-2.5 text-muted-foreground transition-colors',
+              'hover:bg-accent hover:text-foreground',
+              'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+              'disabled:pointer-events-none disabled:opacity-50',
+            )}
+          >
+            {/* Keyed on the mode so React remounts this span on every change and
+                the enter animation replays — `animate-in` only fires on mount.
+                The key stays OFF the trigger itself: Radix anchors the menu and
+                restores focus through the trigger's ref, and remounting it
+                breaks both. The chevron sits outside for the same reason it
+                doesn't change: only what the switch actually swaps should move.
+                duration/ease are the app's state-change motion (--motion-state:
+                200ms ease-tahoe), not tw-animate-css's 150ms/ease default —
+                these utilities feed --tw-duration/--tw-ease, which `animate-in`
+                reads. */}
+            <span
+              key={active.mode}
+              className="inline-flex items-center gap-2 duration-200 ease-tahoe animate-in fade-in-0 zoom-in-95 motion-reduce:animate-none"
+            >
+              <TriggerIcon className="size-[18px] shrink-0" stroke={1.5} />
+              {/* Selected label inherits the trigger's color (same as the icon).
+                  Container query: shown only when the footer is wide enough; the
+                  footer drops it to icon-only when space gets tight (no JS measure). */}
+              <span className="hidden whitespace-nowrap text-body font-medium @[440px]/footer:inline">
+                {active.title}
+              </span>
+            </span>
+            <IconChevronDown className="size-3.5 shrink-0 opacity-60" />
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          {/* Just the control's name — the pill already shows which mode is on,
+              and repeating it here made this the longest tooltip in the footer. */}
+          <span>Edit approval</span>
+          <Kbd>⇧</Kbd>
+          <Kbd>⇥</Kbd>
+        </TooltipContent>
+      </Tooltip>
       <DropdownMenuContent side="top" align="start" className="w-[420px] rounded-xl p-1">
-        {MODES.map(({ mode, Icon, title, description }) => (
+        {CHAT_MODES.map(({ mode, Icon, title, description }) => (
           <DropdownMenuItem
             key={mode}
             onSelect={() => onChange(mode)}
@@ -109,6 +101,14 @@ export function ModeToggle({ value, onChange, disabled }: Props) {
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
+      {/* Shift+Tab changes this control while focus stays in the textarea, so a
+          screen reader — which reads the focused element — would say nothing.
+          A live region is read wherever focus is. Picking from the menu returns
+          focus here and re-reads the trigger's aria-label, so that path is
+          mildly redundant; silence on the keyboard path is the worse failure. */}
+      <span aria-live="polite" className="sr-only">
+        {active.title}
+      </span>
     </DropdownMenu>
   )
 }

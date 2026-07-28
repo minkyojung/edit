@@ -5,7 +5,7 @@ import {
   IconAlertTriangle,
   IconArrowsExchange,
 } from '@tabler/icons-react'
-import type { NoticePart } from '@/chat/types'
+import { labelForModel, type NoticePart } from '@/chat/types'
 import { ActivityRow } from '@/chat/parts/ActivityRow'
 
 /** A consequential mid-turn notice the SDK surfaced that isn't chat content: a
@@ -26,10 +26,23 @@ function describe(part: NoticePart): { icon: ReactNode; label: string } {
       return { icon: <IconBan size={14} />, label: `Blocked: ${tool}${why}` }
     }
     case 'model-fallback': {
-      const to = part.fallbackModel ? ` to ${part.fallbackModel}` : ''
+      // labelForModel, not the raw id: this row predates it and was printing
+      // `claude-opus-4-8` right above a sibling row saying "Opus 4.8".
+      const to = part.fallbackModel ? ` to ${labelForModel(part.fallbackModel)}` : ''
       return {
         icon: <IconArrowsExchange size={14} />,
         label: `Switched${to} after a safety refusal`,
+      }
+    }
+    // The requested model isn't served through this path, so a different one
+    // answered — with NO error at all. Naming both ends is the point: without
+    // this row the reply silently comes from a model the picker isn't showing.
+    case 'model-unavailable': {
+      const asked = part.requestedModel ? labelForModel(part.requestedModel) : 'That model'
+      const answered = part.fallbackModel ? labelForModel(part.fallbackModel) : 'another model'
+      return {
+        icon: <IconArrowsExchange size={14} />,
+        label: `${asked} is unavailable — answered with ${answered}`,
       }
     }
     case 'info': {

@@ -5,7 +5,7 @@
 // rest of the app. Everything is scoped by EditorView.theme, so it can't leak.
 
 import { EditorView } from '@codemirror/view'
-import { LIST_INDENT, LIST_MARKER_END_PAD } from '@/editor/livepreview/livePreview'
+import { LIST_INDENT, LIST_MARKER_END_PAD, TASK_BOX_EM } from '@/editor/livepreview/livePreview'
 
 export const cmPrototypeTheme = EditorView.theme({
   '&': {
@@ -303,8 +303,10 @@ export const cmPrototypeTheme = EditorView.theme({
     top: '50%',
     transform: 'translateY(-50%)',
     boxSizing: 'border-box',
-    width: '1.05em',
-    height: '1.05em',
+    // Shared with taskCheckboxClick's hit-test (see TASK_BOX_EM) — the drawn box
+    // and the clickable box must be one definition.
+    width: `${TASK_BOX_EM}em`,
+    height: `${TASK_BOX_EM}em`,
     border: '1.5px solid var(--muted-foreground)',
     borderRadius: '0.3em',
     cursor: 'pointer',

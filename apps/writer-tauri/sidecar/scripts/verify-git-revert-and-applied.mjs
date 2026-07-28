@@ -18,6 +18,15 @@
 // exactly like the app (external git-dir + separate work-tree) using ONLY the
 // env vars the sidecar sets, and Part C drives the REAL relay tool handlers.
 //
+// WHAT IT STILL CANNOT SEE — read this before trusting a green run.
+// Part B's helper is named `asModel`, but it is Node running `git` with the env
+// vars set. No sidecar, no model, NO SANDBOX. So it verifies the GIT_DIR
+// injection and is structurally blind to whether the sandbox permits the write.
+// It stayed green while `git revert` was failing in the real app with
+//   fatal: Unable to create '…/git-repos/<h>/.git/index.lock': Operation not permitted
+// — the repo lives outside the vault and the sandbox confined writes to the
+// workspace. verify-sandbox-git-write.mjs covers that, through a real sandbox.
+//
 // Run:  node scripts/verify-git-revert-and-applied.mjs   (from sidecar/)
 
 import { execFileSync } from 'node:child_process'
@@ -167,17 +176,27 @@ section('② Part C — auto-accept "applied" flips the tool result text')
   check('propose_write applied=false → stays "queued for user review"', tQueued.includes('queued for user review'))
   check('propose_write ok=false → "was NOT applied"', tFailed.includes('was NOT applied'))
 
-  // propose_edit is fire-and-forget: it returns the optimistic "queued" text and
-  // the sidecar's PostToolUse hook rewrites it to "applied" using the SAME
-  // `applied` field verified above (server.mjs #postToolUseHooks). Assert the
-  // tool's own immediate return here.
-  const editTool = buildProposeEditTool(getRunId, noop, null, noop)
-  const tEdit = (await editTool.handler({
-    file_path: 'Note.md',
-    old_string: 'a',
-    new_string: 'b',
-  })).content[0].text
-  check('propose_edit returns optimistic "queued" text (hook flips it on applied)', tEdit.includes('queued for user review'))
+  // propose_edit round-trips too now. It used to return an optimistic "queued"
+  // that a PostToolUse hook rewrote afterwards — delivery measured at ~2/3, so a
+  // refusal frequently never reached the model, which then re-proposed the same
+  // edit and produced two review cards for one logical edit. The hook is gone
+  // and the handler returns the verdict directly; assert all three branches.
+  const edit = { file_path: 'Note.md', old_string: 'a', new_string: 'b' }
+  const editText = async (ack) =>
+    (await buildProposeEditTool(getRunId, noop, ack).handler(edit)).content[0].text
+
+  check(
+    'propose_edit applied=true → "Applied immediately"',
+    (await editText(ackWith({ ok: true, applied: true }))).includes('Applied immediately'),
+  )
+  check(
+    'propose_edit applied=false → "queued for user review"',
+    (await editText(ackWith({ ok: true, applied: false }))).includes('queued for user review'),
+  )
+  check(
+    'propose_edit ok=false → "NOT queued" carrying the reason',
+    /NOT queued[\s\S]*stale/.test(await editText(ackWith({ ok: false, reason: 'stale' }))),
+  )
 }
 
 // ── Summary ──────────────────────────────────────────────────────────────────

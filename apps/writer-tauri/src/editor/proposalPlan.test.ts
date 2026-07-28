@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { planAdditional, cleanToReal, greenRangesOf, redRangesOf, stripRanges } from './proposalPlan'
+import { planAdditional, greenRangesOf, redRangesOf, stripRanges } from './proposalPlan'
 import type { PendingChange } from '@/state/pendingChangesStore'
 
 // Minimal PendingChange factory for a single 'replace' edit.
@@ -63,17 +63,6 @@ describe('planAdditional — fresh batch into a clean doc', () => {
     expect(doc).toContain('ONE')
     expect(doc).toContain('THREE')
     expect(stripRanges(doc, greenRangesOf(plan.mats))).toBe(clean) // both strip cleanly
-  })
-})
-
-describe('cleanToReal', () => {
-  it('is identity with no green', () => {
-    expect(cleanToReal(6, [])).toBe(6)
-  })
-  it('shifts a position past a preceding green run', () => {
-    // real "AAAAA[XXX]BBB", green [5,8]; clean "AAAAABBB"
-    expect(cleanToReal(5, [{ from: 5, to: 8 }])).toBe(5) // at the green's edge → before it
-    expect(cleanToReal(6, [{ from: 5, to: 8 }])).toBe(9) // first 'B' in clean → past the green
   })
 })
 

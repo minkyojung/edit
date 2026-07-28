@@ -4,11 +4,13 @@
 //
 // Status flow:
 //   idle        → ready to send. Submit button enabled iff value.trim() != ''.
-//   streaming   → assistant turn in flight. Submit button toggles to Stop.
+//   streaming   → assistant turn in flight. Submit button still SENDS (the turn
+//                 is queued behind the running one); Stop is its own control in
+//                 the footer's left group.
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { useLayoutStore } from '@/state/layoutStore'
 import { notify } from '@/lib/notify'
 import { writeVaultBinary, deleteVaultDir } from '@/lib/vault'
@@ -29,15 +31,17 @@ import {
 import { classifyAsset, type AssetKind } from '@/lib/attachments'
 import { ContextChip } from '@/chat/ContextChip'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Kbd } from '@/components/ui/kbd'
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
 import { ModeToggle } from '@/chat/ModeToggle'
+import { nextChatMode } from '@/chat/modes'
 import { FastToggle } from '@/chat/FastToggle'
 import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
 import { MentionPalette, type MentionItem } from '@/chat/MentionPalette'
-import { listCommands, type LoadedCommand } from '@/chat/commands'
-import { useVaultCommands } from '@/state/vaultCommandsStore'
+
+import { useVaultCommands, type VaultCommand } from '@/state/vaultCommandsStore'
 import { useDocsStore } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { fuzzyScore } from '@/lib/fuzzyMatch'
@@ -82,6 +86,36 @@ const IS_MAC =
 const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl'
 
 export type PromptStatus = 'idle' | 'streaming' | 'error'
+
+/** What pressing Enter should do, given the composer's state.
+ *
+ *   'send'  — nothing in flight; the normal path, and what the footer button shows.
+ *   'queue' — an answer is still streaming. The turn goes to the sidecar anyway:
+ *             `#dispatchTurn` there queues it and runs it as its OWN turn once
+ *             the current one settles (strict FIFO, one turn generating at a
+ *             time). Measured end-to-end, and the same shape the Claude Code CLI
+ *             uses for type-ahead — "a message sent while Claude is working stays
+ *             queued and runs as its own turn".
+ *   null    — refuse.
+ *
+ * Exported so the rule is asserted directly
+ * instead of restated in a test — there is no render-interaction harness here,
+ * so a hand-copied `!disabled && !isStreaming && …` in a test would be the only
+ * thing under assertion, and it would drift the first time this changes. */
+export function submitIntent({
+  disabled,
+  isStreaming,
+  hasContent,
+  valid,
+}: {
+  disabled: boolean
+  isStreaming: boolean
+  hasContent: boolean
+  valid: boolean
+}): 'send' | 'queue' | null {
+  if (disabled || !hasContent || !valid) return null
+  return isStreaming ? 'queue' : 'send'
+}
 
 /** Result of pre-submit input validation. When `ok` is false, the parent
  * surfaces `message` as an inline hint and blocks submission. */
@@ -138,6 +172,17 @@ interface Props {
   viewingFilePath?: string | null
   /** Detach the viewed file from the chat's context. Called by the chip's X. */
   onClearViewingFile?: () => void
+  /** Vault-relative path of the note the user is currently editing, when it's
+   * attached to the chat. This chip is what makes the note context visible at
+   * all: without it the note rides along invisibly and a mismatch between what
+   * you're reading and what the AI sees is unnoticeable until it answers about
+   * the wrong file. Null when detached, or off a note route. */
+  currentNotePath?: string | null
+  /** Display name for the note chip ("Monday, July 27", a wiki title) — the
+   * path is the tooltip. */
+  currentNoteLabel?: string | null
+  /** Detach the open note from the chat's context. Called by the chip's X. */
+  onClearCurrentNote?: () => void
 }
 
 // Chip label: first ~24 chars of the selection on a single line, with an
@@ -193,6 +238,9 @@ export function PromptInput({
   onClearSelection,
   viewingFilePath,
   onClearViewingFile,
+  currentNotePath,
+  currentNoteLabel,
+  onClearCurrentNote,
 }: Props) {
   // Composer draft (text / attachments / pasted text / mentions) is scoped to
   // the active thread via chatDraftStore, NOT local useState — otherwise it
@@ -370,25 +418,24 @@ export function PromptInput({
     () => (validate && trimmed.length > 0 ? validate(trimmed) : { ok: true }),
     [validate, trimmed],
   )
-  const canSubmit =
-    !disabled &&
-    !isStreaming &&
-    (trimmed.length > 0 || pastedTexts.length > 0 || attachments.length > 0) &&
-    validation.ok
+  const intent = submitIntent({
+    disabled: !!disabled,
+    isStreaming,
+    hasContent:
+      trimmed.length > 0 || pastedTexts.length > 0 || attachments.length > 0,
+    valid: validation.ok,
+  })
+  // Send: the idle path, and the only one the footer button reflects — mid-answer
+  // that button is Stop and cannot also be Send.
 
   // Palette opens while the user is typing the command name itself —
   // before any space. Filter is the partial name (everything after `/`).
   const slashMatch = !isStreaming ? SLASH_RE.exec(value) : null
   const slashQuery = slashMatch?.[1] ?? ''
-  // Builtin editor actions (bundled) + the vault's commands (organize /
-  // daily-ingest / … from the agent plugin). Both share the palette; execution
-  // diverges by `source` in ChatPanel.
-  const vaultCommands = useVaultCommands((s) => s.commands)
-  const allCommands = useMemo(
-    () => [...listCommands(), ...vaultCommands],
-    [vaultCommands],
-  )
-  const filteredCommands = useMemo<LoadedCommand[]>(() => {
+  // The vault's commands (organize / daily-ingest / … from the agent plugin) —
+  // the only kind there is, since the bundled client-side engine was removed.
+  const allCommands = useVaultCommands((s) => s.commands)
+  const filteredCommands = useMemo<VaultCommand[]>(() => {
     if (!slashMatch) return []
     if (!slashQuery) return allCommands
     return allCommands.filter((c) => c.name.startsWith(slashQuery))
@@ -435,10 +482,9 @@ export function PromptInput({
     ? 0
     : Math.min(selectedIndex, activeList.length - 1)
 
-  function pickCommand(cmd: LoadedCommand) {
+  function pickCommand(cmd: VaultCommand) {
     // Drop user back into the textarea with `/<name> ` prefilled so they
-    // can keep typing args. argument-hint is shown as placeholder via
-    // a future polish step (#47).
+    // can keep typing args.
     setValue(`/${cmd.name} `)
     setSelectedIndex(0)
   }
@@ -464,7 +510,7 @@ export function PromptInput({
   }
 
   function submit() {
-    if (!canSubmit) return
+    if (intent === null) return
     // Pasted text now rides as a chip (committed onto the turn), NOT folded into
     // the visible message — so the bubble shows a compact chip, not a wall of
     // text. buildUserPrompt reattaches its content to the model prompt.
@@ -493,6 +539,22 @@ export function PromptInput({
     ) {
       e.preventDefault()
       onStop?.()
+      return
+    }
+
+    // Shift+Tab cycles the approval mode — the keyboard path to the same
+    // ModeToggle the footer renders, so it routes through onModeChange and adds
+    // no state of its own. Claimed before the palette block below, which also
+    // binds Tab; otherwise the shortcut would silently die whenever an @-mention
+    // or slash palette happened to be open.
+    if (e.key === 'Tab' && e.shiftKey) {
+      // Always swallow it: with the toggle locked, letting focus jump out of the
+      // composer is worse than doing nothing.
+      e.preventDefault()
+      // Same lock as ModeToggle's `disabled`. The mode is read at send time, so
+      // a switch mid-turn wouldn't apply to the turn in flight anyway.
+      if (isStreaming) return
+      onModeChange(nextChatMode(mode))
       return
     }
 
@@ -527,11 +589,11 @@ export function PromptInput({
     submit()
   }
 
+  // Send only — the streaming branch used to live here and is now the dedicated
+  // Stop button in the left group. This is what makes the mouse path reach
+  // queueing at all: before, a click mid-answer meant Stop, so there was no way
+  // to queue without the keyboard.
   function handleSubmitClick() {
-    if (isStreaming) {
-      onStop?.()
-      return
-    }
     submit()
   }
 
@@ -581,7 +643,7 @@ export function PromptInput({
           row that scrolls sideways when they overflow — the modern chip-bar
           pattern — instead of stacking vertically and growing the composer.
           Each chip is shrink-0 so it keeps its size and the row scrolls. */}
-      {(viewingFilePath || selectionText || attachments.length > 0 || pastedTexts.length > 0 || mentions.length > 0) && (
+      {(currentNotePath || viewingFilePath || selectionText || attachments.length > 0 || pastedTexts.length > 0 || mentions.length > 0) && (
         <div
           className={cn(
             'flex items-center gap-1.5 overflow-x-auto',
@@ -618,6 +680,15 @@ export function PromptInput({
           removeLabel="Remove pasted text"
         />
       ))}
+      {currentNotePath && (
+        <ContextChip
+          icon={IconFileText}
+          label={currentNoteLabel?.trim() || (currentNotePath.split('/').pop() ?? currentNotePath)}
+          tooltip={currentNotePath}
+          onRemove={onClearCurrentNote}
+          removeLabel="Remove this note from context"
+        />
+      )}
       {viewingFilePath && (
         <ContextChip
           icon={FILE_KIND_ICON[classifyAsset(viewingFilePath)]}
@@ -701,6 +772,44 @@ export function PromptInput({
         <div className="flex items-center gap-1">
           <ContextGauge snapshot={contextSnapshot} />
           <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />
+          {/* Stop is its own control, not a second meaning for the send button,
+              because the two act on different things: Send acts on what you
+              typed, Stop acts on the turn already running. Sharing one slot only
+              worked while Send was meaningless mid-answer — and it stopped being
+              meaningless when Enter started queueing. Every product that merges
+              them (Zed, Cursor, the Claude Code IDE extension) keys that slot on
+              "is the input empty", so the Stop button vanishes the instant you
+              start typing — precisely when you want it, since you began typing
+              because the answer was going the wrong way. Cursor has a user-filed
+              bug for exactly that; VS Code and Cline keep Stop separate for the
+              same reason.
+              Here rather than in the left group so it sits next to the control it
+              relates to. It is the LAST thing before Send, so Send stays pinned
+              to the right edge and never moves between states. */}
+          {isStreaming && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onStop?.()}
+                  aria-label="Stop"
+                  className={cn(
+                    'flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors',
+                    'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+                    'hover:bg-accent hover:text-foreground',
+                  )}
+                >
+                  <IconPlayerStop size={16} stroke={2} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <span>Stop</span>
+                <Kbd>{MOD_KEY}</Kbd>
+                <Kbd>⇧</Kbd>
+                <Kbd>⌫</Kbd>
+              </TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -708,31 +817,33 @@ export function PromptInput({
               onClick={handleSubmitClick}
               // aria-disabled (not disabled) so the button still fires
               // hover/focus events — that's what makes the tooltip
-              // discoverable when validation blocks Send. handleSubmitClick
-              // short-circuits via canSubmit, so semantically it's still
-              // disabled to clicks.
-              aria-disabled={!isStreaming && !canSubmit}
-              aria-label={isStreaming ? 'Stop' : 'Send'}
+              // discoverable when validation blocks Send. submit() short-circuits
+              // on a null intent, so semantically it's still disabled to clicks.
+              // One meaning now: send. Stop moved to its own control on the left,
+              // so this stays the same action in every state and the label no
+              // longer changes out from under a screen reader mid-turn.
+              aria-disabled={intent === null}
+              aria-label={intent === 'queue' ? 'Queue' : 'Send'}
               className={cn(
                 'flex size-8 items-center justify-center rounded-full transition-colors',
                 'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
-                isStreaming
+                intent !== null
                   ? 'bg-foreground text-background hover:bg-foreground/90'
-                  : canSubmit
-                    ? 'bg-foreground text-background hover:bg-foreground/90'
-                    : 'bg-muted text-muted-foreground cursor-not-allowed',
+                  : 'bg-muted text-muted-foreground cursor-not-allowed',
               )}
             >
-              <SubmitIcon status={status} canSubmit={canSubmit} />
+              <IconArrowUp
+                size={16}
+                stroke={2}
+                className={cn(intent === null && 'opacity-60')}
+              />
             </button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            {isStreaming ? (
+            {intent === 'queue' ? (
               <>
-                <span>Stop</span>
-                <Kbd>{MOD_KEY}</Kbd>
-                <Kbd>⇧</Kbd>
-                <Kbd>⌫</Kbd>
+                <span>Queue · runs after this answer</span>
+                <Kbd>⏎</Kbd>
               </>
             ) : !validation.ok && validation.message ? (
               <span>{validation.message}</span>
@@ -747,24 +858,5 @@ export function PromptInput({
         </div>
       </div>
     </div>
-  )
-}
-
-function SubmitIcon({ status, canSubmit }: { status: PromptStatus; canSubmit: boolean }) {
-  if (status === 'streaming') return <IconPlayerStop size={16} stroke={2} />
-  return <IconArrowUp size={16} stroke={2} className={cn(!canSubmit && 'opacity-60')} />
-}
-
-/** Inline keyboard glyph used in tooltips. The tooltip CSS auto-styles
- * anything with `data-slot="kbd"` (rounded corners, inset shadow); we just
- * supply the muted text + monospace layer. */
-function Kbd({ children }: { children: ReactNode }) {
-  return (
-    <kbd
-      data-slot="kbd"
-      className="bg-foreground/10 text-foreground/80 font-mono text-footnote leading-none px-1 py-0.5"
-    >
-      {children}
-    </kbd>
   )
 }

@@ -414,21 +414,6 @@ export function startPendingChangesApplier(): void {
   console.log('[applier] started')
 }
 
-/** Stop listening. Test-only; production callers never invoke. */
-export function stopPendingChangesApplier(): void {
-  unsub?.()
-  unsub = null
-  orphanUnsub?.()
-  orphanUnsub = null
-  if (pruneTimer) clearInterval(pruneTimer)
-  pruneTimer = null
-  handledIds.clear()
-  for (const t of groupTimers.values()) clearTimeout(t)
-  groupTimers.clear()
-  groupAccepts.clear()
-  groupSourceLabel.clear()
-}
-
 // Vite HMR cleanup. When this module is replaced by a hot update,
 // dispose the live subscription on the OUTGOING module instance so
 // the incoming one's listener doesn't double up. Without this every

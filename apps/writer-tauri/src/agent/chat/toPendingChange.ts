@@ -27,7 +27,8 @@ import { createCustomWikiPage, createGenericNote } from '@/state/wikiService'
 import { getDefaultNoteFolder } from '@/state/settingsStore'
 import { stripDuplicateTitleHeading } from '@/lib/markdownText'
 import { splitFrontmatter } from '@/lib/frontmatter'
-import { applyEditsToText } from '@/lib/pendingDiff'
+import { placeEditsInSnapshot } from '@/lib/pendingDiff'
+import type { Placement } from '@/lib/editPlacement'
 
 export interface ChatEditPendingPayload {
   runId: string
@@ -380,16 +381,18 @@ function buildEditsForTool(
  * `applyEditsToText`, so there is exactly one implementation of "how an edit
  * lands," not a second, divergent one.
  *
- * Returns `currentBody` unchanged when the tool's edit doesn't apply (e.g. an
- * Edit whose `old_string` isn't found in the staged body) — the caller can
- * detect this via `=== currentBody` and surface it instead of silently
- * "succeeding" with nothing changed. */
+ * Returns the merged body AND why it came out that way. "Unchanged" used to be
+ * the caller's only signal, detected via `=== currentBody` — which cannot tell
+ * an anchor the model got wrong from an edit that was already made by the
+ * previous call this turn. Reported as the same failure, the second is a retry
+ * loop; and because this path skips `mapChatEditToPendingChange`, it would
+ * otherwise reach a DIFFERENT verdict than the first edit of the same turn. */
 export function mergeEditIntoStagedBody(
   currentBody: string,
   toolName: string,
   input: Record<string, unknown>,
-): string {
-  return applyEditsToText(currentBody, buildEditsForTool(toolName, input))
+): { text: string; placement: Placement } {
+  return placeEditsInSnapshot(currentBody, buildEditsForTool(toolName, input))
 }
 
 function readString(v: unknown): string {

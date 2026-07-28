@@ -11,12 +11,12 @@
 //   • atomicRanges (caret skipping hidden markers) — step 2b
 //   • IME composition freeze (replace near composing text) — step 2c
 
-import { syntaxTree } from '@codemirror/language'
+import { syntaxTree, getIndentUnit } from '@codemirror/language'
 import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate } from '@codemirror/view'
 import { Facet, type EditorState, type Line, type Range } from '@codemirror/state'
 import { type SyntaxNode } from '@lezer/common'
 import { isKnownNote } from './wikilinkComplete'
-import { inProofRawRange } from '@/editor/proofRawRanges'
+import { proofRawOverlap, touchesProofRawRange, proofRawRangesChanged } from '@/editor/proofRawRanges'
 import { cursorInRange } from './cursorRange'
 
 const HIDE = Decoration.replace({})
@@ -53,6 +53,75 @@ export const LIST_MARKER_END_PAD = 0.35
 // It lives ONLY in the line inline-style — the `.cm-list-marker` column width is
 // unchanged, so cmTheme needs no change.
 export const LIST_MARKER_SPACE = 0.25
+
+// Side (em) of the drawn task checkbox. The box is a `::after` pseudo-element, so
+// it can never be an event target and the click has to be hit-tested against its
+// rect in JS — which means the geometry exists in two places at once. Both read
+// this constant (and LIST_MARKER_END_PAD for the inset) so they cannot drift, as
+// they already had: when the three markers' insets were unified to
+// LIST_MARKER_END_PAD (0.35em), the hit-test kept the task marker's old 0.15em, so
+// the clickable box sat ~0.2em right of the drawn one — the left sliver of the box
+// didn't respond and a click just outside it toggled.
+export const TASK_BOX_EM = 1.05
+
+// ── Shared list-rendering primitives ────────────────────────────────────────
+// A list line is drawn by one of TWO paths: the Lezer `ListMark` branch, and the
+// immediate regex fallback that covers the keystroke before the parser confirms
+// the item (an ordered list only becomes one once it has content, so `1. ` would
+// otherwise render nothing). The fallback is load-bearing and stays — but the two
+// paths must emit IDENTICAL decorations, or the line visibly changes the instant
+// the parse lands. They used to build their styles and class names separately and
+// had already drifted: the fallback never emitted `cm-task-done`, so a freshly
+// typed `- [x] done` showed a ticked box over unstruck text until the parser
+// caught up. Everything below is the single definition both call.
+
+/** Width (em) pulled back by the negative text-indent so the marker sits in the
+ *  column the padding reserved. */
+const LIST_HANG = LIST_INDENT + LIST_MARKER_SPACE
+
+/** The hanging-indent line decoration. `textIndent` is overridden only by the
+ *  marker-LESS continuation branch, which pulls back by the line's own measured
+ *  leading spaces instead of the marker column. */
+function listLineDeco(level: number, textIndent = `-${LIST_HANG}em`): Decoration {
+  return Decoration.line({
+    class: 'cm-list-line',
+    attributes: {
+      style: `padding-left:${(level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:${textIndent}`,
+    },
+  })
+}
+
+/** Classes for a list marker. `revealed` (caret on the marker) shows it raw, with
+ *  the column preserved so the body never shifts. Ordered numbers ignore it: the
+ *  digits ARE the glyph, so they are only ever tinted, never hidden. */
+function markerClass(
+  kind: 'bullet' | 'num' | 'task',
+  opts: { revealed: boolean; checked?: boolean },
+): string {
+  if (kind === 'num') return 'cm-list-marker cm-list-num'
+  if (opts.revealed) return 'cm-list-marker'
+  if (kind === 'task') return `cm-list-marker cm-task-marker${opts.checked ? ' cm-task-marker-checked' : ''}`
+  return 'cm-list-marker cm-list-bullet'
+}
+
+/** Where a completed task's strike-through starts: after the whitespace following
+ *  the marker, so the line doesn't run through the gap before the text. */
+function taskBodyFrom(state: EditorState, markerTo: number, lineTo: number): number {
+  return markerTo + (/^[ \t]*/.exec(state.doc.sliceString(markerTo, lineTo))?.[0].length ?? 0)
+}
+
+/** Nesting level for a list line the parser hasn't confirmed yet.
+ *
+ * The Lezer branch counts ancestor lists, which is exact. The fallback has only
+ * the line, so it divides the indent by the editor's configured indent unit — the
+ * same unit this app's Tab and list-continuation produce, so lists it creates
+ * agree with the tree. Reading the facet rather than assuming 2 keeps the two in
+ * step if that setting ever changes; hand-written indentation that isn't a
+ * multiple of the unit can still differ for the one keystroke before the parse
+ * lands. */
+function levelFromIndent(state: EditorState, indent: number): number {
+  return Math.floor(indent / Math.max(1, getIndentUnit(state)))
+}
 
 /** lezer parses `[[Title]]` as a `Link` ([Title]) wrapped in an extra `[`…`]`.
  * Detect that so the grammar Link/LinkMark handling can bail and leave wikilinks
@@ -143,12 +212,22 @@ function buildDecos(
   // the parser catches up a keystroke later.
   const listLinesDone = new Set<number>()
   const tree = syntaxTree(state)
-  const mark = (from: number, to: number, cls: string) => {
-    if (to > from) out.push(Decoration.mark({ class: cls }).range(from, to))
+  // Proposal gate, at the point of EMISSION rather than per node. The node-level
+  // check below can only classify the node's own span, but branches routinely
+  // decorate beyond it: the ListMark branch is entered for the marker yet marks
+  // `- [ ]` (marker + 4) and strikes a completed task's body to end of line, and
+  // HeaderMark/QuoteMark hide one char past the node for the trailing space. A
+  // proposal covering only a task's body therefore slipped through and got struck
+  // through and muted — which in a red/green diff reads as "deleted". Checking each
+  // span as it is emitted makes that unrepresentable instead of something every new
+  // branch has to remember.
+  const emit = (from: number, to: number, deco: Decoration) => {
+    if (to <= from) return
+    if (touchesProofRawRange(state, from, to)) return
+    out.push(deco.range(from, to))
   }
-  const hide = (from: number, to: number) => {
-    if (to > from) out.push(HIDE.range(from, to))
-  }
+  const mark = (from: number, to: number, cls: string) => emit(from, to, Decoration.mark({ class: cls }))
+  const hide = (from: number, to: number) => emit(from, to, HIDE)
   // `edges` also tags the first/last line with `${cls}-first` / `${cls}-last`, so a
   // per-line-backgrounded block (code) can round its outer corners + pad top/bottom
   // and read as one card instead of stacked rectangles.
@@ -171,10 +250,6 @@ function buildDecos(
         const nf = node.from
         const nt = node.to
 
-        // Pending AI proposal (Option B): leave it RAW so proposal ≠ content and
-        // it edits natively. Skip the node + its children.
-        if (inProofRawRange(state, nf)) return false
-
         // Images and GFM tables are owned ENTIRELY by the block-decoration layer
         // (v2/blocks): it replaces `![alt](url)` with the <img> widget and the whole
         // table with the editable-table widget (whose cells render their own inline
@@ -186,7 +261,19 @@ function buildDecos(
         // node + children (return false) so blocks is the sole owner — same as the
         // proof guard above. (In inlineOnly cell mode the nested doc has no Image/
         // Table node, so this never suppresses a cell's own inline rendering.)
+        // (Checked BEFORE the proposal gate below so blocks stays the sole owner
+        // unconditionally — a proposal overlapping a table must not hand the
+        // table's innards back to this layer.)
         if (name === 'Image' || name === 'Table') return false
+
+        // Pending AI proposal (Option B): leave it RAW so proposal ≠ content and
+        // it edits natively. `inside` → skip the node and its children; `partial`
+        // → emit nothing for THIS node but keep descending, so children clear of
+        // the proposal still render. The root `Document` is always `partial` when
+        // any proposal exists, which is what stops a proposal at position 0 from
+        // aborting the walk and blanking the document.
+        const raw = proofRawOverlap(state, nf, nt)
+        if (raw !== 'none') return raw === 'inside' ? false : undefined
 
         // INLINE-ONLY mode (table cells): a GFM table cell holds inline content
         // only — there are no real headings/lists/quotes/rules/code-blocks in a
@@ -327,14 +414,7 @@ function buildDecos(
           const level = Math.max(0, depth - 1)
           const line = state.doc.lineAt(nf)
           listLinesDone.add(line.from)
-          out.push(
-            Decoration.line({
-              class: 'cm-list-line',
-              attributes: {
-                style: `padding-left:${(level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:-${LIST_INDENT + LIST_MARKER_SPACE}em`,
-              },
-            }).range(line.from),
-          )
+          out.push(listLineDeco(level).range(line.from))
 
           // Task `- [ ] ` → draw a checkbox over the `- [ ]` prefix. Detect by the
           // text after the dash (regex), NOT the lezer `Task` node (which only forms
@@ -349,20 +429,10 @@ function buildDecos(
               const markerTo = nt + 4 // after `]`
               const checked = /[xX]/.test(tm[1])
               const revealed = caretIn(nf, markerTo) // caret on `- [ ]` → raw
-              mark(
-                nf,
-                markerTo,
-                revealed
-                  ? 'cm-list-marker'
-                  : `cm-list-marker cm-task-marker${checked ? ' cm-task-marker-checked' : ''}`,
-              )
+              mark(nf, markerTo, markerClass('task', { revealed, checked }))
               // Completed task → strike + mute the body (kept while editing, like
-              // Obsidian). Start at the first non-space AFTER the marker so the
-              // strike doesn't run through the gap between the checkbox and the text.
-              if (checked) {
-                const gapLen = /^[ \t]*/.exec(state.doc.sliceString(markerTo, line.to))?.[0].length ?? 0
-                mark(markerTo + gapLen, line.to, 'cm-task-done')
-              }
+              // Obsidian).
+              if (checked) mark(taskBodyFrom(state, markerTo, line.to), line.to, 'cm-task-done')
               return
             }
           }
@@ -371,8 +441,8 @@ function buildDecos(
           // Number is its own glyph (just tinted) → always shown. Bullet hides its
           // dash and draws a •, unless the caret is on it (then raw). Either way the
           // `.cm-list-marker` column stays, so the body never shifts on reveal.
-          if (isNum) return void mark(nf, nt, 'cm-list-marker cm-list-num')
-          mark(nf, nt, caretIn(nf, nt) ? 'cm-list-marker' : 'cm-list-marker cm-list-bullet')
+          if (isNum) return void mark(nf, nt, markerClass('num', { revealed: false }))
+          mark(nf, nt, markerClass('bullet', { revealed: caretIn(nf, nt) }))
           return
         }
       },
@@ -390,6 +460,9 @@ function buildDecos(
     while ((m = re.exec(text))) {
       const start = from + m.index
       if (inCodeContext(state, start)) continue // `[[...]]` inside `code` is literal
+      // This overlay runs OUTSIDE the tree walk, so it needs its own proposal gate
+      // — the one in `enter` never sees it.
+      if (touchesProofRawRange(state, start, start + m[0].length)) continue
       const innerFrom = start + 2
       const innerTo = innerFrom + m[1].length
       const end = innerTo + 2
@@ -419,6 +492,10 @@ function buildDecos(
       for (let ln = firstLine; ln <= lastLine; ln++) {
         const line = state.doc.line(ln)
         if (listLinesDone.has(line.from)) continue // Lezer already styled this line
+        // Same as the wikilink overlay: this loop is outside the tree walk, so the
+        // proposal gate in `enter` doesn't cover it. A line carrying proposal text
+        // stays raw.
+        if (touchesProofRawRange(state, line.from, line.to)) continue
         const lm = /^(\s*)([-*+]|\d+[.)])\s/.exec(line.text)
         if (!lm) {
           // No marker — a continuation line of the list item above (incl. the empty one
@@ -440,12 +517,7 @@ function buildDecos(
           // line) land at the body column, with no space-advance guess. Line-decoration
           // only → IME-safe. Falls back to the 0.25em estimate before the measure lands.
           out.push(
-            Decoration.line({
-              class: 'cm-list-line',
-              attributes: {
-                style: `padding-left:${(ctx.level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:calc(${ws} * var(--cm-space-w, 0.25em) * -1)`,
-              },
-            }).range(line.from),
+            listLineDeco(ctx.level, `calc(${ws} * var(--cm-space-w, ${LIST_MARKER_SPACE}em) * -1)`).range(line.from),
           )
           continue
         }
@@ -462,38 +534,22 @@ function buildDecos(
         const markerFrom = line.from + indent
         const markerTo = markerFrom + lm[2].length
         const isNum = /\d/.test(lm[2])
-        // Hanging indent — match the ListMark branch so the body doesn't shift when
-        // Lezer catches up. Depth from indentation (exact for top level; transient).
-        const level = Math.floor(indent / 2)
-        out.push(
-          Decoration.line({
-            class: 'cm-list-line',
-            attributes: {
-              style: `padding-left:${(level + 1) * LIST_INDENT + LIST_MARKER_SPACE}em;text-indent:-${LIST_INDENT + LIST_MARKER_SPACE}em`,
-            },
-          }).range(line.from),
-        )
+        // Hanging indent — same decoration the ListMark branch emits, so the body
+        // doesn't shift when Lezer catches up.
+        out.push(listLineDeco(levelFromIndent(state, indent)).range(line.from))
         const tm = isNum ? null : /^ \[([ xX])\]/.exec(state.doc.sliceString(markerTo, markerTo + 4))
         if (tm) {
           const taskTo = markerTo + 4
           const checked = /[xX]/.test(tm[1])
-          mark(
-            markerFrom,
-            taskTo,
-            caretIn(markerFrom, taskTo)
-              ? 'cm-list-marker'
-              : `cm-list-marker cm-task-marker${checked ? ' cm-task-marker-checked' : ''}`,
-          )
+          mark(markerFrom, taskTo, markerClass('task', { revealed: caretIn(markerFrom, taskTo), checked }))
+          // Strike the body too — the ListMark branch does, and omitting it here was
+          // why a just-typed `- [x] done` showed a ticked box over unstruck text
+          // until the parser caught up.
+          if (checked) mark(taskBodyFrom(state, taskTo, line.to), line.to, 'cm-task-done')
         } else if (isNum) {
-          mark(markerFrom, markerTo, 'cm-list-marker cm-list-num')
+          mark(markerFrom, markerTo, markerClass('num', { revealed: false }))
         } else {
-          mark(
-            markerFrom,
-            markerTo,
-            caretIn(markerFrom, markerTo)
-              ? 'cm-list-marker'
-              : 'cm-list-marker cm-list-bullet',
-          )
+          mark(markerFrom, markerTo, markerClass('bullet', { revealed: caretIn(markerFrom, markerTo) }))
         }
       }
     }
@@ -555,7 +611,21 @@ function previewPlugin(inlineOnly: boolean) {
         // up (instead of staying raw until an unrelated edit). This is the canonical CM
         // signal, NOT a forced parse, so the list-marker regex fallback is untouched.
         const treeChanged = syntaxTree(u.startState) != syntaxTree(u.state)
-        if (u.docChanged || u.viewportChanged || u.selectionSet || u.focusChanged || treeChanged || this.paused) {
+        // Pending-proposal ranges gate what may be decorated at all, and they change
+        // on effect-only transactions (materializing or dropping a proposal), which
+        // none of the signals above observe. Without this the whole viewport keeps
+        // decorations built under the OLD proposal state — a dropped proposal's text
+        // would stay raw, and a new one would render as committed content.
+        const rawChanged = proofRawRangesChanged(u.startState, u.state)
+        if (
+          u.docChanged ||
+          u.viewportChanged ||
+          u.selectionSet ||
+          u.focusChanged ||
+          treeChanged ||
+          rawChanged ||
+          this.paused
+        ) {
           if (u.view.composing) {
             this.deco = this.deco.map(u.changes)
             this.paused = true
@@ -608,10 +678,12 @@ export const taskCheckboxClick = EditorView.domEventHandlers({
     const end = view.coordsAtPos(markerTo) // right edge of the hidden marker
     if (!end) return false
     const fs = parseFloat(getComputedStyle(view.contentDOM).fontSize) || 16
-    const boxRight = end.left - 0.15 * fs
-    const boxLeft = boxRight - 1.05 * fs
+    // Mirrors `.cm-task-marker::after` in cmTheme — same two constants, so the box
+    // you see and the box you can click are the same box.
+    const boxRight = end.left - LIST_MARKER_END_PAD * fs
+    const boxLeft = boxRight - TASK_BOX_EM * fs
     const cy = (end.top + end.bottom) / 2
-    const halfH = 0.525 * fs + 2 // +2px vertical tolerance
+    const halfH = (TASK_BOX_EM / 2) * fs + 2 // +2px vertical tolerance
     if (event.clientX < boxLeft || event.clientX > boxRight) return false
     if (event.clientY < cy - halfH || event.clientY > cy + halfH) return false
     event.preventDefault()

@@ -99,6 +99,22 @@ export interface DocMetaFile {
  * to pick the day folder). Other doc types ignore it. */
 export type DocLookup = (slug: string) => KnownDoc | undefined
 
+/** Vault-relative path of the doc with this slug, or null when the slug isn't
+ * in the catalog or the doc has no placement.
+ *
+ * Sugar over {@link pathForDoc} for the very common "I have a slug and the
+ * catalog" case, which otherwise expands to the same two lines — find the doc,
+ * then hand it a `find`-based lookup for the writing-ancestor walk — at every
+ * call site. Linear in `knownDocs` (twice over for a `writing` doc): fine for
+ * one slug per render, but build a Map first if you're resolving many at once
+ * (FolderTree and CommandPalette both do). */
+export function pathForSlug(slug: string | null, knownDocs: KnownDoc[]): string | null {
+  if (!slug) return null
+  const doc = knownDocs.find((d) => d.slug === slug)
+  if (!doc) return null
+  return pathForDoc(doc, (s) => knownDocs.find((d) => d.slug === s))
+}
+
 /** Vault-relative path of a doc's markdown body. Returns null when
  * the doc has no placement (a daily without a date, a writing whose
  * parent chain doesn't reach a daily). */
@@ -350,17 +366,6 @@ export function metaPathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null
   const md = pathForDoc(doc, getDoc)
   if (!md) return null
   return md.replace(/\.md$/, '.meta.json')
-}
-
-/** Vault-relative path of a doc's Y.Doc binary sidecar. Same stem as
- * the markdown body, `.ydoc` suffix instead of `.md`. Stores the full
- * Yjs CRDT state — body fragment + marks Y.Map + RelativePositions —
- * so cross-restart mark anchoring survives without text-search
- * fragility. Returns null when {@link pathForDoc} returns null. */
-export function ydocPathForDoc(doc: KnownDoc, getDoc?: DocLookup): string | null {
-  const md = pathForDoc(doc, getDoc)
-  if (!md) return null
-  return md.replace(/\.md$/, '.ydoc')
 }
 
 /** Walk parentId up the chain until we hit a daily. Returns null if

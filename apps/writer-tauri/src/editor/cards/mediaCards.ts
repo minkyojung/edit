@@ -68,4 +68,10 @@ export class MediaWidget extends WidgetType {
   ignoreEvent() {
     return true
   }
+  // Seed the heightmap before loadedmetadata (which then re-measures): a video player
+  // is tall, an audio control bar is one row. Keeps scrollTo/pos mapping from jumping
+  // for content below the player until the real dimensions arrive.
+  get estimatedHeight() {
+    return this.kind === 'video' ? 360 : 54
+  }
 }

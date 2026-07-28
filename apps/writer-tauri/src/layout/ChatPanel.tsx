@@ -4,18 +4,16 @@
 // Y.Array on the document's Y.Doc, so thread + turn state survives
 // reloads and syncs across devices.
 //
-// Per-proposal accept/reject lives in MarkPopover (anchored to the inline
-// mark in the editor body). This panel is the transcript surface only:
-// `/review` runs the copyeditor pass and drops inline comment marks; the
-// user is directed back to the body to act on individual highlights.
+// This panel is the transcript surface only. Proposed edits are reviewed
+// in the document body (inline diff widgets) and in the Review tray, not
+// here.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { parseFilePathFromPath } from '@/lib/viewUrl'
-import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
+import { IconMessageCircle, IconSparkles, IconX } from '@tabler/icons-react'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { useDocsStore } from '@/state/docsStore'
-import { readDocBody } from '@/state/docsStore/docBody'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -23,15 +21,8 @@ import { useConnectDialog } from '@/stores/connectDialog'
 import { type UseThreadsResult } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
-import {
-  CommandRenderError,
-  getCommand,
-  renderBody,
-  resolveKind,
-  type LoadedCommand,
-} from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
-import { useTurnState } from '@/stores/turnState'
+import { useTurnState, type QueuedTurn } from '@/stores/turnState'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useFastModeStore } from '@/state/fastModeStore'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
@@ -50,8 +41,11 @@ import {
 } from '@/chat/types'
 import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { useVaultCommands } from '@/state/vaultCommandsStore'
-import { pathForDoc } from '@/lib/docPaths'
+import { pathForSlug } from '@/lib/docPaths'
 import { MessageRow } from '@/chat/messages/MessageRow'
+import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { composeTranscript } from '@/chat/composeTranscript'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import {
   REPLY_GAP,
@@ -63,6 +57,10 @@ import {
 } from '@/chat/scroll/scrollMath'
 import { ReviewTray } from '@/chat/ReviewTray'
 import { SkillProposalTray } from '@/chat/SkillProposalTray'
+
+// Stable empty array for the queued-turns selector. A fresh `[]` per read hands
+// zustand a new reference on every streaming tick and re-renders the transcript.
+const EMPTY_QUEUE: QueuedTurn[] = []
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -103,10 +101,30 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   }, [routeFilePath])
   // What the chat actually sees / the chip renders: null once detached.
   const viewingFilePath = routeFilePath && !fileChipDismissed ? routeFilePath : null
+  // The open note, same shape: the URL slug is the source of truth and a
+  // dismissal rides on top, so navigating to another note re-attaches.
+  //
+  // Unlike the file chip this is NOT reset on send — the note isn't a one-shot
+  // attachment, it's where the user still is. Detaching only stops the note
+  // being described to the model; `slug` itself is untouched, so edit routing
+  // and run bookkeeping still work and the model can act on the note if asked
+  // to by name.
+  const [noteChipDismissed, setNoteChipDismissed] = useState(false)
+  useEffect(() => {
+    setNoteChipDismissed(false)
+  }, [slug])
+  const attachCurrentNote = !noteChipDismissed
+  // ONE derivation feeds both the chip and the payload. They used to come from
+  // different sources (a prop for the chip, `slug` for the run), which is how
+  // they were free to disagree — the whole failure this fixes. `runChat`
+  // resolves the path from the same slug through the same `pathForSlug`, so a
+  // null here (unknown slug, unplaceable doc) means no chip AND no block.
+  const knownDocs = useDocsStore((s) => s.knownDocs)
+  const currentNotePath = attachCurrentNote ? pathForSlug(slug, knownDocs) : null
   // The editor's live selection (text + line range), editor-agnostic: the
   // active editor (CodeMirror) publishes it to this store, so the chat reads it
-  // without a PM `editorView`. Drives the selection chip, the slash-command
-  // Send gate (hasSelection), and free-chat selection context.
+  // without a PM `editorView`. Drives the selection chip and the per-turn
+  // `--- SELECTION ---` context block.
   const selection = useEditorSelectionStore((s) => s.selection)
   const noteLabel = useDocLabel(slug)
   const selectionText = selection?.text ?? null
@@ -215,6 +233,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   const runner = useChatRunner({
     isQueue,
     slug,
+    attachCurrentNote,
     viewingFilePath,
     selectionText,
     activeThreadModel,
@@ -233,6 +252,12 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   )
   const streamingTurn = useTurnState((s) =>
     (activeId ? s.byThread.get(activeId)?.streamingTurn : null) ?? null,
+  )
+  const queuedTurns = useTurnState((s) =>
+    (activeId ? s.byThread.get(activeId)?.queued : undefined) ?? EMPTY_QUEUE,
+  )
+  const queuePaused = useTurnState((s) =>
+    (activeId ? s.byThread.get(activeId)?.queuePaused : false) ?? false,
   )
 
   const handleScroll = useCallback(() => {
@@ -434,11 +459,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // the file chip must not disable the input — general questions are fine there.
   const ready = !!activeId && (isQueue || !!slug || !!routeFilePath)
 
-  // Whether the editor has a non-empty selection — gates selection-scoped
-  // slash commands (validatePrompt). Sourced from the same editor-agnostic
-  // store as the chip.
-  const hasSelection = selection !== null
-
   // X-button on the chip detaches the selection: collapse the live selection in
   // whichever editor is mounted (via the store's registered callback). The
   // editor's selection-change listener then publishes the now-empty selection
@@ -451,9 +471,49 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // for rendering. `streamingTurn` is already scoped to the active thread by
   // its store selector, so a thread-switch mid-stream can't leak another
   // session's buffer into this transcript.
-  const renderedTurns = streamingTurn
-    ? [...turnsHook.turns, streamingTurn]
-    : turnsHook.turns
+  // Settled → streaming → queued. The ordering lives in composeTranscript so it
+  // is under test; inlined here, reversing the last two terms (the original bug)
+  // left the whole suite green.
+  const renderedTurns = composeTranscript(turnsHook.turns, streamingTurn, queuedTurns)
+  const queuedIds = useMemo(
+    () => new Set(queuedTurns.map((q) => q.turn.id)),
+    [queuedTurns],
+  )
+
+  // Drain: the moment the thread goes idle, promote the oldest queued turn into
+  // the settled list and run it. `dequeueTurn` removes and returns in one store
+  // write and returns null if another drain already took the head, so a double
+  // effect fire can't run the same turn twice.
+  //
+  // Only the VISIBLE thread drains, because chatStatus is selector-scoped to it.
+  // Switching away parks the queue rather than losing it — the effect re-runs on
+  // the next activeId change, so coming back resumes. That is a pause, not a
+  // drop, and it is the behaviour worth having if this ever moves: Zed's queue
+  // pauses on stop for the same reason, and its comments name the "frozen queue"
+  // bug that draining eagerly produced.
+  useEffect(() => {
+    if (!activeId || chatStatus === 'streaming' || queuedTurns.length === 0) return
+    // Stop holds the queue. Without this the cancel settles the turn, the thread
+    // goes idle, and this very effect starts the next queued message on that
+    // transition — text keeps flowing and Stop looks broken.
+    if (queuePaused) return
+    const next = useTurnState.getState().dequeueTurn(activeId)
+    if (!next) return
+    turnsHook.appendTurn(next.turn)
+    anchorSentTurn(next.turn.id, false)
+    void runner.run(
+      activeId,
+      [...turnsHook.turns, next.turn],
+      undefined,
+      next.attachments,
+      next.mentionPaths,
+    )
+    // Deps are deliberately narrower than what the body closes over: turnsHook
+    // and runner are rebuilt every render, so listing them would re-run this on
+    // every streaming tick. The gate is the thread, its status, the queue length
+    // and the hold. (No eslint-disable here — react-hooks isn't among this
+    // project's plugins, so silencing that rule is itself a lint error.)
+  }, [activeId, chatStatus, queuedTurns.length, queuePaused])
 
   // Regenerate is only offered on the most-recent settled assistant turn —
   // rewriting an older one would orphan every later turn's context. Hidden
@@ -483,94 +543,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   /** Renders a command body and kicks off a single assistant turn against
    * its system prompt. The user message in the transcript is the literal
    * `/<name> args` text — same as Claude Code, keeps intent visible. */
-  /** Execute a slash command's run lifecycle for a user turn that's already
-   * sitting in the thread. Renders the system prompt against the *current*
-   * editor state (doc + selection) so a regenerate after a doc edit picks
-   * up the latest text, builds the kind-specific RunOverrides, and dispatches
-   * through the runner. Caller is responsible for putting `userTurn` into
-   * `history` and turnsHook before calling. */
-  async function runSlashCommand(
-    threadId: string,
-    cmd: LoadedCommand,
-    args: string,
-    userTurn: ChatTurn,
-    history: ChatTurn[],
-  ) {
-    let systemPrompt: string
-    try {
-      // Document + selection from the editor-agnostic sources CM publishes: the
-      // open doc's body via the canonical reader (live editor when mounted) and
-      // the live selection store (the same one the chip reads). render.ts throws
-      // CommandRenderError when scope is "selection" and nothing is selected —
-      // surfaced as an inline error below.
-      const docText = slug ? readDocBody(slug) : ''
-      systemPrompt = renderBody(cmd, {
-        document: docText,
-        selection: selectionText ?? '',
-        args,
-      })
-    } catch (e) {
-      const msg = e instanceof CommandRenderError ? e.message : String(e)
-      appendInlineError(threadId, userTurn.content, msg, /* alreadyAppendedUser */ true)
-      return
-    }
-
-    const kind = resolveKind(cmd.kind)
-    const overrides: RunOverrides = {
-      systemPrompt,
-      // Need a non-empty user message — the SDK won't accept ''. Args go
-      // straight through when present. When absent, use a slash-free
-      // kickoff line: the underlying Claude Agent SDK scans user
-      // messages for `/<name>` patterns and routes them to its own
-      // skill registry, which doesn't know our command names. A bare
-      // `Run /${cmd.name}.` would be intercepted and rejected with
-      // "skill not available" instead of falling through to the
-      // system prompt we already set above.
-      prompt: args.trim() || 'Begin.',
-      model: cmd.model,
-      effort: cmd.effort,
-      relayTools: kind.relayTools,
-      // review-comments emits many tool calls and any chat text it
-      // produces is incidental — replace the final content with a
-      // human summary so the transcript stays terse.
-      summarize:
-        kind.id === 'review-comments'
-          ? ({ applied }) =>
-              applied === 0
-                ? 'No issues to flag — looks clean to me.'
-                : `Found **${applied}** issue${applied === 1 ? '' : 's'} — click any highlight in the document to review.`
-          : undefined,
-    }
-    await runner.run(threadId, history, overrides)
-  }
-
-  async function executeCommand(
-    threadId: string,
-    cmd: LoadedCommand,
-    args: string,
-    userText: string,
-    contextChips: Attachment[] = [],
-  ) {
-    const userTurn: ChatTurn = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: userText,
-      ts: Date.now(),
-      // The command acts on the same selection/viewing-file it consumed via the
-      // {{selection}} template — show it in the bubble like the normal path.
-      attachments: contextChips.length > 0 ? contextChips : undefined,
-      // Stamp so handleRegenerate can rerun this turn through the same
-      // command path (system prompt + relayTools + summarize) instead of
-      // replaying the literal "/proofread" text as plain chat.
-      slashInvocation: { name: cmd.name, args },
-    }
-    const isFirstTurn = turnsHook.turns.length === 0
-    turnsHook.appendTurn(userTurn)
-    // First turn follows the bottom; later turns anchor to the top.
-    anchorSentTurn(userTurn.id, isFirstTurn)
-    await runSlashCommand(threadId, cmd, args, userTurn, [...turnsHook.turns, userTurn])
-  }
-
   /** Run a vault command (organize / daily-ingest / …) NATIVELY: send
    * `/<name> <arg>` as the prompt so the SDK expands the plugin command. The arg
    * defaults to the open note's path — the "organize what I'm looking at"
@@ -583,11 +555,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     args: string,
     history: ChatTurn[],
   ) {
-    const knownDocs = useDocsStore.getState().knownDocs
-    const doc = slug ? knownDocs.find((d) => d.slug === slug) : undefined
-    const notePath = doc
-      ? pathForDoc(doc, (s) => knownDocs.find((d) => d.slug === s))
-      : null
+    const notePath = pathForSlug(slug, useDocsStore.getState().knownDocs)
     const arg = args.trim() || notePath || ''
     const overrides: RunOverrides = {
       systemPrompt: '',
@@ -643,7 +611,16 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // changes to another file.
   function resetContextChips() {
     if (selectionText) useEditorSelectionStore.getState().collapse?.()
-    if (viewingFilePath) setFileChipDismissed(true)
+    // The viewed file is NOT detached here, unlike before. It's the same kind of
+    // thing as the open note — where the user still IS, not a one-shot
+    // attachment — so it stays for as long as they're on that route, and the
+    // note chip is kept for the same reason.
+    //
+    // Dropping it used to be invisible: the file was frozen into the thread's
+    // system prompt on turn 1, so the model kept seeing it no matter what the
+    // chip did. Now that it rides the per-turn message, detaching on send would
+    // mean "summarize this PDF" stops working from the second question on.
+    // The X still detaches it, and navigating to another file re-attaches.
   }
 
   async function handleSend(
@@ -652,7 +629,14 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     mentionPaths: string[] = [],
     pastedTexts: { preview: string; content: string }[] = [],
   ) {
-    if (!ready || chatStatus === 'streaming') return
+    // No streaming guard: a send while an answer is in flight is QUEUED, not
+    // dropped. The sidecar owns the queue (`#dispatchTurn` — strict FIFO, one
+    // turn generating at a time), so the two runs never produce output at once
+    // and the single per-thread streaming buffer stays correct. PromptInput
+    // gates the keyboard path (`canQueue`); the footer button is Stop mid-answer
+    // and is unchanged. Regenerate deliberately still refuses mid-answer — it
+    // rewrites an existing turn rather than appending one.
+    if (!ready) return
     const threadId = activeId
     if (!threadId) return
     // Latch BEFORE any await / state set so a fast double-Enter can't
@@ -661,18 +645,10 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     if (sendInFlightRef.current.has(threadId)) return
     sendInFlightRef.current.add(threadId)
     try {
-      // Slash command? Route through executeCommand so the .md body becomes
-      // the system prompt and any kind-specific tools are wired in.
+      // Slash command? Vault commands run natively — the SDK expands the
+      // plugin command from `_system/agent/commands/`.
       const slash = parseSlashInvocation(text)
       if (slash) {
-        const cmd = getCommand(slash.name)
-        if (cmd) {
-          await executeCommand(threadId, cmd, slash.args, text, captureContextChips())
-          resetContextChips()
-          return
-        }
-        // Not a builtin editor action — is it a vault command? Those
-        // run natively (the SDK expands the plugin command).
         if (useVaultCommands.getState().get(slash.name)) {
           const chips = captureContextChips()
           const userTurn: ChatTurn = {
@@ -733,16 +709,59 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         }
       }
 
+      // Detach the one-shot prop-backed chips now that they're committed to the
+      // turn (draft chips were already cleared by the composer's submit).
+      // Done before the queue branch so a parked turn keeps the context it was
+      // written against rather than whatever is on screen when it finally runs.
+      resetContextChips()
+
+      // Answer still streaming → park it. NOT appendTurn: the settled list
+      // renders above the streaming answer, so committing it now would drop the
+      // message into the middle of the transcript instead of the end.
+      //
+      // The frontend owns this queue even though the sidecar has one of its own
+      // (#dispatchTurn, FIFO). Dispatching late is what buys the affordances:
+      // cancel, edit and reorder are array operations here, whereas a turn the
+      // sidecar has already accepted would need a control-protocol message to
+      // retract — and the SDK's own cancel for that is untyped.
+      // Read the status LIVE rather than from `chatStatus`. That binding is the
+      // value from the render this closure was created in, so two Enters in one
+      // tick both see 'idle' — which is the whole reason sendInFlightRef exists.
+      // `runner.run` sets the store to 'streaming' synchronously before its
+      // first await, so a second call in the same tick reads 'streaming' here
+      // and queues instead of double-sending.
+      const liveStatus =
+        useTurnState.getState().byThread.get(threadId)?.status ?? 'idle'
+      if (liveStatus === 'streaming') {
+        useTurnState
+          .getState()
+          .enqueueTurn(threadId, { turn: userTurn, attachments, mentionPaths })
+        return
+      }
+
       // The user's turn is finished text — push to Yjs once and let it sync.
+      // Sending again is the resume gesture — a hold from an earlier Stop must
+      // not outlive it, or turns parked behind it would never run.
+      useTurnState.getState().resumeQueue(threadId)
       turnsHook.appendTurn(userTurn)
       // First turn follows the bottom; later turns anchor to the top.
       anchorSentTurn(userTurn.id, isFirstTurn)
 
-      // Detach the one-shot prop-backed chips now that they're committed to the
-      // turn (draft chips were already cleared by the composer's submit).
-      resetContextChips()
-
-      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, attachments, mentionPaths)
+      const started = runner.run(
+        threadId,
+        [...turnsHook.turns, userTurn],
+        undefined,
+        attachments,
+        mentionPaths,
+      )
+      // Release the latch as soon as the run is DISPATCHED, not when the answer
+      // finishes. Holding it for the whole run is what broke queueing: a second
+      // send bounced off the latch above and never reached the branch that parks
+      // it. By this line the store already reads 'streaming', so the latch has
+      // nothing left to protect. (The finally below repeats this; Set.delete is
+      // idempotent, and it still covers the throwing paths.)
+      sendInFlightRef.current.delete(threadId)
+      await started
     } finally {
       sendInFlightRef.current.delete(threadId)
     }
@@ -753,10 +772,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
    * message that prompted it. Only valid for the most recent assistant turn:
    * earlier rewrites would invalidate every later turn's context.
    *
-   * Slash-command turns (`slashInvocation` stamped on the user turn) route
-   * back through runSlashCommand so the rerun gets the same system prompt,
-   * relayTools, and summarize hook as the original — without that branch
-   * the rerun would replay the literal `/proofread` text as plain chat. */
+   * Slash-command turns (`slashInvocation` stamped on the user turn) rerun
+   * through the vault-command path, so the SDK expands the plugin command
+   * again instead of replaying the literal `/organize` text as plain chat. */
   async function handleRegenerate(assistantTurnId: string) {
     if (!ready || chatStatus === 'streaming') return
     const threadId = activeId
@@ -782,17 +800,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       setScrollMode('FOLLOW_BOTTOM')
 
       if (lastUser.slashInvocation) {
-        const cmd = getCommand(lastUser.slashInvocation.name)
-        if (cmd) {
-          await runSlashCommand(
-            threadId,
-            cmd,
-            lastUser.slashInvocation.args,
-            lastUser,
-            history,
-          )
-          return
-        }
         // Vault command → rerun natively.
         if (useVaultCommands.getState().get(lastUser.slashInvocation.name)) {
           await runVaultCommand(
@@ -822,37 +829,27 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   }
 
   function handleStop() {
-    if (activeId) useChatRuns.getState().abortByThread(activeId)
+    if (!activeId) return
+    // Pause BEFORE aborting. The abort settles the turn and flips the thread to
+    // idle, which is exactly what wakes the drain effect — set the hold first or
+    // the next queued message is already away.
+    useTurnState.getState().pauseQueue(activeId)
+    useChatRuns.getState().abortByThread(activeId)
   }
 
-  // Pre-submit validator: blocks unknown commands and selection-scoped
-  // commands invoked without a selection. Free chat (no leading slash) is
-  // always ok. The leading-slash branch returns ok while the user is still
-  // typing the name (no space yet) so the palette — not a red error —
-  // handles the in-progress state.
-  const validatePrompt = useCallback(
-    (text: string) => {
-      const m = /^\/([a-z][a-z0-9-]*)(\s|$)/.exec(text)
-      if (!m) return { ok: true as const }
-      const hasSpace = m[2].length > 0
-      const cmd = getCommand(m[1])
-      if (!cmd) {
-        // Vault commands are valid too — they execute natively.
-        if (useVaultCommands.getState().get(m[1])) return { ok: true as const }
-        return hasSpace
-          ? { ok: false as const, message: `Unknown command: /${m[1]}` }
-          : { ok: true as const }
-      }
-      if (cmd.scope === 'selection' && !hasSelection) {
-        return {
-          ok: false as const,
-          message: `Select text in the editor to use /${cmd.name}.`,
-        }
-      }
-      return { ok: true as const }
-    },
-    [hasSelection],
-  )
+  // Pre-submit validator: blocks unknown commands. Free chat (no leading
+  // slash) is always ok, and the leading-slash branch returns ok while the
+  // user is still typing the name (no space yet) so the palette — not a red
+  // error — handles the in-progress state.
+  const validatePrompt = useCallback((text: string) => {
+    const m = /^\/([a-z][a-z0-9-]*)(\s|$)/.exec(text)
+    if (!m) return { ok: true as const }
+    const hasSpace = m[2].length > 0
+    if (useVaultCommands.getState().get(m[1])) return { ok: true as const }
+    return hasSpace
+      ? { ok: false as const, message: `Unknown command: /${m[1]}` }
+      : { ok: true as const }
+  }, [])
 
   return (
     <div
@@ -938,12 +935,49 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
           <div
             key={turn.id}
             data-turn-id={turn.id}
+            // Queued turns read as sent-but-waiting. Dimming is the whole
+            // signal: the bubble is in the transcript at the position it will
+            // occupy, just not live yet. VS Code uses 0.7 for the same state.
+            className={cn(
+              queuedIds.has(turn.id) && 'group/queued relative opacity-60',
+            )}
+            aria-busy={queuedIds.has(turn.id) || undefined}
             style={
               scrollMode === 'ANCHORED' && i === renderedTurns.length - 1
                 ? { minHeight: 'calc(100dvh - var(--chat-top-inset))' }
                 : undefined
             }
           >
+            {/* Remove, on hover, for a turn that hasn't run yet. Only offered
+                while it is still parked: once dispatched there is nothing local
+                left to drop, and pretending otherwise would be a button that
+                sometimes silently does nothing. Hover-revealed rather than
+                always-on so the transcript stays quiet — the same shape VS Code
+                and Zed use for their queued rows. */}
+            {queuedIds.has(turn.id) && activeId && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      useTurnState.getState().removeQueuedTurn(activeId, turn.id)
+                    }
+                    aria-label="Remove queued message"
+                    className={cn(
+                      'absolute -top-1 right-0 z-10 flex size-6 items-center justify-center rounded-full',
+                      'text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
+                      'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+                      // Hidden until hover, but never hidden from the keyboard:
+                      // focus-visible brings it back so it is reachable by Tab.
+                      'opacity-0 group-hover/queued:opacity-100 focus-visible:opacity-100',
+                    )}
+                  >
+                    <IconX size={14} stroke={2} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="left">Remove from queue</TooltipContent>
+              </Tooltip>
+            )}
             <MessageRow
               turn={turn}
               threadId={activeId}
@@ -1028,6 +1062,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             onClearSelection={handleClearSelection}
             viewingFilePath={viewingFilePath}
             onClearViewingFile={() => setFileChipDismissed(true)}
+            currentNotePath={currentNotePath}
+            currentNoteLabel={noteLabel}
+            onClearCurrentNote={() => setNoteChipDismissed(true)}
           />
         )}
       </div>

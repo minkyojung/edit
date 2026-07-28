@@ -29,30 +29,3 @@ export function InlineCard({
     </div>
   )
 }
-
-/** Footer row for InlineCard — used by stopped / error wrappers. The
- * tone follows the parent card so destructive cards keep the red
- * gradient through to the action row. */
-export function InlineCardFooter({
-  tone = 'default',
-  className,
-  children,
-}: {
-  tone?: 'default' | 'destructive'
-  className?: string
-  children: React.ReactNode
-}) {
-  return (
-    <div
-      className={cn(
-        'flex items-center gap-1.5 border-t px-3 py-1.5 text-footnote',
-        tone === 'destructive'
-          ? 'border-destructive/30 bg-destructive/15 text-destructive'
-          : 'border-border/60 bg-muted/70 text-muted-foreground',
-        className,
-      )}
-    >
-      {children}
-    </div>
-  )
-}

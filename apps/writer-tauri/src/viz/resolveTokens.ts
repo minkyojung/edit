@@ -1,12 +1,11 @@
-// Phase 0 — design-token resolver for the visualization renderers.
+// Design-token resolver for the Mermaid renderer.
 //
 // Our palette tokens are authored in `oklch()` and `color-mix(in oklch, …)`
-// (see index.css). Mermaid / Vega-Lite have their own colour engines that
-// cannot parse those formats, so handing them `var(--token)` directly paints
-// black or throws. The fix is to let the *browser* do the conversion: paint a
+// (see index.css). Mermaid has its own colour engine that cannot parse those
+// formats, so handing it `var(--token)` directly paints black or throws. The fix is to let the *browser* do the conversion: paint a
 // hidden probe with `color: var(--token)`, then read it back with
 // `getComputedStyle().color`, which the engine normalises to a plain
-// `rgb()` / `rgba()` string the libraries understand.
+// `rgb()` / `rgba()` string Mermaid understands.
 //
 // Because the probe is mounted under <html> (where ThemeProvider toggles the
 // `palette-*` / `light` / `dark` classes), the values returned automatically

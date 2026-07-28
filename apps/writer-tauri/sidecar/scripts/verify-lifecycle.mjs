@@ -18,7 +18,7 @@ function makeFakeQuery(prompt) {
   const outQ = []
   let outResolve = null
   let outEnded = false
-  const rec = { messages: [], calls: [], pushEvent, endOutput }
+  const rec = { messages: [], calls: [], inputEnded: false, pushEvent, endOutput }
   function pushEvent(e) {
     if (outResolve) { const r = outResolve; outResolve = null; r({ value: e, done: false }) }
     else outQ.push(e)
@@ -38,6 +38,13 @@ function makeFakeQuery(prompt) {
         rec.messages.push(value)
       }
     } catch { /* input aborted */ }
+    // The real SDK does more than end the stream here: `streamInput` falls out
+    // of its `for await`, waits for the first result, and calls
+    // `transport.endInput()` — closing stdin to the CLI for good. Every control
+    // request after that (canUseTool, hooks) is answered by a dead channel and
+    // silently no-ops, with tools still running and no error anywhere. Recording
+    // it lets T10 assert the generator never gets here.
+    rec.inputEnded = true
     endOutput() // input ended → stream ends (mirrors the SDK)
   })()
   const iter = {
@@ -69,7 +76,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', {
   },
 })
 
-const { Server } = await import(`${SIDECAR}/src/server.mjs`)
+const { Server, threadBusy } = await import(`${SIDECAR}/src/server.mjs`)
 
 // ── Harness ──────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -280,8 +287,97 @@ async function t8() {
   check('one chat/done, no error', ev.done.length === 1 && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
 }
 
+// ── T9: background work decides whether a thread may be reaped/evicted ────
+// The predicate that decides whether a subprocess lives or dies, driven by
+// synthetic `background_tasks_changed` events — no API calls, no waiting out
+// IDLE_TTL_MS, and deterministic. Until now nothing covered this: the only
+// #threadBusy test (T5) exercises the `turnActive` leg, and the real-model
+// script covers the set but never the reap decision itself.
+async function t9() {
+  console.log('\n[T9] background_tasks_changed drives threadBusy (REPLACE semantics)')
+  fakes.length = 0
+  const { server, send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'x' }, nid())
+  const f = await awaitFake(1)
+  await runTurn(f, r1, ev)
+  const rec = server.activeThreads.get(tid)
+  check('idle thread is not busy', !threadBusy(rec))
+
+  // A background task appears.
+  f.pushEvent({ type: 'system', subtype: 'background_tasks_changed',
+    tasks: [{ task_id: 'bg1', task_type: 'local_agent', description: 'work' }] })
+  await waitFor(() => rec.backgroundTaskIds.size === 1)
+  check('live background work makes the thread busy', threadBusy(rec))
+
+  // REPLACE, not merge: a payload naming a different task must not accumulate.
+  f.pushEvent({ type: 'system', subtype: 'background_tasks_changed',
+    tasks: [{ task_id: 'bg2', task_type: 'local_bash', description: 'other' }] })
+  await waitFor(() => rec.backgroundTaskIds.has('bg2'))
+  check('a later payload REPLACES the set (no accumulation)',
+    rec.backgroundTaskIds.size === 1 && !rec.backgroundTaskIds.has('bg1'),
+    `set=${[...rec.backgroundTaskIds]}`)
+
+  // Empty payload = nothing live. This is the leg that used to latch.
+  f.pushEvent({ type: 'system', subtype: 'background_tasks_changed', tasks: [] })
+  await waitFor(() => rec.backgroundTaskIds.size === 0)
+  check('empty payload clears it and the thread is reapable', !threadBusy(rec))
+
+  // A blocking subagent emits task_started and never a terminal. It must not
+  // reach the set — that edge-pairing was the original leak.
+  f.pushEvent({ type: 'system', subtype: 'task_started', task_id: 'fg1',
+    description: 'blocking', subagent_type: 'plugin:counter' })
+  await sleep(50)
+  check('a bare task_started does NOT make the thread busy', !threadBusy(rec),
+    `set=${[...rec.backgroundTaskIds]}`)
+
+  // …but it must still reach the UI channel.
+  check('task_started still forwards on chat/task',
+    ev.task.some((t) => t.kind === 'started' && t.taskId === 'fg1'))
+}
+
+// ── T10: the prompt generator must never finish ──────────────────────────
+// The thread's input iterable (#threadInput) loops forever and parks between
+// turns. That is load-bearing, not stylistic: the SDK's `streamInput` closes
+// stdin once the iterable returns (it awaits the first result, then calls
+// transport.endInput), and `hasBidirectionalNeeds()` is true for us because we
+// always pass canUseTool and a relay MCP server. With stdin gone, every control
+// request is answered by a dead channel — the AskUserQuestion gate stops
+// parking turns and the model answers its own question, with no error and tools
+// still working. Nothing about that looks broken from the outside.
+//
+// So the cheap net lives here, on the fake: assert the generator is still
+// pending after turns settle. A refactor to per-turn `query.streamInput()` —
+// which the SDK's own docs make look reasonable — trips this immediately,
+// without an API call.
+async function t10() {
+  console.log('\n[T10] the prompt generator parks forever (stdin stays open)')
+  fakes.length = 0
+  const { server, send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
+
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'one' }, nid())
+  const f = await awaitFake(1)
+  await runTurn(f, r1, ev)
+  check('generator still pending after turn 1 settles', f.inputEnded === false)
+
+  // A second turn on the same thread — the case that would already be broken if
+  // the generator had finished, since its message could not be delivered.
+  send('chat', { runId: r2, threadId: tid, persistentQuery: true, prompt: 'two' }, nid())
+  await waitFor(() => f.messages.length >= 2)
+  check('turn 2 reached the same live query', f.messages.length >= 2, `messages=${f.messages.length}`)
+  await runTurn(f, r2, ev)
+  check('generator still pending after turn 2', f.inputEnded === false)
+  check('one query served both turns', server.activeThreads.size === 1)
+
+  // Closing the thread is the ONLY thing that may end it.
+  send('chat/close-thread', { threadId: tid })
+  await waitFor(() => f.inputEnded === true, 3000)
+  check('closing the thread does end the generator', f.inputEnded === true)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10()
 } finally {
   process.stderr.write = origWrite
 }

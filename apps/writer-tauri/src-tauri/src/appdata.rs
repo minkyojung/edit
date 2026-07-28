@@ -26,12 +26,6 @@ fn base() -> &'static Path {
         .expect("appdata::init must run in setup() before any path lookup")
 }
 
-/// Per-device GitHub-activity cache DB (sibling of secure storage, OUTSIDE the
-/// synced vault). Derived from GitHub — rebuilt on demand, never synced.
-pub fn events_db_path() -> PathBuf {
-    base().join("events.db")
-}
-
 /// External git directory for `vault_path`, keyed by a stable hash of its
 /// canonical path (unique per vault, stable across restarts/updates). Keyed on
 /// the PATH — not the manifest vault_id — because `git_init` runs before any

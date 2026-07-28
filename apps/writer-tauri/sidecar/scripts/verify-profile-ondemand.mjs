@@ -56,6 +56,13 @@ const claudeMd = readFileSync(join(APP_SRC, 'CLAUDE.md'), 'utf8')
 
 // The SELF PROFILE block exactly as composeSystemBlocks now builds it: summary
 // (About only) + the on-demand pointer with the absolute profile path.
+//
+// A COPY, and unlike the currentNoteBlock family it is not pinned by
+// harnessProseParity.test.ts — production assembles this inline inside
+// composeSystemBlocks (systemPrompt.ts ~204-221) rather than in a callable
+// function, so there is nothing to invoke and diff against. If you change the
+// pointer wording there, change it here too; nothing will tell you. Extracting
+// it into a named function in production would make it pinnable.
 const selfProfileBlock =
   `--- SELF PROFILE ---\n## About\n\n${ABOUT}\n\n` +
   `Fuller background facts about the user (history, ongoing projects, ` +
@@ -73,9 +80,21 @@ const systemPrompt = [
   selfProfileBlock,
 ].join('\n\n')
 
+// The non-personal task summarises a FILE, not inline text, on purpose. Its
+// verdict is "the profile was not Read", which is equally satisfied by a model
+// that read nothing at all — including one whose Read tool was never wired up,
+// so the check would pass BECAUSE of that bug. Forcing one legitimate Read gives
+// the case a positive control: the tool demonstrably works, so leaving the
+// profile alone is restraint rather than inaction.
+const DECOY_REL = 'wiki/library-notes.md'
+writeFileSync(
+  join(vault, DECOY_REL),
+  'The library ships a parser, a formatter, and a CLI; all three share a config module.\n',
+)
+
 const prompt =
   CASE === 'nonpersonal'
-    ? 'Summarize this in one sentence: "The library ships a parser, a formatter, and a CLI; all three share a config module."'
+    ? `Summarize ${DECOY_REL} in one sentence.`
     : 'Write a one-sentence professional bio for me. Include where I worked before my current thing.'
 
 // ── JSON-RPC plumbing ─────────────────────────────────────────────────────
@@ -154,7 +173,11 @@ try {
   st === null ? ok('setToken') : bad('setToken', JSON.stringify(st))
 
   console.log(`  … running chat turn (case=${CASE})`)
-  const r = await runChat('profile-ondemand-1')
+  // The runId doubles as the SDK session id, and the CLI rejects anything that
+  // isn't a UUID — "Error: Invalid session ID. Must be a valid UUID." A readable
+  // literal here kills the turn before the model runs, surfacing only as an opaque
+  // INTERNAL. verify-stale-retry hit this and fixed itself; the note never spread.
+  const r = await runChat(globalThis.crypto.randomUUID())
   if (r.kind !== 'ok') bad('chat run did not complete', JSON.stringify(r))
 
   console.log(`\n  Read calls: ${JSON.stringify(reads)}`)
@@ -168,6 +191,13 @@ try {
     if (/acme|discquiet/i.test(assistantText)) ok('reply used a Background-only fact')
     else bad('reply did not include the Background fact')
   } else {
+    // POSITIVE CONTROL first: prove Read works at all in this run. Without it,
+    // "no profile Read" is indistinguishable from "no Read tool", and the check
+    // would score a broken toolset as a pass.
+    const readDecoy = reads.some((p) => p.includes('library-notes.md'))
+    readDecoy
+      ? ok('the Read tool works in this run (decoy file was read)')
+      : bad('the decoy file was NOT read — Read is unavailable, so the verdict below is meaningless')
     readProfile()
       ? bad('non-personal task wrongly Read the profile (spurious load)')
       : ok('non-personal task → no profile Read (lean path holds)')

@@ -31,7 +31,7 @@ import { type SyntaxNode } from '@lezer/common'
 import { ImageWidget } from '@/editor/cards/widgets'
 import { EditableTableWidget } from './editableTable'
 import { MediaWidget, detectMedia } from '@/editor/cards/mediaCards'
-import { inProofRawRange } from '@/editor/proofRawRanges'
+import { proofRawOverlap, proofRawRangesChanged } from '@/editor/proofRawRanges'
 import { cursorInRange } from './cursorRange'
 
 function build(state: EditorState): DecorationSet {
@@ -40,7 +40,23 @@ function build(state: EditorState): DecorationSet {
     enter: (node) => {
       // Pending AI proposal (Option B): keep it RAW — don't render its table /
       // image as a widget, so the proposal stays distinguishable + editable.
-      if (inProofRawRange(state, node.from)) return false
+      // `inside` → skip the subtree; `partial` → don't build a widget here but keep
+      // descending. Both matter: this walk also starts at the root `Document`
+      // (from 0), and a proposal covering only PART of a table must still stop the
+      // table widget, or the accept/reject buttons end up sealed inside a block
+      // replace where they can't be seen or clicked.
+      const raw = proofRawOverlap(state, node.from, node.to)
+      if (raw === 'inside') return false
+      if (raw === 'partial') {
+        // A construct this layer replaces WHOLESALE is all-or-nothing. Descending
+        // into a table left raw would let an Image in one of its cells render as a
+        // widget floating in the markdown text we deliberately did not touch, so
+        // stop here. Containers we do NOT replace (Document, an ordinary Paragraph)
+        // still descend, which is the whole point of `partial` — content clear of
+        // the proposal keeps rendering.
+        if (node.name === 'Table' || node.name === 'Image') return false
+        return undefined
+      }
       // Image — same model as the media card. Two modes:
       //  • editing (cursor OR selection touching it) → KEEP the raw `![...](...)`
       //    source visible AND show the image preview as a block right below it
@@ -145,10 +161,16 @@ function touchesBlocks(tr: Transaction, mapped: DecorationSet): boolean {
       touched = true
       return false
     })
-    if (!touched && tr.state.doc.lineAt(fromB).text.includes('![')) touched = true
-    // A freshly-inserted `<video>`/`<audio>` line (like `![` for images) — otherwise
-    // an inserted media embed stays raw until the caret happens to enter its line.
-    if (!touched && /<(video|audio)\b/i.test(tr.state.doc.lineAt(fromB).text)) touched = true
+    // Scan EVERY line the change spans (not just the first) so a multi-line paste whose
+    // image (`![`) or `<video>`/`<audio>` embed isn't on the first line still triggers a
+    // rebuild — otherwise it stays raw markdown until the caret wanders onto its line.
+    // (youtubeCards/mermaidCards already scan the full span; blocks was the straggler.)
+    const first = tr.state.doc.lineAt(fromB).number
+    const last = tr.state.doc.lineAt(toB).number
+    for (let n = first; n <= last && !touched; n++) {
+      const text = tr.state.doc.line(n).text
+      if (text.includes('![') || /<(video|audio)\b/i.test(text)) touched = true
+    }
     if (!touched && (inTableAt(tr.state, fromB) || inTableAt(tr.state, toB))) touched = true
   })
   return touched
@@ -178,6 +200,11 @@ const blocksField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
+    // Pending-proposal ranges are a fourth input to `build`, and they can change
+    // without a doc edit, a caret move, or parse progress — a reject is dispatched
+    // as an effect-only transaction. Without this, a block this layer had to leave
+    // raw would stay raw until some unrelated edit triggered a rebuild.
+    if (proofRawRangesChanged(tr.startState, tr.state)) return build(tr.state)
     if (tr.docChanged) return touchesBlocks(tr, mapped) ? build(tr.state) : mapped
     // Selection-only change: rebuild ONLY when the caret enters or leaves a
     // reveal-capable block line (before OR after the move). Since this branch is

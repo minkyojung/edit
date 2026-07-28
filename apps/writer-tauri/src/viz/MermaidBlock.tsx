@@ -58,7 +58,7 @@ function buildThemeVariables(): Record<string, string> {
   set('edgeLabelBackground', t['--background'])
   // Categorical palette → mermaid's pie slots (pie1..) and the generic
   // colour scale (cScale0..) so pie charts and multi-series diagrams use the
-  // same family as the HTML artifacts.
+  // same family as the surrounding UI.
   const cats = [
     t['--viz-cat-1'],
     t['--viz-cat-2'],

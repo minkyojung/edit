@@ -97,7 +97,11 @@ try {
   st === null ? ok('setToken') : bad('setToken', JSON.stringify(st))
 
   console.log('  … running chat: "Summarize my in-progress notes."')
-  const r = await runChat('query-1', 'Summarize my in-progress notes.')
+  // The runId doubles as the SDK session id, and the CLI rejects anything that
+  // isn't a UUID — "Error: Invalid session ID. Must be a valid UUID." A readable
+  // literal here kills the turn before the model runs, surfacing only as an opaque
+  // INTERNAL. verify-stale-retry hit this and fixed itself; the note never spread.
+  const r = await runChat(globalThis.crypto.randomUUID(), 'Summarize my in-progress notes.')
   if (r.kind !== 'ok') bad('chat run did not complete', JSON.stringify(r))
 
   console.log('\n  --- assistant reply ---\n  ' + assistantText.trim().replace(/\n/g, '\n  ') + '\n')

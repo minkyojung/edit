@@ -1,18 +1,16 @@
 mod appdata;
 mod claude_import;
 pub mod claude_sidecar;
-mod events;
 mod fetch_url;
 mod git;
-mod github;
 mod google_oauth;
+mod models_catalog;
 mod oauth;
 mod os_trash;
 mod reveal;
 mod sound;
 mod secure_storage;
 mod updater;
-mod vault_sync;
 mod window_chrome;
 
 use tauri::{Emitter, Manager};
@@ -62,7 +60,6 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .manage(oauth::PendingOAuth::default())
-        .manage(github::PendingGitHubAuth::default())
         .manage(window_chrome::CompactFrames::default())
         .manage(updater::UpdaterState::default())
         .manage(claude_sidecar::state::SidecarSupervisorState::default())
@@ -81,6 +78,10 @@ pub fn run() {
             google_oauth::notify_signup,
             claude_sidecar::commands::claude_chat_start,
             claude_sidecar::commands::claude_list_models,
+            // Distinct from claude_list_models above: that one reports what the
+            // SDK handshake says the account may use (and lags a release by
+            // days); this one is the authoritative catalog, GET /v1/models.
+            models_catalog::anthropic_list_models,
             claude_sidecar::commands::claude_chat_cancel,
             claude_sidecar::commands::claude_chat_close_thread,
             claude_sidecar::commands::claude_chat_stop_task,
@@ -104,20 +105,6 @@ pub fn run() {
             git::git_is_dirty,
             git::git_show,
             git::git_ensure_gitignore_entries,
-            events::commands::events_insert,
-            events::commands::events_query,
-            events::commands::events_search,
-            github::start_github_device_flow,
-            github::poll_github_device_flow,
-            github::get_github_account,
-            github::get_github_token,
-            github::disconnect_github,
-            github::github_sync,
-            github::github_list_repos,
-            vault_sync::vault_backup_init,
-            vault_sync::vault_push,
-            vault_sync::vault_restore,
-            vault_sync::vault_pull,
             app_quit,
             window_chrome::get_traffic_light_y,
             window_chrome::apply_window_chrome,
@@ -132,8 +119,8 @@ pub fn run() {
         ])
         .setup(|app| {
             // Resolve the per-device app-data base once, up front: git history
-            // and the events.db cache live here (outside the synced vault) so
-            // the vault stays a clean, sync-safe folder of user files.
+            // lives here (outside the synced vault) so the vault stays a
+            // clean, sync-safe folder of user files.
             appdata::init(app.path().app_data_dir()?);
 
             // Replace the default macOS Quit menu item with one we control.

@@ -9,8 +9,9 @@
 // whole-file Write — collapses to the same red(removed)/green(added) hunks.
 
 import { diffLines } from 'diff'
-import { looseReplace, looseFindRange } from '@/lib/looseMatch'
-import type { PendingChange } from '@/state/pendingChangesStore'
+import { looseFindRange, locateLoose } from '@/lib/looseMatch'
+import type { PendingChange, PendingEdit } from '@/state/pendingChangesStore'
+import type { Placement } from '@/lib/editPlacement'
 
 export type CmHunk = {
   /** Char offset into the live doc where the hunk starts. */
@@ -67,26 +68,58 @@ export function scrollOffsetForChange(docText: string, change: PendingChange): n
   return null
 }
 
-/** Apply a change's edits to `docText` and return the resulting document text —
- * the "after" side of the diff. Each edit is applied in order against the
- * running text using the SAME primitives the applier uses (looseReplace /
- * resolveAddInsertion) so "a mark shows" ⟺ "Keep will place it". An edit that
- * can't be located is skipped (it simply won't appear in the diff). */
-export function applyEditsToText(docText: string, change: PendingChange): string {
+/** Apply a change's edits to `docText`, returning both the resulting text and
+ * WHY it turned out that way.
+ *
+ * One walk produces both on purpose. The check that decides whether to accept a
+ * proposal and the application that decides what gets drawn have to agree — two
+ * implementations of "can this edit be placed" is precisely how a proposal comes
+ * to pass its own check and then render nothing.
+ *
+ * Placement follows the applier's primitives (looseReplace / resolveAddInsertion)
+ * so "a mark shows" ⟺ "Keep will place it". An unplaceable edit is SKIPPED, not
+ * abandoned — the remaining edits still apply, matching the previous behaviour —
+ * and the first failure is what gets reported. */
+export function placeEdits(
+  docText: string,
+  change: { edits: PendingEdit[] },
+): { text: string; placement: Placement } {
   let text = docText
-  for (const e of change.edits) {
+  let failure: Placement | null = null
+  for (let i = 0; i < change.edits.length; i++) {
+    const e = change.edits[i]
     if ((e.kind === 'replace' || e.kind === 'delete') && e.before) {
-      const replaced = looseReplace(text, e.before, e.kind === 'delete' ? '' : (e.after ?? ''))
-      if (replaced !== null) text = replaced
+      const replacement = e.kind === 'delete' ? '' : (e.after ?? '')
+      const m = locateLoose(text, e.before)
+      if (m.kind === 'found') {
+        text = text.slice(0, m.start) + replacement + text.slice(m.end)
+      } else if (m.kind === 'ambiguous') {
+        failure ??= { kind: 'ambiguous', editIndex: i, target: e.before }
+      } else if (replacement && text.includes(replacement)) {
+        // The anchor is gone but what it was to BECOME is present: this edit has
+        // already been made (the user accepted it, or made it themselves). Not a
+        // failure — skipping it leaves the text as the model wanted it.
+      } else {
+        failure ??= { kind: 'absent', editIndex: i, target: e.before }
+      }
     } else if (e.kind === 'add') {
       const at = resolveAddInsertion(text, e.anchorBefore)
       if (at !== null) text = text.slice(0, at) + (e.after ?? '') + text.slice(at)
+      else failure ??= { kind: 'absent', editIndex: i, target: e.anchorBefore }
     } else if (e.kind === 'replace' && !e.before) {
-      // Whole-file Write: the new text IS the whole document.
+      // Whole-file Write: the new text IS the whole document, nothing to locate.
       text = e.after ?? ''
     }
   }
-  return text
+  // A failure outranks `noop`: when one edit couldn't be placed and the rest
+  // changed nothing, the honest answer is why it couldn't be placed.
+  const placement: Placement = failure ?? (text === docText ? { kind: 'noop' } : { kind: 'ok' })
+  return { text, placement }
+}
+
+/** The "after" side of the diff — `placeEdits` without the verdict. */
+export function applyEditsToText(docText: string, change: PendingChange): string {
+  return placeEdits(docText, change).text
 }
 
 /** Diff `docText` against the change's applied result and fold the line-level

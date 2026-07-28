@@ -95,19 +95,6 @@ export interface SystemBlocksArgs {
    * Slash commands that already embed `{{document}}` in their body
    * pass false to avoid the document showing up twice. */
   appendDocument: boolean
-  /** Vault-relative path of the note the user is currently viewing (orientation
-   * context, not a constraint). Resolves deictic references ("this note", "here")
-   * to the open file by default while leaving the model free to act on others. */
-  currentFilePath?: string | null
-  /** Vault-relative path of a non-markdown file open in the FileViewer (PDF,
-   * image, audio, …). Unlike `currentFilePath`, there's no text body to inject
-   * — the model is told to Read the path on demand to interpret it. */
-  viewingFilePath?: string | null
-  /** Text the user has selected in the editor when sending a free-chat turn.
-   * Injected as a high-salience `--- SELECTION ---` block so "explain this" /
-   * "rewrite this" resolve to the selection, not the whole document. Slash
-   * commands handle selection via `{{selection}}` and don't pass this. */
-  selectionText?: string | null
   /** Today's date as local `YYYY-MM-DD` (from `todayLocalDate()`). Injected
    * past the cache boundary so the model can resolve "today" / "today's
    * daily note" without guessing — and so the daily-changing value never
@@ -120,7 +107,7 @@ export interface SystemBlocksArgs {
  * Anchor ordering by cache stability (most-stable → most-mutable):
  *   prefix (stable):   systemBody(persona) → claudeMd → folder blocks →
  *                      SELF PROFILE → PREFERENCES
- *   suffix (dynamic):  today → current file → document → …
+ *   suffix (dynamic):  today → document
  *
  * `systemBody` (FREE_CHAT_PROMPT) and `claudeMd` (the Karpathy / Claude Code
  * schema — vault layout, operations, tool usage, conventions) are app-static,
@@ -148,9 +135,6 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
     captureFolder,
     knowledgeBaseFolder,
     appendDocument,
-    currentFilePath,
-    viewingFilePath,
-    selectionText,
     today,
   } = args
   const prefix: string[] = []
@@ -248,42 +232,13 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
         `When the user says "today" / "the daily note", resolve it against this date.`,
     )
   }
-  if (currentFilePath) {
-    dynamic.push(
-      `--- CURRENT FILE ---\n` +
-        `The note the user is currently viewing is \`${currentFilePath}\`. When they say ` +
-        `"this", "here", "this note", or ask to edit / rewrite / add without naming a file, ` +
-        `they mean THIS note by default — target it with your edit tools. You may still read ` +
-        `or edit other notes via your tools when the request clearly calls for it (a different ` +
-        `note, a new note, a linked one).`,
-    )
-  }
-  if (viewingFilePath) {
-    dynamic.push(
-      `--- VIEWING FILE ---\n` +
-        `The user is currently viewing the file \`${viewingFilePath}\` (a non-markdown ` +
-        `file — e.g. a PDF, image, or audio). It is NOT a wiki note: there is no body ` +
-        `text in this prompt for it. When they say "this", "this file", "here", or ask ` +
-        `you to summarize / explain / analyze without naming a file, they mean THIS file. ` +
-        `Use the Read tool on that exact path to open and interpret it (Read ingests PDFs ` +
-        `and images directly). Treat it as read-only — don't try to edit it.`,
-    )
-  }
-  if (selectionText && selectionText.trim()) {
-    dynamic.push(
-      `--- SELECTION ---\n` +
-        `The user has selected this passage in the document. When they say "this", ` +
-        `"here", "this part", or ask to explain / rewrite / fix without naming a target, ` +
-        `they mean THIS selection — focus on it (the full document follows for context):\n\n` +
-        selectionText,
-    )
-  }
-  // NOTE: @-mentioned and attached files are NOT injected here. They belong to
-  // a specific turn, but a persistent thread freezes its system prompt at the
-  // first turn's value (the SDK has no setSystemPrompt), so files added on a
-  // later turn would never reach the model through this channel. They ride the
-  // USER message instead — see attachedFilesBlock / referencedFilesBlock, built
-  // into the prompt in runChat.
+  // NOTE: the open note, the selection, @-mentioned files and attached files
+  // are NOT injected here. They belong to a specific turn, but a persistent
+  // thread freezes its system prompt at the first turn's value (the SDK has no
+  // setSystemPrompt), so anything added on a later turn would never reach the
+  // model through this channel. They ride the USER message instead — see
+  // currentNoteBlock / viewingFileBlock / selectionBlock /
+  // attachedFilesBlock / referencedFilesBlock, built into the prompt in runChat.
   if (appendDocument) dynamic.push(`--- DOCUMENT ---\n${docForPrompt}`)
 
   if (dynamic.length > 0) {
@@ -296,6 +251,127 @@ export function composeSystemBlocks(args: SystemBlocksArgs): string | string[] {
   // have those blocks, so the bare fallback never yields an empty prompt.
   if (prefix.length > 1) return prefix
   return systemBody
+}
+
+/** The `--- CURRENT NOTE ---` block naming the note the user is looking at.
+ *
+ * Rides the USER message, NOT the system prompt. A persistent thread resolves
+ * its system prompt ONCE, at the first turn (the SDK has no setSystemPrompt —
+ * `sidecar/src/server.mjs` builds thread options in `#ensureThread` and the
+ * reuse path drops `params.systemPrompt`), so a note opened on a later turn
+ * could never reach the model from there: the model kept answering about
+ * whichever note the thread STARTED on. Every comparable product attaches the
+ * active file to the user turn for the same reason.
+ *
+ * Three constraints shape the wording, and each one is load-bearing:
+ *
+ *  1. FACTUAL, NOT IMPERATIVE. Text framed as an out-of-band system command
+ *     can trip the model's prompt-injection defenses once it sits in a user
+ *     message (it would surface the block to the user instead of acting on
+ *     it). So this states what is true; it doesn't issue orders.
+ *  2. SELF-DATING. A session is append-only — there is no channel to revoke or
+ *     replace an earlier injection, so every past turn's block stays in the
+ *     history forever. "As of this message" makes a stale copy read as a
+ *     historical fact rather than a competing present-tense claim.
+ *  3. LATEST-WINS. Belt to (2)'s braces, and the same device Aider uses for
+ *     its in-chat file bodies: name the ambiguity and resolve it explicitly
+ *     rather than trying to prune the old copies.
+ *
+ * `body` is passed only when this thread hasn't already been shown this exact
+ * content (see noteContextLedger) — the path is cheap enough to repeat every
+ * turn, a full body is not.
+ *
+ * `bodyShownEarlier` distinguishes the two reasons a body can be absent, and
+ * both statements have to stay true or the model will either re-Read something
+ * it has or answer from a note it doesn't. It's absent-but-known when the
+ * ledger says this thread already received it; it's absent-and-unknown when
+ * some other channel owns the text this run (a slash command renders
+ * `{{document}}` into its own prompt, so repeating it here would send the whole
+ * note twice), in which case the block says nothing about content at all.
+ */
+export function currentNoteBlock(
+  path: string,
+  body?: string,
+  bodyShownEarlier = false,
+): string {
+  if (!path) return ''
+  const lines = [
+    `--- CURRENT NOTE ---`,
+    `As of this message, the user is looking at the note \`${path}\`. ` +
+      `"this", "here", and "this note" refer to it when they don't name a file. ` +
+      `They may still be asking about another note — this is where they are, not a limit on what they mean.`,
+    `If an earlier message in this conversation named a different current note, that message is out of date. This one is current.`,
+  ]
+  if (body !== undefined) {
+    lines.push(
+      `Its content as of this message follows. Where an earlier message in this ` +
+        `conversation shows a different version of this note, that version is stale ` +
+        `and this one is accurate:\n\n${body}`,
+    )
+  } else if (bodyShownEarlier) {
+    lines.push(`Its content was included earlier in this conversation and has not changed since.`)
+  }
+  return lines.join('\n')
+}
+
+/** The `--- VIEWING FILE ---` block for a non-markdown file open in the
+ * FileViewer (`/file/:rel`) — a PDF, image, audio.
+ *
+ * Rides the USER message for the same reason {@link currentNoteBlock} does. It
+ * became urgent once the note moved: a frozen VIEWING FILE block and a per-turn
+ * CURRENT NOTE block will state different things about where the user is, and
+ * the model has no way to tell which is stale. Both per-turn, they can only
+ * disagree when they're both true — and they never are, since a `/file/` route
+ * carries no slug.
+ *
+ * Path only, no ledger. There's no body to send: the file isn't a note, so the
+ * model reads it on demand. That also makes this the cheapest of the three
+ * blocks — one line, every turn.
+ */
+export function viewingFileBlock(path: string | null | undefined): string {
+  if (!path) return ''
+  return (
+    `--- VIEWING FILE ---\n` +
+    `As of this message, the user is looking at the file \`${path}\` — a non-markdown ` +
+    `file (PDF, image, audio), not a note. "this", "this file", and "here" refer to it ` +
+    `when they don't name something else. If an earlier message in this conversation ` +
+    `named a different file or note as the current one, that message is out of date and ` +
+    `this one is current.\n` +
+    `Its contents are not included here. Reading that exact path is what makes them ` +
+    `available — Read ingests PDFs and images directly. It has no note body, so the ` +
+    `note-editing tools don't apply to it.`
+  )
+}
+
+/** The `--- SELECTION ---` block for the passage highlighted in the editor.
+ *
+ * Rides the USER message for the same reason {@link currentNoteBlock} does — a
+ * persistent thread's system prompt is fixed at its first turn — and the
+ * mismatch bites harder here: a selection changes every time the user drags,
+ * so a frozen one is wrong far more often than a frozen note.
+ *
+ * Unlike the note body, the selection is sent IN FULL every turn and no ledger
+ * gates it. It's small, it's the highest-signal thing in the prompt, and it
+ * can't be reconstructed from a path — which is why every comparable product
+ * sends selection text verbatim even when it sends only a path for the file.
+ * Re-sending also removes a class of desync bug outright, so the delta the note
+ * body needs would be a poor trade here.
+ *
+ * Same self-dating and latest-wins framing as the note block: earlier turns'
+ * selections stay in the history and can't be retracted, so this one has to say
+ * when it was true and that it supersedes them.
+ */
+export function selectionBlock(selectionText: string | null | undefined): string {
+  if (!selectionText || !selectionText.trim()) return ''
+  return (
+    `--- SELECTION ---\n` +
+    `As of this message, the user has this passage selected in the editor. ` +
+    `"this", "here", and "this part" refer to it when they don't name a target, ` +
+    `and a request to explain / rewrite / fix without one is about this passage ` +
+    `rather than the whole note. If an earlier message in this conversation shows ` +
+    `a different selection, that message is out of date and this one is current:` +
+    `\n\n${selectionText}`
+  )
 }
 
 /** The `--- ATTACHED FILES ---` block for files the user attached to a turn

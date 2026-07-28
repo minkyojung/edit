@@ -38,6 +38,7 @@ import { create } from 'zustand'
 import type { ChatTurn, ThreadMeta } from '@/chat/types'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useChatDraftStore } from '@/state/chatDraftStore'
+import { forgetThreadNoteContext } from '@/agent/chat/noteContextLedger'
 import {
   appendThreadTurn,
   appendThreadTurns,
@@ -234,6 +235,12 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
     // Drop any unsent composer draft for this thread so it can't linger in
     // memory (or resurface if the id were somehow reused).
     useChatDraftStore.getState().remove(id)
+    // Same for the record of which note bodies this thread was shown. It holds
+    // full bodies, so without this the map grows for every (thread, note) pair
+    // the app ever chats about and never shrinks — and a reused id would
+    // inherit a claim that a note had already been sent, suppressing the block
+    // for a thread that never saw it.
+    forgetThreadNoteContext(id)
     set((s) => {
       const threads = { ...s.threads }
       const turns = { ...s.turns }

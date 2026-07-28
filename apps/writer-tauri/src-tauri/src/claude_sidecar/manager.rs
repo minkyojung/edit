@@ -680,7 +680,14 @@ mod dev_paths {
             .path()
             .resource_dir()
             .unwrap_or_else(|_| PathBuf::from("."));
-        for _ in 0..10 {
+        // Walk far enough for BOTH debug layouts. `tauri dev` starts at
+        // src-tauri/target/debug (5 hops to the root), but a `tauri build --debug`
+        // BUNDLE starts at target/debug/bundle/macos/<App>.app/Contents/Resources —
+        // four levels deeper, i.e. 10 hops, which the old 0..10 bound missed by exactly
+        // one (it fell back to "." → the sidecar script and the .pnpm Claude CLI both
+        // resolved against the cwd and chat could never start in a debug bundle).
+        // Generous cap: this only searches further before the same fallback.
+        for _ in 0..20 {
             if dir
                 .join("apps/writer-tauri/sidecar/src/index.mjs")
                 .exists()

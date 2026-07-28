@@ -23,7 +23,7 @@ import { FileChip } from '@/chat/parts/FileChip'
 import { humanizeToolCall } from '@/chat/humanizers'
 import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { requestScrollToChange } from '@/state/activeCmEditor'
-import { pathForDoc } from '@/lib/docPaths'
+import { pathForSlug } from '@/lib/docPaths'
 import { diffLinesFromToolInput } from './toolInputDiff'
 
 function basename(path: string | null | undefined): string | null {
@@ -41,10 +41,7 @@ export function InlineSuggestion({ part }: { part: ToolPart }) {
   // via pathForDoc, so showing the file name is consistent with the dropped-edit
   // row below (which uses basename(file_path)) and never leaks a type like "daily".
   const docFileName = useDocsStore((s) => {
-    if (!change) return null
-    const doc = s.knownDocs.find((d) => d.slug === change.pageSlug)
-    if (!doc) return null
-    const path = pathForDoc(doc, (sl) => s.knownDocs.find((d) => d.slug === sl))
+    const path = change ? pathForSlug(change.pageSlug, s.knownDocs) : null
     return path ? basename(path) : null
   })
   // Same store action the Review tray + editor widget call, so a Keep here

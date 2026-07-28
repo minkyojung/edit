@@ -18,10 +18,26 @@ import { createRoot, type Root } from 'react-dom/client'
 import { syntaxTree } from '@codemirror/language'
 import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Extension, type Range, type Transaction } from '@codemirror/state'
+import type { SyntaxNode } from '@lezer/common'
 import { cursorInRange } from '@/editor/livepreview/cursorRange'
+import { touchesProofRawRange, proofRawRangesChanged } from '@/editor/proofRawRanges'
 
-// Stash the React root on the DOM node so updateDOM/destroy can reuse it.
-type RootHost = HTMLElement & { _root?: Root }
+// Stash the React root (and the height observer) on the DOM node so updateDOM/destroy
+// can reuse/clean them up.
+type RootHost = HTMLElement & { _root?: Root; _ro?: ResizeObserver }
+
+// The diagram renders ASYNCHRONOUSLY (lazy chunk + React commit), so CM measures the
+// widget empty first, and it changes height again on every source edit. Watch the box
+// and requestMeasure on any resize so the heightmap tracks the real diagram (else clicks
+// / up-down arrow below it map to the wrong line — the canonical late-height problem the
+// image/media widgets already solve via load events). Guarded for environments without
+// ResizeObserver (jsdom); disconnected in destroy.
+function observeHeight(dom: RootHost, view: EditorView): void {
+  if (dom._ro || typeof ResizeObserver === 'undefined') return
+  const ro = new ResizeObserver(() => view.requestMeasure())
+  ro.observe(dom)
+  dom._ro = ro
+}
 
 // MermaidBlock pulls mermaid (d3/dagre/cytoscape) + shiki — load it only when
 // a card actually renders (keeps this module light enough to unit-test the
@@ -47,9 +63,10 @@ export class MermaidWidget extends WidgetType {
   eq(other: MermaidWidget) {
     return other.code === this.code
   }
-  toDOM() {
+  toDOM(view: EditorView) {
     const dom = document.createElement('div') as RootHost
     dom.className = 'cm-mermaid-card'
+    observeHeight(dom, view)
     renderInto(dom, this.code)
     return dom
   }
@@ -60,6 +77,8 @@ export class MermaidWidget extends WidgetType {
   }
   destroy(dom: HTMLElement) {
     const host = dom as RootHost
+    host._ro?.disconnect()
+    host._ro = undefined
     const root = host._root
     host._root = undefined
     // Async unmount — React forbids unmounting synchronously during render.
@@ -70,10 +89,22 @@ export class MermaidWidget extends WidgetType {
   ignoreEvent() {
     return true
   }
+  // Diagrams vary widely; seed a mid estimate so the heightmap isn't wildly off before
+  // the async render lands (requestMeasure then corrects it). Prevents scroll jumps on
+  // docs with several diagrams.
+  get estimatedHeight() {
+    return 240
+  }
 }
 
+// The info string of the fence that OPENS at `fenceFrom`. Read from the fence
+// position rather than the line text: an indented fence (one inside a list item)
+// starts partway into its line, so anchoring the regex at the line start matched
+// nothing and this returned the whole "```mermaid" — never equal to 'mermaid', so
+// a diagram in a list silently never rendered.
 function fenceInfo(state: EditorState, fenceFrom: number): string {
-  return state.doc.lineAt(fenceFrom).text.replace(/^(```|~~~)/, '').trim()
+  const line = state.doc.lineAt(fenceFrom)
+  return state.doc.sliceString(fenceFrom, line.to).replace(/^(```|~~~)/, '').trim()
 }
 
 function fenceBodyCode(state: EditorState, from: number, to: number): string {
@@ -92,6 +123,16 @@ function build(state: EditorState): DecorationSet {
       if (fenceInfo(state, node.from) !== 'mermaid') return
       const lineFrom = state.doc.lineAt(node.from)
       const lineTo = state.doc.lineAt(Math.min(node.to, state.doc.length))
+      // A block replace has to span WHOLE LINES, so whatever sits between the line
+      // start and the fence is hidden with it. Indentation is fine — that is how a
+      // fence inside a list item looks. A container MARKER is not: inside a
+      // blockquote the replace would start at column 0 and swallow the `>`, erasing
+      // the quote. Non-blank in front → the line belongs to a container that owns
+      // those columns, so leave the fence raw.
+      if (state.doc.sliceString(lineFrom.from, node.from).trim() !== '') return
+      // Pending AI proposal: a proposed fence must read as a diff, not render as a
+      // diagram. Gate on the range we would REPLACE, not the node.
+      if (touchesProofRawRange(state, lineFrom.from, lineTo.to)) return
       // Selection touching the fence → show raw source (edit mode). Same
       // edge-inclusive predicate the v2 block layer uses → consistent reveal.
       if (cursorInRange(state, lineFrom.from, lineTo.to)) return
@@ -134,15 +175,52 @@ function touchesMermaid(tr: Transaction, mapped: DecorationSet): boolean {
   return touched
 }
 
+/** Is `pos` inside a ```mermaid fence? Tree-based (reliable on selection changes, which
+ * happen after the parser settles), the mermaid analog of blocks.ts's `inTableAt` — a
+ * caret in the fence BODY has no marker/`mermaid` text on its line, so a pure text scan
+ * would miss the reveal. */
+function inMermaidFence(state: EditorState, pos: number): boolean {
+  for (let n: SyntaxNode | null = syntaxTree(state).resolveInner(pos, 1); n; n = n.parent) {
+    if (n.name === 'FencedCode' && fenceInfo(state, n.from) === 'mermaid') return true
+  }
+  return false
+}
+
+/** Does the selection sit on/inside a mermaid fence (reveal condition)? Gates the
+ * selection-change rebuild so a caret move through plain prose keeps the mapped set
+ * instead of re-walking the whole tree every keystroke. Superset of the reveal: the
+ * text scan catches the marker/info lines, the tree check catches the fence body and
+ * boundaries. Mirrors blocks.ts's `selectionNearBlock`. */
+function selectionNearMermaid(state: EditorState): boolean {
+  for (const r of state.selection.ranges) {
+    const first = state.doc.lineAt(r.from)
+    const last = r.to <= first.to ? first : state.doc.lineAt(r.to)
+    const text = state.doc.sliceString(first.from, last.to)
+    if (text.includes('```') || text.includes('~~~') || text.includes('mermaid')) return true
+    if (inMermaidFence(state, r.from) || inMermaidFence(state, r.to)) return true
+  }
+  return false
+}
+
 export const mermaidField = StateField.define<DecorationSet>({
   create: (state) => build(state),
   update: (value, tr) => {
     const mapped = value.map(tr.changes)
+    // Pending-proposal ranges gate whether this diagram may render at all, and they
+    // change on effect-only transactions (a reject), which none of the gates below
+    // would catch — the fence would stay raw until an unrelated edit.
+    if (proofRawRangesChanged(tr.startState, tr.state)) return build(tr.state)
     // Doc edit: keep the mapped set unless the change could add/remove/alter a
     // mermaid fence — only then re-walk the tree. Stops the per-keystroke scan.
     if (tr.docChanged) return touchesMermaid(tr, mapped) ? build(tr.state) : mapped
-    // Caret moved (reveal): positions didn't shift.
-    if (tr.selection) return build(tr.state)
+    // Caret moved: rebuild ONLY when the selection enters or leaves a mermaid fence
+    // (before OR after the move) — a cursor move through plain prose used to re-walk
+    // the whole tree every keystroke. Positions didn't shift, so no map.
+    if (tr.selection) {
+      return selectionNearMermaid(tr.startState) || selectionNearMermaid(tr.state)
+        ? build(tr.state)
+        : mapped
+    }
     // Parse-progress: the tree advanced (a ```mermaid fence may now be a FencedCode
     // node) — rebuild so it renders as soon as the parser catches up. Cheap pointer
     // compare; only fires on pure parse-progress transactions (after the gates above).

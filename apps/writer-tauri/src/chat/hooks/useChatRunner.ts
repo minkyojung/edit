@@ -31,12 +31,6 @@ export type RunOverrides = {
   model?: string
   effort?: ChatEffort
   relayTools: string[]
-  /** Optional final-content override. Called once the run settles
-   * successfully — receives counts of propose_change calls observed,
-   * and its return value replaces the assistant turn's text content.
-   * Used by /review to render "Found N issues" instead of whatever
-   * stray text the model produced alongside its tool calls. */
-  summarize?: (counts: { proposed: number; applied: number }) => string
 }
 
 interface UseChatRunnerDeps {
@@ -48,6 +42,11 @@ interface UseChatRunnerDeps {
    * the proposal listener can route by slug instead of relying on a
    * captured (and soon-stale) view reference after doc switch. */
   slug: string | null
+  /** Whether the open note is described to the model this turn. False once the
+   * user detaches its chip in the composer; the same flag hides the chip, so
+   * what the user sees attached and what the model is told can't drift apart.
+   * Doesn't affect `slug` — edits still route, the note is just not narrated. */
+  attachCurrentNote: boolean
   /** Vault-relative path of a non-markdown file open in the FileViewer
    * (`/file/:rel`) route — null on every other surface. Forwarded to runChat
    * so the agent knows which file the user is looking at. */
@@ -98,6 +97,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
   const {
     isQueue,
     slug,
+    attachCurrentNote,
     viewingFilePath,
     selectionText,
     activeThreadModel,
@@ -197,13 +197,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
       // (fired on the first claude:event, the SDK's session-init signal),
       // not on the first content part — see that callback below.
 
-      // Counters used by `summarize` (review-comments). Assigned once at
-      // settle from runChat's `editCount` (derived from pendingChangesStore
-      // by runId). The summarize hook only runs once at settle, so a single
-      // post-hoc read is equivalent and keeps the streaming path simple.
-      let proposedCount = 0
-      let appliedCount = 0
-
       const commit = (
         finalStatus: ChatTurn['status'],
         stopReason: string | null,
@@ -218,14 +211,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         const parts = buffer.buildParts()
         const modelText = buffer.joinByType('text')
         const thinking = buffer.joinByType('reasoning')
-        // Successful runs with a summarize hook get their text replaced.
-        // The parts timeline stays intact so the user can still inspect
-        // each propose_change card; only the top-level `content` (used as
-        // rendered prose + Copy output + history) becomes the summary line.
-        const content =
-          finalStatus === 'done' && overrides?.summarize
-            ? overrides.summarize({ proposed: proposedCount, applied: appliedCount })
-            : modelText
+        const content = modelText
         appendTurn({
           id: assistantId,
           role: 'assistant',
@@ -318,6 +304,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
           slug: slug ?? QUEUE_SLUG,
           // On the queue, feed the saved-article list as the "current page".
           pageContextMarkdown: isQueue ? buildQueueContextMarkdown() : undefined,
+          attachCurrentNote,
           viewingFilePath,
           // Free-chat only: slash commands already fold the selection into
           // their rendered body via {{selection}}, so passing it here too
@@ -399,13 +386,6 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
             flusher.schedule()
           },
         })
-        // Edit count for the review-comments summarize hook. Sourced from
-        // runChat's `editCount` — the number of PendingChanges this run
-        // staged (keyed by runId in pendingChangesStore, the single source
-        // of truth for chat edits). The old built-in-toolCalls tally is
-        // gone: edits no longer round-trip through the run result.
-        proposedCount = result.editCount
-        appliedCount = result.editCount
         commit('done', result.stopReason)
         useTurnState.getState().setStatus(threadId, 'idle')
         // Completion ping — only fires while the app is unfocused (the user
@@ -440,7 +420,7 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         endActivity()
       }
     },
-    [isQueue, slug, viewingFilePath, selectionText, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
+    [isQueue, slug, attachCurrentNote, viewingFilePath, selectionText, activeThreadModel, activeThreadEffort, activeThreadMode, activeThreadFastMode, appendTurn, markSessionStarted, sessionStarted, startActivity, endActivity],
   )
 
   return { run }

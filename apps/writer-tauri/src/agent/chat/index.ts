@@ -31,7 +31,7 @@ import {
   getPersistentQueryEnabled,
 } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
-import { pathForDoc, pathToKnownSlug, type DocStatus } from '@/lib/docPaths'
+import { pathForDoc, pathForSlug, pathToKnownSlug, type DocStatus } from '@/lib/docPaths'
 import { queryNotes } from '@/lib/queryNotes'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
@@ -49,6 +49,7 @@ import {
   mergeEditIntoStagedBody,
   toVaultRelative,
 } from './toPendingChange'
+import { checkEditPlacement, describeRefusal } from './checkPlacement'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useThreadsStore } from '@/state/threadsStore'
 import { useFastModeStore } from '@/state/fastModeStore'
@@ -70,10 +71,14 @@ import {
   attachedFilesBlock,
   buildUserPrompt,
   composeSystemBlocks,
+  currentNoteBlock,
   referencedFilesBlock,
+  selectionBlock,
   shouldResumeSession,
+  viewingFileBlock,
   truncateDocForPrompt,
 } from './systemPrompt'
+import { markNoteBodyShown, needsNoteBody } from './noteContextLedger'
 import { createStreamParser } from './streamParser'
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
@@ -117,6 +122,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       'query_notes',
     ],
     appendDocument = true,
+    attachCurrentNote = true,
     viewingFilePath,
     selectionText,
     mentionPaths,
@@ -149,15 +155,31 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     .find((t) => t.role === 'user' && !t.synthetic)
     ?.content?.trim()
 
-  // "Current page" text: the caller-supplied page markdown (the Read Later
-  // queue passes a generated article list), else the open doc's body via the
-  // canonical reader — the live editor when one is mounted, so the model sees
-  // what's on screen (not the mirror, which lags mid-edit).
+  // Two different things are called "the page", and they travel by different
+  // channels:
+  //   - A caller-supplied synthetic page (the Read Later queue's article list,
+  //     the wiki-handoff content) is fixed for the life of that run, so it can
+  //     ride the system prompt's DOCUMENT block as before.
+  //   - The OPEN NOTE changes whenever the user navigates, and a persistent
+  //     thread's system prompt is frozen at its first turn — so it rides the
+  //     per-turn user message instead (see currentNoteBlock below).
+  const isSyntheticPage = pageContextMarkdown != null
+  // The open doc's body via the canonical reader — the live editor when one is
+  // mounted, so the model sees what's on screen (not the mirror, which lags
+  // mid-edit). Wait for the handle first: `readDocBody` returns '' for a doc
+  // that hasn't loaded yet, and the active slug comes from the URL, which flips
+  // before the load finishes — without this a send fired right after navigating
+  // would inject an empty body and the model would "see" a blank note.
+  if (!isSyntheticPage && slug) {
+    await useDocsStore.getState().ensureHandle(slug)
+    try {
+      await useDocsStore.getState().handles[slug]?.contentReady
+    } catch {
+      // Hydration failed — fall through with whatever readDocBody has. The
+      // model still gets the path and can Read the file itself.
+    }
+  }
   const docText = pageContextMarkdown ?? (slug ? readDocBody(slug) : '')
-  // Record what the model is shown for this note as the compare-and-swap base:
-  // a later whole-doc overwrite is refused if the live body diverged from this
-  // (the user edited it while the model generated).
-  if (slug) setModelBase(slug, docText)
   const docForPrompt = truncateDocForPrompt(docText)
   // Resolve this thread's agent (role) — the prompt body + memory
   // namespace come from here. Currently always the built-in default,
@@ -201,10 +223,48 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // resolve "this note" / "here" deictically while staying free to act on other notes
   // via its tools. Null on the queue route or before the catalog hydrates.
   const knownDocs = useDocsStore.getState().knownDocs
-  const currentDoc = slug ? knownDocs.find((d) => d.slug === slug) : undefined
-  const currentFilePath = currentDoc
-    ? pathForDoc(currentDoc, (s) => knownDocs.find((d) => d.slug === s))
-    : null
+  const currentFilePath = pathForSlug(slug, knownDocs)
+
+  // The open note's per-turn block. The PATH goes out every turn — it's a line
+  // of text, and it's the one thing the model must never be wrong about. The
+  // BODY goes out only when this thread hasn't already been shown this exact
+  // content, because an SDK session is append-only: re-sending it every turn
+  // would leave a copy per turn in the history, most of them stale.
+  //
+  // `setModelBase` is stamped under EXACTLY that same condition, and this
+  // pairing is load-bearing. It records the body the model was shown, and a
+  // later whole-doc overwrite is refused if the live body has diverged from it.
+  // Stamping it for a body we didn't send would claim the model had seen edits
+  // it never saw, and the guard would wave through an overwrite that silently
+  // discards them.
+  //
+  // Every path below stamps the base ONLY where the model is actually handed
+  // the text. When nothing is handed over — chip detached, slug not in the
+  // catalog — no base is recorded at all, and the guard falls back to "no CAS
+  // for this note": it can then fail to protect, which is the old behaviour,
+  // but it can never protect against the wrong baseline.
+  let currentNote = ''
+  if (isSyntheticPage) {
+    // Queue article list / wiki handoff: fixed for this run and still delivered
+    // through the system prompt's DOCUMENT block, so the base is what we're
+    // about to show.
+    if (slug) setModelBase(slug, docText)
+  } else if (attachCurrentNote && slug && currentFilePath) {
+    const shownEarlier = !needsNoteBody(threadId, slug, docText)
+    // `appendDocument: false` means the caller is supplying the note text
+    // itself — a slash command renders `{{document}}` into its own prompt — so
+    // sending it here too would put the whole note in the turn twice.
+    const sendBody = appendDocument && !shownEarlier
+    currentNote = currentNoteBlock(
+      currentFilePath,
+      sendBody ? docForPrompt : undefined,
+      shownEarlier,
+    )
+    if (sendBody) {
+      setModelBase(slug, docText)
+      markNoteBodyShown(threadId, slug, docText)
+    }
+  }
 
   // @-mentioned files. Resolve each path back to its doc so we can inject the
   // in-memory body when the note is open/loaded (fresher than disk — the
@@ -223,13 +283,23 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     return { path, body: body && body.trim() ? body : undefined }
   })
 
-  // Per-turn file context rides the USER message, not the system prompt. A
+  // Per-turn context rides the USER message, not the system prompt. A
   // persistent thread freezes its system prompt at the first turn's value (the
-  // SDK has no setSystemPrompt), so @-mentions / attachments added on a later
-  // turn only reach the model through the per-turn user message. Order: host
-  // note → user text → referenced files → attached files. Empty blocks (no
-  // mentions / attachments, or a null outcome note) drop out via filter.
+  // SDK has no setSystemPrompt), so the open note / selection / @-mentions /
+  // attachments as of a LATER turn only reach the model through the per-turn
+  // user message. Order: current note → selection → host note → user text →
+  // referenced files → attached files.
+  //
+  // Note and selection lead because they're ambient orientation, and they're in
+  // that order because the selection narrows the note: both the outcome note
+  // and the user's own text can say "this", so what "this" points at has to be
+  // established before either of them, from the outside in. Empty blocks (no
+  // mentions / attachments, no open note, no selection, a null outcome note)
+  // drop out via filter.
   const prompt = [
+    currentNote,
+    viewingFileBlock(viewingFilePath),
+    selectionBlock(selectionText),
     outcome.note,
     basePrompt,
     referencedFilesBlock(mentionFiles),
@@ -251,14 +321,17 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // Name the configured knowledge-base folder so the model files durable
     // synthesized knowledge there (authoritative over the CLAUDE.md schema).
     knowledgeBaseFolder: getKnowledgeBaseFolder(),
-    // Viewing a non-markdown file (PDF/image/…) → there's no doc body to
-    // pin, and `view` may still hold the previously-open note's text, so
-    // suppress the DOCUMENT block to avoid feeding stale, wrong context.
-    // The VIEWING FILE block tells the model to Read the file instead.
-    appendDocument: viewingFilePath ? false : appendDocument,
-    currentFilePath,
-    viewingFilePath,
-    selectionText,
+    // The DOCUMENT block now carries ONLY a caller-supplied synthetic page (the
+    // Read Later queue's article list, the wiki-handoff content), which is fixed
+    // for the run and so is safe to freeze into the system prompt. Everything
+    // that tracks where the user IS — the open note, the viewed file, the
+    // selection — left this channel for the per-turn user message, because a
+    // persistent thread's system prompt never updates after its first turn.
+    //
+    // (The old `viewingFilePath ? false :` guard here is gone: a `/file/` route
+    // and a synthetic page can't both be active, so it could never change the
+    // result once the open note stopped using this block.)
+    appendDocument: isSyntheticPage && appendDocument,
     today: todayLocalDate(),
   })
   const runId = crypto.randomUUID()
@@ -277,7 +350,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
   // Live stream → MessagePart translator. Owns the timeline state
   // (partsById, blockIndexToPartId, etc.) so this file only sees
   // the entry points it actually drives.
-  const parser = createStreamParser({ onPart, onTextDelta, onThinkingDelta })
+  const parser = createStreamParser({
+    onPart,
+    onTextDelta,
+    onThinkingDelta,
+    // Lets the parser notice when a different model answered than the one this
+    // run asked for — a silent substitution the SDK reports as a plain success.
+    requestedModel: args.model,
+  })
 
   const unlistens: UnlistenFn[] = []
 
@@ -465,17 +545,30 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 return prior
               }
               const currentAfter = current.edits[0]?.after ?? ''
-              const mergedBody = mergeEditIntoStagedBody(
+              const { text: mergedBody, placement } = mergeEditIntoStagedBody(
                 currentAfter,
                 e.payload.toolName,
                 e.payload.input,
               )
-              if (mergedBody === currentAfter) {
-                // The tool's edit didn't land against the staged body (e.g.
-                // an Edit whose old_string isn't there) — surface it (A2's
-                // principle: don't silently no-op) instead of pretending it
-                // merged.
+              if (placement.kind === 'noop') {
+                // Nothing left to do — typically this call repeats what the
+                // PREVIOUS call this turn already staged. Report success: a
+                // refusal here would have the model re-propose an edit that is
+                // already in the staged body, forever.
+                ackOk = true
+                return prior
+              }
+              if (placement.kind !== 'ok') {
+                // The tool's edit didn't land against the staged body — surface
+                // it (A2's principle: don't silently no-op) AND tell the model
+                // why, in the same words the first edit of the turn would get.
                 notify.markCantApply()
+                ackReason = describeRefusal(
+                  placement,
+                  typeof filePathRaw === 'string' ? filePathRaw : prior.pageSlug,
+                  currentAfter,
+                  current.edits.length,
+                )
                 return prior
               }
               if (current.status === 'pending') {
@@ -566,6 +659,29 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
               return null
             }
 
+            // Does this actually fit the document? Until now an unplaceable
+            // proposal was pushed anyway: the chat card rendered, the editor
+            // drew nothing (cmInBufferReview returns early on empty hunks), and
+            // the model was told "queued". Check BEFORE pushing so there is no
+            // card to leave stranded, and hand the reason to the model instead.
+            // Fails open — see checkEditPlacement.
+            //
+            // Skipped for a note we just created: its body is whatever this
+            // proposal stages, so there is no prior text an anchor could miss —
+            // and a refusal here would abandon the freshly created file as an
+            // empty orphan.
+            const fit = createdNewNote
+              ? ({ ok: true } as const)
+              : await checkEditPlacement(
+                  mapped.pageSlug,
+                  mapped,
+                  typeof filePathRaw === 'string' ? filePathRaw : mapped.pageSlug,
+                )
+            if (!fit.ok) {
+              ackReason = fit.reason
+              return null
+            }
+
             usePendingChangesStore.getState().push(mapped)
             // Queued successfully — true regardless of what the auto-accept
             // write below does (that's Meaning B, fully async by design).
@@ -643,12 +759,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         if (vaultRelPath) newNoteByPath.set(vaultRelPath, myTail)
         await myTail
 
-        // Tell the sidecar whether THIS call's proposal actually landed —
-        // its PostToolUse hook is waiting on this pendingId (not `mapped.id`
-        // in the merge case: the hook is keyed to what ITS OWN tool call
-        // returned, which always stamps `e.payload.pendingId`). Best-effort:
-        // the hook fails open on its own timeout if this never arrives, so a
-        // failure here is a lost confirmation, not a stuck turn.
+        // Tell the sidecar whether THIS call's proposal actually landed — the
+        // propose_* tool handler is BLOCKED awaiting this pendingId (not
+        // `mapped.id` in the merge case: the handler waits on what ITS OWN
+        // tool call minted, which is always `e.payload.pendingId`). Its
+        // verdict becomes the tool result the model sees, which is what stops
+        // it from re-proposing an edit it can't otherwise confirm landed.
+        // Best-effort: the handler races a fail-open timeout, so a failure
+        // here costs a lost confirmation and a delay, not a stuck turn.
         invoke('claude_chat_edit_ack', {
           args: { pendingId: e.payload.pendingId, ok: ackOk, reason: ackReason, applied: ackApplied },
         }).catch((err) => {

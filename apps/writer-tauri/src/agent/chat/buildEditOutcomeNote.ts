@@ -45,7 +45,7 @@ export interface EditOutcomeNote {
  * step. Kept terse and hedged so the model only acts on a genuinely reusable
  * rule and never fabricates one. Mirrors CLAUDE.md's Preferences routing
  * ("how you should act / what to output" → `_system/preferences.md`). */
-const PREFERENCE_NUDGE_LINES = [
+export const PREFERENCE_NUDGE_LINES = [
   'A rejection can be an implicit signal about how the user wants you to work,',
   'not just a verdict on this one edit. If this rejection — taken together with',
   "the user's current message — reveals a DURABLE rule about how you should act",

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { KnownDoc } from '@/state/docsStore'
-import { metaPathForDoc, pathForDoc, sanitizeFilename, usesFrontmatter } from './docPaths'
+import {
+  metaPathForDoc,
+  pathForDoc,
+  pathForSlug,
+  sanitizeFilename,
+  usesFrontmatter,
+} from './docPaths'
 
 function known(partial: Partial<KnownDoc> & { type: KnownDoc['type'] }): KnownDoc {
   return {
@@ -174,5 +180,39 @@ describe('sanitizeFilename', () => {
 
   it('preserves Hangul / non-ASCII characters', () => {
     expect(sanitizeFilename('카파시')).toBe('카파시')
+  })
+})
+
+// pathForSlug is what the chat's current-note context and its composer chip
+// both resolve through, so a slug that silently resolves to null there means
+// "no chip AND no note context" — the two must never disagree.
+describe('pathForSlug', () => {
+  const docs: KnownDoc[] = [
+    known({ slug: 'daily-1', type: 'daily', date: '2026-05-17' }),
+    known({ slug: 'wiki-1', type: 'wiki:custom-abc', title: 'Boston' }),
+    known({ slug: 'note-1', type: 'note', relPath: 'inbox/clipped.md' }),
+    known({ slug: 'child-1', type: 'writing', title: 'Draft', parentId: 'daily-1' }),
+  ]
+
+  it('resolves a slug the same way pathForDoc resolves its doc', () => {
+    expect(pathForSlug('daily-1', docs)).toBe('daily/2026-05-17.md')
+    expect(pathForSlug('wiki-1', docs)).toBe('wiki/Boston.md')
+    expect(pathForSlug('note-1', docs)).toBe('inbox/clipped.md')
+  })
+
+  // The writing case is the one that needs the catalog for more than the
+  // initial lookup: the day folder comes from walking parentId to the daily.
+  it('walks a writing doc up to its daily ancestor for the day folder', () => {
+    expect(pathForSlug('child-1', docs)).toBe('daily/2026-05-17/Draft.md')
+  })
+
+  it('returns null for a null slug or one not in the catalog', () => {
+    expect(pathForSlug(null, docs)).toBeNull()
+    expect(pathForSlug('nope', docs)).toBeNull()
+  })
+
+  it('returns null for a doc with no placement', () => {
+    expect(pathForSlug('d', [known({ slug: 'd', type: 'daily' })])).toBeNull()
+    expect(pathForSlug('n', [known({ slug: 'n', type: 'note' })])).toBeNull()
   })
 })

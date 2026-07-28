@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises'
 import { join, normalize, relative, isAbsolute, resolve as resolvePath } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
+import { createHash } from 'node:crypto'
 import { query, tool, createSdkMcpServer, getSessionInfo } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import {
@@ -34,9 +35,66 @@ import {
   buildProposeSkillTool,
   buildProposeMultiEditTool,
   buildMoveNoteTool,
-  extractPendingId,
 } from './tools/relay.mjs'
 
+
+/** Attach the CLI's own stderr tail to an error message.
+ *
+ * "Claude Code process exited with code 1" names the symptom and discards the
+ * cause. The CLI had already printed the cause — five harnesses were dying on
+ * "Error: Invalid session ID. Must be a valid UUID." — and nothing carried it
+ * out, so a one-line fix read as an unexplained INTERNAL. Only the tail is
+ * kept, and only when there is something to say. */
+function withCliStderr(message, lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return message
+  const tail = lines.join('').trim().split('\n').slice(-6).join('\n').trim()
+  return tail ? `${message}\n--- claude CLI stderr ---\n${tail}` : message
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** Ids we have already warned about, so a long-lived thread logs once, not per turn. */
+const coercedSessionIds = new Map()
+
+/** Make an id the SDK will accept as `sessionId` / `resume`.
+ *
+ * `sdk.d.ts` is explicit — "Must be a valid UUID" — and the CLI enforces it by
+ * dying with `Error: Invalid session ID. Must be a valid UUID.` The failure is
+ * invisible from the outside: the query never produces a result, the turn just
+ * never finishes. FIVE verification harnesses ran dead this way for weeks,
+ * passing readable ids like `roundtrip-1`, and nobody noticed until
+ * `options.stderr` was wired up and the CLI's own message finally surfaced.
+ *
+ * The app itself is safe — thread ids are `crypto.randomUUID()`
+ * (`useThreads.ts`) — so this is not a fix for a user-facing bug. It is a fix
+ * for the NEXT caller, which is usually a harness or a new code path, and which
+ * currently gets no signal at all.
+ *
+ * Coerce rather than reject: a non-UUID id is a caller mistake, but refusing the
+ * run turns a working-but-oddly-named thread into a hard failure, and the value
+ * doubles as our own bookkeeping key. Deriving a UUID from a SHA-256 of the
+ * input keeps it stable across turns and restarts, so `resume` still finds the
+ * same session — while the warning makes the mistake findable instead of silent. */
+export function asSessionId(value, label = 'sessionId') {
+  if (typeof value !== 'string' || value.length === 0) return value
+  if (UUID_RE.test(value)) return value
+  let derived = coercedSessionIds.get(value)
+  if (!derived) {
+    const h = createHash('sha256').update(value).digest()
+    // RFC 4122 layout: version 5 (name-based, SHA-1 in the spec — we use SHA-256
+    // and truncate, which is not a conformant v5 but is a valid UUID string, and
+    // the only requirement here is "parses as a UUID and is stable").
+    h[6] = (h[6] & 0x0f) | 0x50
+    h[8] = (h[8] & 0x3f) | 0x80
+    const hex = h.subarray(0, 16).toString('hex')
+    derived = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
+    coercedSessionIds.set(value, derived)
+    console.error(
+      `[sidecar ${label}] ${JSON.stringify(value)} is not a UUID; the CLI rejects those. ` +
+        `Using ${derived} instead. Pass crypto.randomUUID() to silence this.`,
+    )
+  }
+  return derived
+}
 
 /** True if the SDK has a resumable session persisted under this id. Asks the SDK
  * directly via `getSessionInfo(sessionId)` — the canonical API — instead of
@@ -260,11 +318,9 @@ export class Server {
     // pendingId -> resolve(ok: boolean) for a propose_edit/write/multi_edit
     // proposal awaiting the host's confirmation that it was actually queued
     // into pendingChangesStore. Registered when the tool emits `chat/edit-
-    // pending`; resolved by `chat/edit-ack`. Read by the PostToolUse hook
-    // (see #buildPostToolUseHooks) — NOT by the tool handlers themselves,
-    // which still return immediately (the agent loop's progress on OTHER
-    // files/tool-calls isn't blocked on this — only the SINGLE tool result
-    // that hook rewrites, if the host reports it didn't land).
+    // pending`; resolved by `chat/edit-ack`. AWAITED by the tool handler itself,
+    // which returns the verdict as its own result — so only that one tool call
+    // blocks, never the agent loop's progress on other files.
     this.pendingAcks = new Map()
     // queryId -> { resolve, reject, runId } for an in-flight `query_notes`
     // tool call awaiting the host's filtered result (references). Unlike
@@ -510,7 +566,11 @@ export class Server {
 
     const existing = this.activeThreads.get(threadId)
     if (existing && !existing.dead) {
-      // A turn that changes model / permissionMode / fastMode reconciles the
+      // Every reused turn, not just one that changes a live control — a turn
+      // that ONLY changes a frozen param would otherwise pass in silence, which
+      // is exactly the shape the effort bug had.
+      this.#warnFrozenParamChange(existing, params)
+      // A turn that changes model / permissionMode / fastMode / effort reconciles the
       // live query via control requests issued from OUTSIDE the input generator
       // (the canonical placement — a control request awaited from INSIDE the
       // generator that rejects is re-raised by the SDK's streamInput and aborts
@@ -574,7 +634,72 @@ export class Server {
     }
   }
 
-  // Reconcile a turn's model / permissionMode / fastMode with the live query via
+  // Which chat params a LATER turn can still change, and which are fixed once the
+  // thread's query() exists. The split isn't ours to choose — it follows what
+  // the SDK exposes as a live control request:
+  //
+  //   applied per turn        SDK control              #applyThreadControls
+  //     model                 setModel
+  //     permissionMode        setPermissionMode
+  //     fastMode              applyFlagSettings({fastMode})
+  //     effort                applyFlagSettings({effortLevel})
+  //
+  //   fixed at thread creation (no control request exists)
+  //     systemPrompt, builtinTools, relayTools, allowDelegation,
+  //     sandboxEnabled, vaultPath, maxTurns, gitDir, gitWorkTree
+  //
+  // The failure mode is silence: the host resends every param on every turn, and
+  // the reuse path in #handleChatPersistent simply drops the fixed ones. Nothing
+  // errors. `effort` sat broken this way — the dropdown was editable mid-chat and
+  // did nothing — until it was measured, because there was no signal and no list
+  // like this one to check against.
+  //
+  // Two of the fixed entries deserve their own note:
+  //
+  //   systemPrompt is fixed but changes legitimately every turn (the date, the
+  //   growing profile), so it is NOT warned about below. Anything in it that
+  //   tracks where the user IS must ride the per-turn USER message instead —
+  //   see currentNoteBlock / selectionBlock / viewingFileBlock. That is the
+  //   whole reason those blocks exist.
+  //
+  //   builtinTools is fixed, and plan mode narrows it — but plan mode's teeth
+  //   are permissionMode, which IS applied per turn. Measured: a thread started
+  //   in edit mode and switched to plan attempts Write and the file is not
+  //   modified. So the frozen toolset is not a hole.
+  //
+  // The rest should never differ mid-thread; if one does, the caller has changed
+  // something that cannot take effect, and #warnFrozenParamChange says so once.
+  static #FROZEN_WARN_PARAMS = [
+    'builtinTools',
+    'relayTools',
+    'allowDelegation',
+    'sandboxEnabled',
+    'vaultPath',
+    'maxTurns',
+  ]
+
+  // One line per (thread, param) the first time a later turn tries to change
+  // something the SDK gives us no way to change. Warn, don't throw: the turn is
+  // still valid, it just runs under the thread's original value — and a hard
+  // failure here would break chat for a caller bug that is usually harmless.
+  #warnFrozenParamChange(rec, params) {
+    const seed = rec.optionsSeed ?? {}
+    for (const key of Server.#FROZEN_WARN_PARAMS) {
+      const before = JSON.stringify(seed[key] ?? null)
+      const after = JSON.stringify(params[key] ?? null)
+      if (before === after) continue
+      rec.warnedFrozen ??= new Set()
+      if (rec.warnedFrozen.has(key)) continue
+      rec.warnedFrozen.add(key)
+      process.stderr.write(
+        `[sidecar frozen-param] threadId=${rec.threadId} ${key} changed mid-thread ` +
+          `but is fixed at thread creation — this turn runs with the original value. ` +
+          `was=${before.slice(0, 80)} now=${after.slice(0, 80)}\n`,
+      )
+    }
+  }
+
+  // Reconcile a turn's model / permissionMode / fastMode / effort with the live query via
   // control requests, issued from OUTSIDE the input generator. This is the
   // canonical placement: setModel/setPermissionMode/applyFlagSettings are
   // top-level Query methods, and a control request awaited from INSIDE the input
@@ -600,9 +725,32 @@ export class Server {
         logErrorContext('setModel', rec.currentRunId, e, { mode: this.mode })
       }
     }
+    // Both of these live in the SDK's *settings* layer rather than having a
+    // dedicated control method, so they share one merge. Sending them together
+    // keeps it to a single control round-trip; `applyFlagSettings` shallow-
+    // merges by top-level key, so naming only what changed leaves the rest of
+    // the flag layer alone.
+    const settings = {}
     if (!!params.fastMode !== !!rec.optionsSeed.fastMode) {
+      settings.fastMode = !!params.fastMode
+    }
+    // There is no `setEffort()`, which is easy to read as "effort can't change
+    // mid-session" — it can. `Settings.effortLevel` is the documented knob and
+    // `applyFlagSettings` is how you reach it on a live query. Verified against
+    // the real CLI in both directions (see verify-effort-midthread.mjs): the
+    // turn after the call reports the new level in CLAUDE_EFFORT.
+    //
+    // Our ChatEffort ('low' | 'medium' | 'high' | 'xhigh') is exactly
+    // Settings.effortLevel's union, so the value passes through unmapped. Note
+    // EffortLevel (the Options.effort type) additionally allows 'max' — if the
+    // app ever offers it, it can be set at thread creation but NOT through this
+    // path, and would need mapping.
+    if (params.effort && params.effort !== rec.optionsSeed.effort) {
+      settings.effortLevel = params.effort
+    }
+    if (Object.keys(settings).length > 0) {
       try {
-        await rec.query.applyFlagSettings({ fastMode: !!params.fastMode })
+        await rec.query.applyFlagSettings(settings)
       } catch (e) {
         logErrorContext('applyFlagSettings', rec.currentRunId, e, { mode: this.mode })
       }
@@ -610,7 +758,7 @@ export class Server {
     rec.optionsSeed = params // new baseline for the next turn's diff
   }
 
-  // Whether a new turn's model / permissionMode / fastMode differs from the
+  // Whether a new turn's model / permissionMode / fastMode / effort differs from the
   // thread's current baseline (its optionsSeed). A change is applied to the live
   // query via control requests in #applyThreadControls (setModel /
   // setPermissionMode / applyFlagSettings) — NOT a thread recreate. (Recreate is
@@ -621,7 +769,8 @@ export class Server {
     return (
       (params.model ?? null) !== (seed.model ?? null) ||
       modeOf(params) !== modeOf(seed) ||
-      !!params.fastMode !== !!seed.fastMode
+      !!params.fastMode !== !!seed.fastMode ||
+      (params.effort ?? null) !== (seed.effort ?? null)
     )
   }
 
@@ -683,7 +832,7 @@ export class Server {
         rec.lastRateLimitInfo = null
         rec.sawRateLimitRetry = false
         rec.rateLimitRejected = false
-        // NOTE: model / permissionMode / fastMode are set at build time (turn 1),
+        // NOTE: model / permissionMode / fastMode / effort are set at build time (turn 1),
         // but a later turn that CHANGES them is handled on THIS live thread — not
         // punted to the legacy path. #handleChatPersistent detects the change
         // (#turnControlsChanged) and reconciles it via live control requests
@@ -758,10 +907,10 @@ export class Server {
       lastRateLimitInfo: null,
       sawRateLimitRetry: false,
       rateLimitRejected: false,
-      // background-task tracking (Stage 4)
+      // Live background work, replaced wholesale from each
+      // `background_tasks_changed` event. Empty is the correct start value: the
+      // signal is per-process and emits nothing at startup.
       backgroundTaskIds: new Set(),
-      stopHookBackground: [],
-      backgroundRequested: false,
       // reaper (Stage 4)
       lastTurnEndedAt: 0,
       reaperTimer: null,
@@ -816,26 +965,37 @@ export class Server {
       settings: {
         autoCompactEnabled: true,
         ...(fastMode ? { fastMode: true } : {}),
-        ...(sandboxEnabled
-          ? {
-              permissions: {
-                deny: [...egressDenyRules(), ...envDumpDenyRules(), ...secretDenyRules()],
-              },
-            }
-          : {}),
+        // UNCONDITIONAL. These govern the in-process tools (Read, Glob) and the
+        // network shells; the OS sandbox governs subprocesses. security.mjs
+        // states the split and says of this layer: "It also holds when the
+        // sandbox can't initialise. Zero dependency."
+        //
+        // It used to be gated on `sandboxEnabled` alongside options.sandbox,
+        // which made that claim false — one flag turned off BOTH layers, so a
+        // caller asking to skip the OS sandbox also un-blocked
+        // `Read(~/.ssh/id_rsa)`. Eight harnesses pass sandboxEnabled:false and
+        // had therefore been running with no secret protection at all.
+        permissions: {
+          deny: [...egressDenyRules(), ...envDumpDenyRules(), ...secretDenyRules()],
+        },
       },
       settingSources: [],
     }
-    if (sandboxEnabled) options.sandbox = sandboxLockdown()
+    // Only the OS sandbox is opt-out; the deny rules above are not.
+    if (sandboxEnabled) options.sandbox = sandboxLockdown({ gitDir })
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
     if (effort) options.effort = effort
     // Session lifecycle: resume when the thread already has a persisted session
     // (reaped/app-restarted), else create it under threadId.
-    if (resume) options.resume = resume
-    else if (sessionId) options.sessionId = sessionId
-    else if (await sessionPersisted(rec.threadId)) options.resume = rec.threadId
-    else options.sessionId = rec.threadId
+    // asSessionId: the CLI rejects a non-UUID here by dying silently mid-query.
+    // Every branch goes through it — a caller that got one of these wrong got
+    // them all wrong. See the helper for why it coerces instead of refusing.
+    if (resume) options.resume = asSessionId(resume, 'resume')
+    else if (sessionId) options.sessionId = asSessionId(sessionId)
+    else if (await sessionPersisted(asSessionId(rec.threadId, 'threadId')))
+      options.resume = asSessionId(rec.threadId, 'threadId')
+    else options.sessionId = asSessionId(rec.threadId, 'threadId')
     if (typeof maxTurns === 'number' && maxTurns > 0) options.maxTurns = maxTurns
     if (process.env.CLAUDE_CODE_CLI_PATH) {
       options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_CLI_PATH
@@ -947,14 +1107,25 @@ export class Server {
   // ONLY through the Stop hook (never query.backgroundTasks()).
   async #applySkillsAndRelay(rec, options) {
     const { vaultPath, builtinTools, allowDelegation = true, relayTools } = rec.optionsSeed
-    // Vault: cwd + built-in toolset + agent plugin (commands/agents/skills).
+    // Vault: cwd + agent plugin (commands/agents/skills). The toolset is set
+    // OUTSIDE that gate — see below.
     let existingSkills = []
+    // Honoured whether or not a vault is set: they are independent concerns, and
+    // coupling them meant a caller asking for a narrow list but no vaultPath
+    // silently received the full CLI default instead.
+    //
+    // `Array.isArray`, not `.length > 0`. The SDK documents `[]` as "Disable all
+    // built-in tools" (sdk.d.ts, `tools?:`) — MCP tools only, the MAXIMALLY
+    // restricted state. Treating it as "unspecified" turned that into the full
+    // claude_code preset, Edit/Write/Bash included: the most restrictive input
+    // producing the most permissive result. Nothing passes `[]` today, but
+    // commands.rs forwards `Option<Vec<String>>` verbatim, so `Some([])` reaches
+    // here unfiltered.
+    options.tools = Array.isArray(builtinTools)
+      ? builtinTools
+      : { type: 'preset', preset: 'claude_code' }
     if (vaultPath) {
       options.cwd = vaultPath
-      options.tools =
-        Array.isArray(builtinTools) && builtinTools.length > 0
-          ? builtinTools
-          : { type: 'preset', preset: 'claude_code' }
       try {
         const pluginRoot = join(vaultPath, '_system/agent')
         await readdir(pluginRoot)
@@ -993,30 +1164,24 @@ export class Server {
     const relayServer = this.#buildRelayServer(
       enabledRelay,
       () => rec.currentRunId, // live per-turn runId
-      vaultPath,
       existingSkills,
     )
     if (relayServer) options.mcpServers = { 'writer-relay': relayServer }
 
-    // PostToolUse: proposal-ack confirmation (shared with legacy). Stop: snapshot
-    // the authoritative in-flight background inventory each turn end, so the
-    // reaper can tell "thread idle & done" from "idle but awaiting a background
-    // wake". Non-blocking (returns {}).
-    options.hooks = {
-      PostToolUse: this.#postToolUseHooks(),
-      Stop: [
-        {
-          hooks: [
-            async (input) => {
-              rec.stopHookBackground = Array.isArray(input?.background_tasks)
-                ? input.background_tasks
-                : []
-              return {}
-            },
-          ],
-        },
-      ],
+    // Keep the CLI's own stderr. Without it a startup refusal reaches us only as
+    // "Claude Code process exited with code 1" → chat/error INTERNAL, and the
+    // actual reason is discarded. That cost an hour today: five harnesses were
+    // dying on a one-line message the SDK had already printed —
+    //   Error: Invalid session ID. Must be a valid UUID.
+    // — which nothing surfaced. Bounded to the tail because a debug-heavy run
+    // can emit a lot, and only the last lines carry the failure.
+    const cliStderr = []
+    options.stderr = (d) => {
+      cliStderr.push(String(d))
+      if (cliStderr.length > 40) cliStderr.shift()
     }
+    rec.cliStderr = cliStderr
+
   }
 
   // The thread's long-lived consumer loop. Unlike the legacy per-turn loop it
@@ -1149,7 +1314,7 @@ export class Server {
             this.#emitChatError(
               rec.currentRunId,
               code,
-              err?.message ?? String(err),
+              withCliStderr(err?.message ?? String(err), rec.cliStderr),
               !NON_RETRYABLE_CODES.has(code),
               undefined,
               rec.threadId,
@@ -1282,7 +1447,6 @@ export class Server {
           backgroundRequested: result.terminal_reason === 'background_requested',
         }),
       )
-      if (result.terminal_reason === 'background_requested') rec.backgroundRequested = true
     }
 
     this.runToThread.delete(runId)
@@ -1356,24 +1520,39 @@ export class Server {
     )
   }
 
-  // Track a background task's lifecycle and forward it on the dedicated
-  // chat/task channel. `backgroundTaskIds` is our own in-flight set; combined
-  // with the Stop hook's snapshot it tells the reaper when a thread still has
-  // work pending. (Confirmed by probe: a `background:true` agent emits
-  // task_started → task_progress → task_notification{status,output_file}; the
-  // spawning turn's result is terminal_reason 'completed', NOT
-  // 'background_requested' — so we must NOT rely on that flag for keep-alive.)
+  // Maintain the thread's live background-work set, and forward every task
+  // event on the dedicated chat/task channel.
+  //
+  // The set comes from ONE source: `background_tasks_changed`, whose contract is
+  // "every live background task after the change" with REPLACE semantics. A
+  // level signal, not a pair of edges — which is what makes it trustworthy here.
+  // Measured on CLI 2.1.220: a `background: true` subagent produces
+  // `[{task_id, task_type:'local_agent', …}]` then `[]`; a `run_in_background`
+  // Bash produces the same with `task_type:'local_bash'`; and an ordinary
+  // BLOCKING subagent produces no event at all, because it isn't background
+  // work. That last case is the one that used to need guessing.
+  //
+  // What this replaced, and why none of it survives:
+  //   - a Set built by pairing task_started → task_notification. Blocking
+  //     subagents emit the opening edge and never the closing one, so their ids
+  //     accumulated and the thread read as permanently busy.
+  //   - a classifier that read `background: true` out of the vault's agent files
+  //     to decide which task_started counted. A workaround for the SDK not
+  //     saying; it now says.
+  //   - the Stop hook's `background_tasks` snapshot, ORed in as a second
+  //     "authoritative" source. Two sources for one fact is how they drift.
+  // Losing the edge-pairing costs nothing: a missed edge can no longer wedge the
+  // indicator, since the next membership change re-states the whole set.
+  //
+  // Per-process by contract: nothing is emitted at startup, so an empty set is
+  // the correct initial value — which is what a fresh `rec` already has, and a
+  // reaped thread gets a fresh one.
   #trackBackground(rec, event) {
     const st = event.subtype
-    if (st === 'task_started' && event.task_id) {
-      rec.backgroundTaskIds.add(event.task_id)
-    } else if (st === 'task_notification' && event.task_id) {
-      rec.backgroundTaskIds.delete(event.task_id)
-    } else if (st === 'task_updated' && event.task_id) {
-      const s = event.patch?.status
-      if (s === 'completed' || s === 'failed' || s === 'killed') {
-        rec.backgroundTaskIds.delete(event.task_id)
-      }
+    if (st === 'background_tasks_changed') {
+      rec.backgroundTaskIds = new Set(
+        Array.isArray(event.tasks) ? event.tasks.map((t) => t.task_id) : [],
+      )
     }
     const kind =
       st === 'task_started'
@@ -1521,11 +1700,7 @@ export class Server {
   // fires. (Deliberately NOT `query.backgroundTasks()`, which is an ACTION that
   // backgrounds foreground tasks, not a live inventory.)
   #backgroundInFlight(rec) {
-    return (
-      rec.backgroundTaskIds.size > 0 ||
-      rec.stopHookBackground.length > 0 ||
-      rec.backgroundRequested
-    )
+    return backgroundInFlight(rec)
   }
 
   // Whether a thread is doing (or about to do) work and so must NOT be reaped or
@@ -1536,7 +1711,7 @@ export class Server {
   // queued-turn signal is the turn-loss race: an evict in that window tears the
   // thread down and the queued turn vanishes with no terminal for its runId.
   #threadBusy(rec) {
-    return rec.turnActive || rec.turnQueue.length > 0 || this.#backgroundInFlight(rec)
+    return threadBusy(rec)
   }
 
   // Build the `writer-relay` MCP server from the enabled relay-tool names, or
@@ -1544,12 +1719,12 @@ export class Server {
   // relay call stamps the runId that's live at emit time — constant on the
   // legacy single-turn path, `() => rec.currentRunId` on the persistent path
   // where one server instance serves many turns.
-  #buildRelayServer(enabledRelay, getRunId, vaultPath, existingSkills) {
+  #buildRelayServer(enabledRelay, getRunId, existingSkills) {
     const relayDefs = []
     for (const name of enabledRelay) {
       if (name === 'propose_edit') {
         relayDefs.push(
-          buildProposeEditTool(getRunId, this.emit, vaultPath, (id) => this.#registerAckSlot(id)),
+          buildProposeEditTool(getRunId, this.emit, (id) => this.#registerAckSlot(id)),
         )
       } else if (name === 'propose_write') {
         relayDefs.push(buildProposeWriteTool(getRunId, this.emit, (id) => this.#registerAckSlot(id)))
@@ -1557,7 +1732,7 @@ export class Server {
         relayDefs.push(buildProposeSkillTool(getRunId, this.emit, existingSkills))
       } else if (name === 'propose_multi_edit') {
         relayDefs.push(
-          buildProposeMultiEditTool(getRunId, this.emit, vaultPath, (id) =>
+          buildProposeMultiEditTool(getRunId, this.emit, (id) =>
             this.#registerAckSlot(id),
           ),
         )
@@ -1577,93 +1752,6 @@ export class Server {
     }
     if (relayDefs.length === 0) return null
     return createSdkMcpServer({ name: 'writer-relay', tools: relayDefs })
-  }
-
-  // The PostToolUse hook that confirms propose_edit/write/multi_edit proposals
-  // actually landed in the host's pendingChangesStore before the model treats
-  // them as settled. Keyed by pendingId (runId-independent), so it's shared
-  // verbatim by the legacy and persistent paths. See the call site for the
-  // full rationale (eager-success gap; fail-open on timeout).
-  #postToolUseHooks() {
-    return [
-      {
-        // The tools are in-process MCP tools, so their real names are
-        // namespaced `mcp__writer-relay__propose_*` — the SDK matches this
-        // pattern against the FULL name, so the bare `propose_*` form never
-        // matched and this ack-confirmation hook silently never fired.
-        // `propose_write` is NOT here: it round-trips in its own handler (awaits
-        // the verdict and returns the error directly), which is race-free —
-        // this hook's rewrite only reliably lands ~2/3 of the time. The
-        // fire-and-forget edit/multi_edit paths still rely on it.
-        matcher:
-          'mcp__writer-relay__propose_edit|mcp__writer-relay__propose_multi_edit',
-        // Seconds. Local IPC to the host's own process — generous but bounded
-        // so a host hang can't stall the agent loop forever.
-        timeout: 5,
-        hooks: [
-          async (input) => {
-            const pendingId = extractPendingId(input.tool_response)
-            // No id found — this call errored before queuing (e.g.
-            // checkOldString rejected it) and already carries its own error
-            // text; nothing to confirm.
-            if (!pendingId) return {}
-            const pending = this.pendingAcks.get(pendingId)
-            if (!pending) return {} // no slot registered — let it pass
-            // Belt-and-suspenders: race against our OWN timeout too. Fail-open
-            // on timeout (ok: true, no rewrite) — don't surface a spurious
-            // error over a host that's merely slow, only one that reported
-            // failure.
-            const { ok, reason, applied } = await Promise.race([
-              pending.promise,
-              new Promise((r) => setTimeout(() => r({ ok: true, reason: null, applied: false }), 4000)),
-            ])
-            this.pendingAcks.delete(pendingId)
-            if (ok) {
-              // Genuinely queued for review (interactive mode, or the ack timed
-              // out) — the tool's own "queued for user review" text is correct.
-              if (!applied) return {}
-              // Auto-accept mode wrote it straight to disk. Correct the model's
-              // belief so it doesn't tell the user to "reject the review card" —
-              // there is none; the change is already saved.
-              return {
-                hookSpecificOutput: {
-                  hookEventName: 'PostToolUse',
-                  updatedToolOutput: {
-                    content: [
-                      {
-                        type: 'text',
-                        text:
-                          'Applied immediately — auto-accept mode is on, so this ' +
-                          'change is already saved to the file. There is no review ' +
-                          'card to accept or reject. To undo it later, revert the ' +
-                          'change (see the undo-ai-change skill); never tell the ' +
-                          'user to reject it.',
-                      },
-                    ],
-                  },
-                },
-              }
-            }
-            return {
-              hookSpecificOutput: {
-                hookEventName: 'PostToolUse',
-                updatedToolOutput: {
-                  content: [
-                    {
-                      type: 'text',
-                      text:
-                        '(error: this proposal could not be queued for review' +
-                        (reason ? ` — ${reason}` : '') +
-                        '. Re-read the file and retry.)',
-                    },
-                  ],
-                },
-              },
-            }
-          },
-        ],
-      },
-    ]
   }
 
   #emitChatError(runId, code, message, retryable, rateLimit, threadId) {
@@ -1710,43 +1798,39 @@ export class Server {
     pending.resolve(params?.decision ?? {})
   }
 
-  // Open a slot for a propose_* tool call's host-ack, keyed by the pendingId
-  // it just emitted in its `chat/edit-pending` notification. Called from the
-  // tool handler itself (buildProposeEditTool etc.), right after emitting —
-  // NOT awaited there; only the PostToolUse hook reads this slot's promise.
+  // Open a slot for a propose_* tool call's host-ack, keyed by the pendingId it
+  // is about to emit in its `chat/edit-pending` notification. Every caller
+  // registers BEFORE emitting: the host round-trip is fast enough that an ack
+  // can land before the emit call returns, and a slot opened afterwards would
+  // miss it and fail open on a genuine refusal.
   #registerAckSlot(pendingId) {
     let resolve
     const promise = new Promise((r) => {
       resolve = r
     })
     this.pendingAcks.set(pendingId, { promise, resolve })
-    // The round-trip caller (propose_write) awaits `promise` and then calls
-    // `cleanup` — it holds the promise ref, so deletion can't lose its value.
-    // The fire-and-forget callers (propose_edit/multi_edit) ignore the return
-    // and let the PostToolUse hook read + delete the slot instead.
+    // Callers await `promise` and then call `cleanup`; they hold the promise
+    // ref, so deleting the map entry can't lose its value.
     return { promise, cleanup: () => this.pendingAcks.delete(pendingId) }
   }
 
   // Host's answer to "did this propose_* proposal actually get queued?"
   // (agent/chat/index.ts sends this once its edit-pending handling settles).
-  // Resolves the matching PostToolUse hook's wait (see #buildPostToolUseHooks).
-  // Unknown / already-settled / already-timed-out pendingIds are ignored —
-  // the hook's own `timeout` (SDK-native, on the matcher) is what fires if
-  // this never arrives, so a late or duplicate ack is just a harmless no-op.
+  // Resolves the waiting tool handler. Unknown / already-settled / already-
+  // timed-out pendingIds are ignored — each handler races its own fail-open
+  // timeout, so a late or duplicate ack is a harmless no-op.
   #handleEditAck(params) {
     const pendingId = params?.pendingId
     if (typeof pendingId !== 'string') return
     const pending = this.pendingAcks.get(pendingId)
     if (!pending) return
-    // Resolve but DON'T delete: the ack can arrive before the PostToolUse hook
-    // fires (the host round-trip is fast), and if we deleted here the hook's
-    // later `pendingAcks.get` would miss the result and fail open. The hook is
-    // the sole deleter (after it reads the settled value).
+    // Resolve but DON'T delete — the awaiting handler's `cleanup` is the sole
+    // deleter, after it has read the settled value.
     pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null, applied: !!params?.applied })
   }
 
   // Ask the host to filter its note catalog by metadata and return references.
-  // Awaited by the `query_notes` tool handler (unlike the propose_* acks). The
+  // Awaited by the `query_notes` tool handler, as the propose_* acks are. The
   // host's filter is a near-instant in-memory pass, so a 5s timeout backstop
   // (host never answers) plus per-run rejection on cancel is enough — no
   // controller is threaded through the fire-once relay tools.
@@ -1804,12 +1888,30 @@ export class Server {
   // Cancel the CURRENT turn of a persistent thread without killing the thread.
   // A graceful interrupt() stops the foreground turn's generation; the SDK
   // settles it to a clean `result`, which #settleTurn maps to CANCELLED
-  // (rec.cancelRequested). Background subagent tasks run in the same subprocess
-  // and SURVIVE the interrupt (verified) — they keep running and deliver their
-  // task_notification. Only a genuinely wedged stream (no result within the
+  // (rec.cancelRequested). Only a genuinely wedged stream (no result within the
   // grace window) escalates to a hard teardown, and even then ONLY when no
-  // background work is in flight (see the backstop), so a cancel never severs a
-  // running background task.
+  // background work is in flight (see the backstop).
+  //
+  // WARNING — in-process background subagents do NOT survive this. An earlier
+  // revision of this comment claimed they did ("SURVIVE the interrupt
+  // (verified)"); that is false on SDK 0.3.187 / CLI 2.1.187. Measured
+  // 2026-07-27: interrupting a foreground turn while a `background: true`
+  // subagent is mid-flight kills it — the SDK emits
+  // task_updated{status:"killed"} then task_notification{status:"stopped"} for
+  // that task in the same tick as the cancel.
+  //
+  // The cause is upstream and can't be fixed here: the CLI links each task's
+  // AbortController as a CHILD of the turn's, so interrupt()'s abort reason
+  // cascades into them. It's a regression (0.2.140 preserved them), tracked at
+  // anthropics/claude-agent-sdk-typescript#352, still open. This version has no
+  // opt-out — no `preserveBackgroundTasks`, no `interruptForeground`, and
+  // `query.backgroundTasks()` is measured NOT to shield a task. Detached
+  // `run_in_background` shells survive only by being separate OS processes.
+  //
+  // So the backstop below is necessary but not sufficient: it stops US from
+  // severing background work, while the interrupt itself may already have.
+  // Nothing ships a `background: true` agent today, so this is latent — but
+  // anyone adding one should re-measure before relying on cancel semantics.
   #cancelPersistentTurn(runId, threadId) {
     const rec = this.activeThreads.get(threadId)
     // Stale cancel (turn already settled / different turn now live) → no-op.
@@ -1938,6 +2040,31 @@ export class Server {
 // premature teardown here kills the whole thread (and any in-flight background
 // tasks), so we only escalate when the stream is genuinely wedged, not merely
 // slow to settle.
+/** Whether a thread still has background work that must outlive the current
+ * turn. One signal, replaced wholesale by `background_tasks_changed`. */
+export function backgroundInFlight(rec) {
+  return rec.backgroundTaskIds.size > 0
+}
+
+/** Whether a thread may NOT be idle-reaped or LRU-evicted.
+ *
+ * Exported, and the class methods delegate here, so a test can CALL this
+ * instead of restating it. That is not tidiness: `verify-background-classification`
+ * previously hand-copied this expression, dropped two of the three signals it
+ * then had, and passed green against a thread the product still considered
+ * busy — the regression it was written to catch. A predicate that decides
+ * whether a subprocess lives or dies needs exactly one definition.
+ *
+ * Three signals: a turn is generating (`turnActive`), a turn is queued but not
+ * yet picked up (`turnQueue.length` — the settle→re-park window where
+ * `#settleTurn` has cleared turnActive but `#threadInput` hasn't shifted the
+ * next item), or background work is live. Missing the queued-turn signal is the
+ * turn-loss race: an evict in that window tears the thread down and the queued
+ * turn vanishes with no terminal for its runId. */
+export function threadBusy(rec) {
+  return rec.turnActive || rec.turnQueue.length > 0 || backgroundInFlight(rec)
+}
+
 const PERSIST_INTERRUPT_GRACE_MS = 5000
 
 // Persistent-query path (chat mode) resource bounds.
@@ -1950,7 +2077,7 @@ const IDLE_TTL_MS = 300_000
 // Each live thread = one subprocess. Cap concurrent live threads; on overflow
 // the LRU idle, background-free thread is evicted (it resumes from disk on its
 // next turn). A thread that's mid-turn or has background work is never evicted.
-const MAX_LIVE_THREADS = 6
+export const MAX_LIVE_THREADS = 6
 
 // Persistent path: max wall-clock gap between events WITHIN an active turn
 // before we treat the turn as network-wedged and hard-close the thread (it

@@ -12,7 +12,6 @@
 // preserves the user's intent), and the cost of hashing a multi-MB
 // video on every drop would be visible latency for no real gain.
 
-import { readFile } from '@tauri-apps/plugin-fs'
 import { sanitizeFilename } from './docPaths'
 import { vaultFileExists, writeVaultBinary } from './vault'
 
@@ -60,13 +59,6 @@ async function writeVideoBytes(
 
   await writeVaultBinary(relPath, bytes)
   return relPath
-}
-
-/** Copy an external video into the vault's `videos/` folder. Used by
- * the file-dialog entry point when one is wired up. */
-export async function copyVideoIntoVault(absolutePath: string): Promise<string> {
-  const bytes = await readFile(absolutePath)
-  return writeVideoBytes(bytes, basename(absolutePath))
 }
 
 /** Import a browser-side File (drag-and-drop or clipboard paste) into
