@@ -134,7 +134,11 @@ try {
   st === null ? ok('setToken') : bad('setToken', JSON.stringify(st))
 
   console.log(`  … running chat turn (case=${CASE})`)
-  const r = await runChat('ask-fork-1')
+  // The runId doubles as the SDK session id, and the CLI rejects anything that
+  // isn't a UUID — "Error: Invalid session ID. Must be a valid UUID." A readable
+  // literal here kills the turn before the model runs, surfacing only as an opaque
+  // INTERNAL. verify-stale-retry hit this and fixed itself; the note never spread.
+  const r = await runChat(globalThis.crypto.randomUUID())
   if (r.kind === 'error') bad('chat errored', JSON.stringify(r))
 
   if (asked) {
