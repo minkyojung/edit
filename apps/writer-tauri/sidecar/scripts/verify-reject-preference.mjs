@@ -145,8 +145,12 @@ notifListeners.push((msg) => {
   if (m === 'chat/edit-pending' || m === 'chat/write-pending' || m === 'chat/skill-pending') {
     const fp = msg.params?.input?.file_path ?? msg.params?.name ?? '(skill)'
     allProposals.push({ method: m, fp })
-    const blob = JSON.stringify(msg.params ?? {})
-    if (blob.includes('preferences.md')) prefProposals.push({ method: m, params: msg.params })
+    // Match the TARGET, not the whole payload. This used to test
+    // `JSON.stringify(msg.params).includes('preferences.md')`, which also fires
+    // on a proposal against some OTHER file whose new_string merely mentions
+    // the name — inflating the durable case into a false pass and the one-off
+    // case into a false failure.
+    if (String(fp).includes('preferences.md')) prefProposals.push({ method: m, params: msg.params })
   }
 })
 
@@ -196,6 +200,14 @@ try {
       bad('durable correction produced NO preferences.md proposal', `${allProposals.length} other`)
     }
   } else {
+    // POSITIVE CONTROL. The verdict below is "no preferences.md proposal", which
+    // is equally true of a model that proposed nothing at all — declined, errored,
+    // or never had the relay tools registered. The one-off prompt asks for a real
+    // edit to the meeting note, so at least one proposal MUST have arrived for
+    // the restraint to mean anything.
+    allProposals.length > 0
+      ? ok(`the model did propose something (${allProposals.length}) — restraint is measurable`)
+      : bad('NO proposal at all — "no preferences.md edit" proves nothing here')
     // oneoff: a preferences.md proposal here would be spam.
     prefProposals.length === 0
       ? ok('one-off correction → NO preferences.md proposal (no spam)')

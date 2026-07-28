@@ -73,9 +73,21 @@ const systemPrompt = [
   selfProfileBlock,
 ].join('\n\n')
 
+// The non-personal task summarises a FILE, not inline text, on purpose. Its
+// verdict is "the profile was not Read", which is equally satisfied by a model
+// that read nothing at all — including one whose Read tool was never wired up,
+// so the check would pass BECAUSE of that bug. Forcing one legitimate Read gives
+// the case a positive control: the tool demonstrably works, so leaving the
+// profile alone is restraint rather than inaction.
+const DECOY_REL = 'wiki/library-notes.md'
+writeFileSync(
+  join(vault, DECOY_REL),
+  'The library ships a parser, a formatter, and a CLI; all three share a config module.\n',
+)
+
 const prompt =
   CASE === 'nonpersonal'
-    ? 'Summarize this in one sentence: "The library ships a parser, a formatter, and a CLI; all three share a config module."'
+    ? `Summarize ${DECOY_REL} in one sentence.`
     : 'Write a one-sentence professional bio for me. Include where I worked before my current thing.'
 
 // ── JSON-RPC plumbing ─────────────────────────────────────────────────────
@@ -168,6 +180,13 @@ try {
     if (/acme|discquiet/i.test(assistantText)) ok('reply used a Background-only fact')
     else bad('reply did not include the Background fact')
   } else {
+    // POSITIVE CONTROL first: prove Read works at all in this run. Without it,
+    // "no profile Read" is indistinguishable from "no Read tool", and the check
+    // would score a broken toolset as a pass.
+    const readDecoy = reads.some((p) => p.includes('library-notes.md'))
+    readDecoy
+      ? ok('the Read tool works in this run (decoy file was read)')
+      : bad('the decoy file was NOT read — Read is unavailable, so the verdict below is meaningless')
     readProfile()
       ? bad('non-personal task wrongly Read the profile (spurious load)')
       : ok('non-personal task → no profile Read (lean path holds)')

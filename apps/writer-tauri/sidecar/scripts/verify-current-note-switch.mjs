@@ -158,10 +158,16 @@ function turn(prompt) {
       systemPrompt, // resent every turn, exactly as the app does — and ignored after turn 1
       prompt,
       vaultPath: vault,
-      // No file tools: force the answer to come from the prompt, not from a Read.
-      // If the model could Read the vault it might find the right note by luck
-      // and the test would pass without the mechanism working.
-      builtinTools: [],
+      // Withhold the file tools so the answer has to come from the prompt, not
+      // from a Read — a model that can Read the vault might find the right note
+      // by luck and pass without the mechanism working.
+      //
+      // NOT `[]`. server.mjs reads an empty array as "unspecified" and hands
+      // over the full claude_code preset — Read, Grep, Bash and all — so the
+      // `[]` that used to be here granted precisely the access this comment
+      // claims to deny, over a vault holding both notes under test. Naming one
+      // harmless tool is how you actually withhold the rest.
+      builtinTools: ['Glob'],
       relayTools: [],
       allowDelegation: false,
       sandboxEnabled: false,

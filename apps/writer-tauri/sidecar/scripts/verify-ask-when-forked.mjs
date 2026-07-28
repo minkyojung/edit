@@ -144,6 +144,14 @@ try {
     console.log(`\n  no AskUserQuestion. reply: ${assistantText.trim().slice(0, 200)}`)
   }
 
+  // LIVENESS, both branches. The clear-case verdict is "no question was asked",
+  // which is equally true of a model that declined, errored, or never had
+  // AskUserQuestion wired up at all — so on its own it proves nothing.
+  const didSomething = !!asked || assistantText.trim().length > 0
+  didSomething
+    ? ok('the turn produced a reply or a question')
+    : bad('the turn produced NEITHER — nothing was exercised, the verdict is meaningless')
+
   if (CASE === 'fork') {
     if (asked) {
       ok('genuine fork → model asked via AskUserQuestion')
@@ -153,6 +161,13 @@ try {
       bad('genuine fork → model did NOT ask (guessed instead)')
     }
   } else {
+    // POSITIVE CONTROL for the clear case. "It didn't ask" only means something
+    // if it did the work — otherwise a refusal scores identically to correct
+    // restraint. The dictated fix must show up in the reply.
+    const didTheFix = /launch/i.test(assistantText) && !/lanuch/i.test(assistantText)
+    didTheFix
+      ? ok('the dictated fix was performed (typo corrected in the reply)')
+      : bad('the reply does not show the correction — the model did not do the task')
     asked
       ? bad('dictated trivial fix wrongly triggered an AskUserQuestion')
       : ok('dictated trivial fix → no question (no spam)')
