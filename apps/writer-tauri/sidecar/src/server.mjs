@@ -507,7 +507,7 @@ export class Server {
 
     const existing = this.activeThreads.get(threadId)
     if (existing && !existing.dead) {
-      // A turn that changes model / permissionMode / fastMode reconciles the
+      // A turn that changes model / permissionMode / fastMode / effort reconciles the
       // live query via control requests issued from OUTSIDE the input generator
       // (the canonical placement — a control request awaited from INSIDE the
       // generator that rejects is re-raised by the SDK's streamInput and aborts
@@ -571,7 +571,7 @@ export class Server {
     }
   }
 
-  // Reconcile a turn's model / permissionMode / fastMode with the live query via
+  // Reconcile a turn's model / permissionMode / fastMode / effort with the live query via
   // control requests, issued from OUTSIDE the input generator. This is the
   // canonical placement: setModel/setPermissionMode/applyFlagSettings are
   // top-level Query methods, and a control request awaited from INSIDE the input
@@ -597,9 +597,32 @@ export class Server {
         logErrorContext('setModel', rec.currentRunId, e, { mode: this.mode })
       }
     }
+    // Both of these live in the SDK's *settings* layer rather than having a
+    // dedicated control method, so they share one merge. Sending them together
+    // keeps it to a single control round-trip; `applyFlagSettings` shallow-
+    // merges by top-level key, so naming only what changed leaves the rest of
+    // the flag layer alone.
+    const settings = {}
     if (!!params.fastMode !== !!rec.optionsSeed.fastMode) {
+      settings.fastMode = !!params.fastMode
+    }
+    // There is no `setEffort()`, which is easy to read as "effort can't change
+    // mid-session" — it can. `Settings.effortLevel` is the documented knob and
+    // `applyFlagSettings` is how you reach it on a live query. Verified against
+    // the real CLI in both directions (see verify-effort-midthread.mjs): the
+    // turn after the call reports the new level in CLAUDE_EFFORT.
+    //
+    // Our ChatEffort ('low' | 'medium' | 'high' | 'xhigh') is exactly
+    // Settings.effortLevel's union, so the value passes through unmapped. Note
+    // EffortLevel (the Options.effort type) additionally allows 'max' — if the
+    // app ever offers it, it can be set at thread creation but NOT through this
+    // path, and would need mapping.
+    if (params.effort && params.effort !== rec.optionsSeed.effort) {
+      settings.effortLevel = params.effort
+    }
+    if (Object.keys(settings).length > 0) {
       try {
-        await rec.query.applyFlagSettings({ fastMode: !!params.fastMode })
+        await rec.query.applyFlagSettings(settings)
       } catch (e) {
         logErrorContext('applyFlagSettings', rec.currentRunId, e, { mode: this.mode })
       }
@@ -607,7 +630,7 @@ export class Server {
     rec.optionsSeed = params // new baseline for the next turn's diff
   }
 
-  // Whether a new turn's model / permissionMode / fastMode differs from the
+  // Whether a new turn's model / permissionMode / fastMode / effort differs from the
   // thread's current baseline (its optionsSeed). A change is applied to the live
   // query via control requests in #applyThreadControls (setModel /
   // setPermissionMode / applyFlagSettings) — NOT a thread recreate. (Recreate is
@@ -618,7 +641,8 @@ export class Server {
     return (
       (params.model ?? null) !== (seed.model ?? null) ||
       modeOf(params) !== modeOf(seed) ||
-      !!params.fastMode !== !!seed.fastMode
+      !!params.fastMode !== !!seed.fastMode ||
+      (params.effort ?? null) !== (seed.effort ?? null)
     )
   }
 
@@ -680,7 +704,7 @@ export class Server {
         rec.lastRateLimitInfo = null
         rec.sawRateLimitRetry = false
         rec.rateLimitRejected = false
-        // NOTE: model / permissionMode / fastMode are set at build time (turn 1),
+        // NOTE: model / permissionMode / fastMode / effort are set at build time (turn 1),
         // but a later turn that CHANGES them is handled on THIS live thread — not
         // punted to the legacy path. #handleChatPersistent detects the change
         // (#turnControlsChanged) and reconciles it via live control requests
