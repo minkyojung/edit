@@ -30,6 +30,12 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'; import { join } from 'node:path'; import { randomUUID } from 'node:crypto'
 import { Server } from '../src/server.mjs'
 const token = process.env.CLAUDE_CODE_OAUTH_TOKEN
+// Every sibling harness guards here; this one didn't. Without it, no token means
+// both chats fail, `waitFor` burns its 120s, and the run dies on a TypeError
+// reading `.backgroundTaskIds` of undefined — it never prints RESULT: FAIL, so
+// anything reading the output rather than the exit code misses the failure.
+//   0 = PROVED   1 = DISPROVED   2 = COULD NOT DETERMINE (incl. no token)
+if (!token) { console.log('No CLAUDE_CODE_OAUTH_TOKEN set.'); process.exit(2) }
 const vault = mkdtempSync(join(tmpdir(), 'probefix-'))
 mkdirSync(join(vault, '_system/agent/.claude-plugin'), { recursive: true })
 mkdirSync(join(vault, '_system/agent/agents'), { recursive: true })

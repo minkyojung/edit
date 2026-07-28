@@ -12,7 +12,13 @@
 //   export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat...   # or ANTHROPIC_API_KEY
 //   node apps/writer-tauri/sidecar/scripts/verify-secret-lockdown.mjs
 //
-// Exit 0 = PASS, 1 = FAIL (leak), 2 = INCONCLUSIVE (the probe didn't run).
+// Exit codes, shared by every harness here:
+//   0 = PROVED the property holds
+//   1 = DISPROVED it — a real failure
+//   2 = COULD NOT DETERMINE — no token, or a control didn't hold, so the run is
+//       not evidence either way. Deliberately the same code as "no token": a
+//       runner only needs to know proved / disproved / neither, and both of
+//       those are "neither".
 //
 // ── WHY THERE ARE THREE CASES, NOT ONE ──────────────────────────────────────
 // This used to assert only "the sentinel did not appear in the transcript",
@@ -36,7 +42,7 @@ import { mkdir, writeFile, rm } from 'node:fs/promises'
 
 if (!process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
   console.error('ERROR: set CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) first.')
-  process.exit(1)
+  process.exit(2) // could-not-determine, same as every other harness's no-token path
 }
 
 const dir = join(homedir(), '.octave-verify-secret')

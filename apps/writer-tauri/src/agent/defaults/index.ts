@@ -1,6 +1,5 @@
-// Bundled default vault assets — authored as real `.md` files (like the
-// builtin slash commands in `src/chat/commands/builtin`) and pulled into the
-// app at build time via `import.meta.glob`. The boot seeders copy these into a
+// Bundled default vault assets — authored as real `.md` files and pulled into
+// the app at build time via `import.meta.glob`. The boot seeders copy these into a
 // fresh vault; the vault copy is what the SDK reads and the user edits.
 //
 // Why files, not TS string constants: one source of truth per asset, readable

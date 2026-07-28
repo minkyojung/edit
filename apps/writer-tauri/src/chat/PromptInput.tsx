@@ -36,8 +36,8 @@ import { FastToggle } from '@/chat/FastToggle'
 import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
 import { MentionPalette, type MentionItem } from '@/chat/MentionPalette'
-import { listCommands, type LoadedCommand } from '@/chat/commands'
-import { useVaultCommands } from '@/state/vaultCommandsStore'
+
+import { useVaultCommands, type VaultCommand } from '@/state/vaultCommandsStore'
 import { useDocsStore } from '@/state/docsStore'
 import { pathForDoc } from '@/lib/docPaths'
 import { fuzzyScore } from '@/lib/fuzzyMatch'
@@ -394,15 +394,10 @@ export function PromptInput({
   // before any space. Filter is the partial name (everything after `/`).
   const slashMatch = !isStreaming ? SLASH_RE.exec(value) : null
   const slashQuery = slashMatch?.[1] ?? ''
-  // Builtin editor actions (bundled) + the vault's commands (organize /
-  // daily-ingest / … from the agent plugin). Both share the palette; execution
-  // diverges by `source` in ChatPanel.
-  const vaultCommands = useVaultCommands((s) => s.commands)
-  const allCommands = useMemo(
-    () => [...listCommands(), ...vaultCommands],
-    [vaultCommands],
-  )
-  const filteredCommands = useMemo<LoadedCommand[]>(() => {
+  // The vault's commands (organize / daily-ingest / … from the agent plugin) —
+  // the only kind there is, since the bundled client-side engine was removed.
+  const allCommands = useVaultCommands((s) => s.commands)
+  const filteredCommands = useMemo<VaultCommand[]>(() => {
     if (!slashMatch) return []
     if (!slashQuery) return allCommands
     return allCommands.filter((c) => c.name.startsWith(slashQuery))
@@ -449,10 +444,9 @@ export function PromptInput({
     ? 0
     : Math.min(selectedIndex, activeList.length - 1)
 
-  function pickCommand(cmd: LoadedCommand) {
+  function pickCommand(cmd: VaultCommand) {
     // Drop user back into the textarea with `/<name> ` prefilled so they
-    // can keep typing args. argument-hint is shown as placeholder via
-    // a future polish step (#47).
+    // can keep typing args.
     setValue(`/${cmd.name} `)
     setSelectedIndex(0)
   }

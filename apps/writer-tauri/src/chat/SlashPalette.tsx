@@ -7,12 +7,12 @@
 
 import { useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
-import type { LoadedCommand } from '@/chat/commands'
+import type { VaultCommand } from '@/state/vaultCommandsStore'
 
 interface Props {
-  commands: LoadedCommand[]
+  commands: VaultCommand[]
   selectedIndex: number
-  onSelect: (cmd: LoadedCommand) => void
+  onSelect: (cmd: VaultCommand) => void
   onHover: (index: number) => void
 }
 

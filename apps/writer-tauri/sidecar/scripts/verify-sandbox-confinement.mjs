@@ -24,7 +24,13 @@
 // (The shape is Deno's permission suite and Kubernetes' NetworkPolicy
 // conformance matrix, where every ALLOW is a live control for the DENYs.)
 //
-// Exit 0 = PASS, 1 = FAIL (a leak), 2 = INCONCLUSIVE (a control didn't hold).
+// Exit codes, shared by every harness here:
+//   0 = PROVED the property holds
+//   1 = DISPROVED it — a real failure
+//   2 = COULD NOT DETERMINE — no token, or a control didn't hold, so the run is
+//       not evidence either way. Deliberately the same code as "no token": a
+//       runner only needs to know proved / disproved / neither, and both of
+//       those are "neither".
 
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'

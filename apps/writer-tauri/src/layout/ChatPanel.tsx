@@ -4,10 +4,9 @@
 // Y.Array on the document's Y.Doc, so thread + turn state survives
 // reloads and syncs across devices.
 //
-// Per-proposal accept/reject lives in MarkPopover (anchored to the inline
-// mark in the editor body). This panel is the transcript surface only:
-// `/review` runs the copyeditor pass and drops inline comment marks; the
-// user is directed back to the body to act on individual highlights.
+// This panel is the transcript surface only. Proposed edits are reviewed
+// in the document body (inline diff widgets) and in the Review tray, not
+// here.
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
@@ -15,7 +14,6 @@ import { parseFilePathFromPath } from '@/lib/viewUrl'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { useDocsStore } from '@/state/docsStore'
-import { readDocBody } from '@/state/docsStore/docBody'
 import { useDocLabel } from '@/hooks/useDocLabel'
 import { Button } from '@/components/ui/button'
 import { useClaudeAuth } from '@/hooks/useClaudeAuth'
@@ -23,13 +21,6 @@ import { useConnectDialog } from '@/stores/connectDialog'
 import { type UseThreadsResult } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
-import {
-  CommandRenderError,
-  getCommand,
-  renderBody,
-  resolveKind,
-  type LoadedCommand,
-} from '@/chat/commands'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useTurnState } from '@/stores/turnState'
 import { useContextUsageStore } from '@/state/contextUsageStore'
@@ -125,8 +116,8 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   const currentNotePath = attachCurrentNote ? pathForSlug(slug, knownDocs) : null
   // The editor's live selection (text + line range), editor-agnostic: the
   // active editor (CodeMirror) publishes it to this store, so the chat reads it
-  // without a PM `editorView`. Drives the selection chip, the slash-command
-  // Send gate (hasSelection), and free-chat selection context.
+  // without a PM `editorView`. Drives the selection chip and the per-turn
+  // `--- SELECTION ---` context block.
   const selection = useEditorSelectionStore((s) => s.selection)
   const noteLabel = useDocLabel(slug)
   const selectionText = selection?.text ?? null
@@ -455,11 +446,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // the file chip must not disable the input — general questions are fine there.
   const ready = !!activeId && (isQueue || !!slug || !!routeFilePath)
 
-  // Whether the editor has a non-empty selection — gates selection-scoped
-  // slash commands (validatePrompt). Sourced from the same editor-agnostic
-  // store as the chip.
-  const hasSelection = selection !== null
-
   // X-button on the chip detaches the selection: collapse the live selection in
   // whichever editor is mounted (via the store's registered callback). The
   // editor's selection-change listener then publishes the now-empty selection
@@ -504,94 +490,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   /** Renders a command body and kicks off a single assistant turn against
    * its system prompt. The user message in the transcript is the literal
    * `/<name> args` text — same as Claude Code, keeps intent visible. */
-  /** Execute a slash command's run lifecycle for a user turn that's already
-   * sitting in the thread. Renders the system prompt against the *current*
-   * editor state (doc + selection) so a regenerate after a doc edit picks
-   * up the latest text, builds the kind-specific RunOverrides, and dispatches
-   * through the runner. Caller is responsible for putting `userTurn` into
-   * `history` and turnsHook before calling. */
-  async function runSlashCommand(
-    threadId: string,
-    cmd: LoadedCommand,
-    args: string,
-    userTurn: ChatTurn,
-    history: ChatTurn[],
-  ) {
-    let systemPrompt: string
-    try {
-      // Document + selection from the editor-agnostic sources CM publishes: the
-      // open doc's body via the canonical reader (live editor when mounted) and
-      // the live selection store (the same one the chip reads). render.ts throws
-      // CommandRenderError when scope is "selection" and nothing is selected —
-      // surfaced as an inline error below.
-      const docText = slug ? readDocBody(slug) : ''
-      systemPrompt = renderBody(cmd, {
-        document: docText,
-        selection: selectionText ?? '',
-        args,
-      })
-    } catch (e) {
-      const msg = e instanceof CommandRenderError ? e.message : String(e)
-      appendInlineError(threadId, userTurn.content, msg, /* alreadyAppendedUser */ true)
-      return
-    }
-
-    const kind = resolveKind(cmd.kind)
-    const overrides: RunOverrides = {
-      systemPrompt,
-      // Need a non-empty user message — the SDK won't accept ''. Args go
-      // straight through when present. When absent, use a slash-free
-      // kickoff line: the underlying Claude Agent SDK scans user
-      // messages for `/<name>` patterns and routes them to its own
-      // skill registry, which doesn't know our command names. A bare
-      // `Run /${cmd.name}.` would be intercepted and rejected with
-      // "skill not available" instead of falling through to the
-      // system prompt we already set above.
-      prompt: args.trim() || 'Begin.',
-      model: cmd.model,
-      effort: cmd.effort,
-      relayTools: kind.relayTools,
-      // review-comments emits many tool calls and any chat text it
-      // produces is incidental — replace the final content with a
-      // human summary so the transcript stays terse.
-      summarize:
-        kind.id === 'review-comments'
-          ? ({ applied }) =>
-              applied === 0
-                ? 'No issues to flag — looks clean to me.'
-                : `Found **${applied}** issue${applied === 1 ? '' : 's'} — click any highlight in the document to review.`
-          : undefined,
-    }
-    await runner.run(threadId, history, overrides)
-  }
-
-  async function executeCommand(
-    threadId: string,
-    cmd: LoadedCommand,
-    args: string,
-    userText: string,
-    contextChips: Attachment[] = [],
-  ) {
-    const userTurn: ChatTurn = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      content: userText,
-      ts: Date.now(),
-      // The command acts on the same selection/viewing-file it consumed via the
-      // {{selection}} template — show it in the bubble like the normal path.
-      attachments: contextChips.length > 0 ? contextChips : undefined,
-      // Stamp so handleRegenerate can rerun this turn through the same
-      // command path (system prompt + relayTools + summarize) instead of
-      // replaying the literal "/proofread" text as plain chat.
-      slashInvocation: { name: cmd.name, args },
-    }
-    const isFirstTurn = turnsHook.turns.length === 0
-    turnsHook.appendTurn(userTurn)
-    // First turn follows the bottom; later turns anchor to the top.
-    anchorSentTurn(userTurn.id, isFirstTurn)
-    await runSlashCommand(threadId, cmd, args, userTurn, [...turnsHook.turns, userTurn])
-  }
-
   /** Run a vault command (organize / daily-ingest / …) NATIVELY: send
    * `/<name> <arg>` as the prompt so the SDK expands the plugin command. The arg
    * defaults to the open note's path — the "organize what I'm looking at"
@@ -687,18 +585,10 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     if (sendInFlightRef.current.has(threadId)) return
     sendInFlightRef.current.add(threadId)
     try {
-      // Slash command? Route through executeCommand so the .md body becomes
-      // the system prompt and any kind-specific tools are wired in.
+      // Slash command? Vault commands run natively — the SDK expands the
+      // plugin command from `_system/agent/commands/`.
       const slash = parseSlashInvocation(text)
       if (slash) {
-        const cmd = getCommand(slash.name)
-        if (cmd) {
-          await executeCommand(threadId, cmd, slash.args, text, captureContextChips())
-          resetContextChips()
-          return
-        }
-        // Not a builtin editor action — is it a vault command? Those
-        // run natively (the SDK expands the plugin command).
         if (useVaultCommands.getState().get(slash.name)) {
           const chips = captureContextChips()
           const userTurn: ChatTurn = {
@@ -779,10 +669,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
    * message that prompted it. Only valid for the most recent assistant turn:
    * earlier rewrites would invalidate every later turn's context.
    *
-   * Slash-command turns (`slashInvocation` stamped on the user turn) route
-   * back through runSlashCommand so the rerun gets the same system prompt,
-   * relayTools, and summarize hook as the original — without that branch
-   * the rerun would replay the literal `/proofread` text as plain chat. */
+   * Slash-command turns (`slashInvocation` stamped on the user turn) rerun
+   * through the vault-command path, so the SDK expands the plugin command
+   * again instead of replaying the literal `/organize` text as plain chat. */
   async function handleRegenerate(assistantTurnId: string) {
     if (!ready || chatStatus === 'streaming') return
     const threadId = activeId
@@ -808,17 +697,6 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       setScrollMode('FOLLOW_BOTTOM')
 
       if (lastUser.slashInvocation) {
-        const cmd = getCommand(lastUser.slashInvocation.name)
-        if (cmd) {
-          await runSlashCommand(
-            threadId,
-            cmd,
-            lastUser.slashInvocation.args,
-            lastUser,
-            history,
-          )
-          return
-        }
         // Vault command → rerun natively.
         if (useVaultCommands.getState().get(lastUser.slashInvocation.name)) {
           await runVaultCommand(
@@ -851,34 +729,19 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     if (activeId) useChatRuns.getState().abortByThread(activeId)
   }
 
-  // Pre-submit validator: blocks unknown commands and selection-scoped
-  // commands invoked without a selection. Free chat (no leading slash) is
-  // always ok. The leading-slash branch returns ok while the user is still
-  // typing the name (no space yet) so the palette — not a red error —
-  // handles the in-progress state.
-  const validatePrompt = useCallback(
-    (text: string) => {
-      const m = /^\/([a-z][a-z0-9-]*)(\s|$)/.exec(text)
-      if (!m) return { ok: true as const }
-      const hasSpace = m[2].length > 0
-      const cmd = getCommand(m[1])
-      if (!cmd) {
-        // Vault commands are valid too — they execute natively.
-        if (useVaultCommands.getState().get(m[1])) return { ok: true as const }
-        return hasSpace
-          ? { ok: false as const, message: `Unknown command: /${m[1]}` }
-          : { ok: true as const }
-      }
-      if (cmd.scope === 'selection' && !hasSelection) {
-        return {
-          ok: false as const,
-          message: `Select text in the editor to use /${cmd.name}.`,
-        }
-      }
-      return { ok: true as const }
-    },
-    [hasSelection],
-  )
+  // Pre-submit validator: blocks unknown commands. Free chat (no leading
+  // slash) is always ok, and the leading-slash branch returns ok while the
+  // user is still typing the name (no space yet) so the palette — not a red
+  // error — handles the in-progress state.
+  const validatePrompt = useCallback((text: string) => {
+    const m = /^\/([a-z][a-z0-9-]*)(\s|$)/.exec(text)
+    if (!m) return { ok: true as const }
+    const hasSpace = m[2].length > 0
+    if (useVaultCommands.getState().get(m[1])) return { ok: true as const }
+    return hasSpace
+      ? { ok: false as const, message: `Unknown command: /${m[1]}` }
+      : { ok: true as const }
+  }, [])
 
   return (
     <div

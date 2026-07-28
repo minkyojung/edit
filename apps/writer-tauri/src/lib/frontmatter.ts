@@ -1,7 +1,7 @@
 // Generic frontmatter plumbing — the read/write layer for the small
 // YAML `---` block that carries a document's metadata at the top of its
 // `.md` file. The single shared foundation for every frontmatter site
-// (profile/sources.ts, chat/commands/loader.ts, the doc flush).
+// (the vault command reader, the doc flush).
 //
 // Reading uses the `yaml` library (eemeli, YAML 1.2 core schema): it
 // handles quoting, escaping, CRLF, and comments correctly, and — unlike
