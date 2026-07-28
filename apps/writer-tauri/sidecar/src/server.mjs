@@ -15,7 +15,7 @@ import {
   NOT_INITIALIZED,
   NO_TOKEN,
 } from './jsonrpc.mjs'
-import { readBackgroundAgentNames, readSkillMeta } from './frontmatter.mjs'
+import { readSkillMeta } from './frontmatter.mjs'
 import {
   rateLimitPayload,
   mapSdkError,
@@ -792,14 +792,10 @@ export class Server {
       lastRateLimitInfo: null,
       sawRateLimitRetry: false,
       rateLimitRejected: false,
-      // background-task tracking (Stage 4)
+      // Live background work, replaced wholesale from each
+      // `background_tasks_changed` event. Empty is the correct start value: the
+      // signal is per-process and emits nothing at startup.
       backgroundTaskIds: new Set(),
-      // Agent names declared `background: true` in the vault. Populated in
-      // #applySkillsAndRelay; read by #trackBackground to tell a fire-and-forget
-      // subagent from an ordinary blocking one, which the SDK won't tell us.
-      backgroundAgentNames: new Set(),
-      stopHookBackground: [],
-      backgroundRequested: false,
       // reaper (Stage 4)
       lastTurnEndedAt: 0,
       reaperTimer: null,
@@ -997,10 +993,6 @@ export class Server {
         const pluginRoot = join(vaultPath, '_system/agent')
         await readdir(pluginRoot)
         options.plugins = [{ type: 'local', path: pluginRoot }]
-        // Which agents are fire-and-forget. Read once per thread — agent files
-        // don't change mid-conversation, and a miss only costs us the old
-        // (conservative) behaviour.
-        rec.backgroundAgentNames = await readBackgroundAgentNames(pluginRoot)
         if (allowDelegation && Array.isArray(options.tools)) {
           for (const t of ['Skill', 'Task']) {
             if (!options.tools.includes(t)) options.tools = [...options.tools, t]
@@ -1053,23 +1045,6 @@ export class Server {
     }
     rec.cliStderr = cliStderr
 
-    // Stop: snapshot the authoritative in-flight background inventory each turn
-    // end, so the reaper can tell "thread idle & done" from "idle but awaiting a
-    // background wake". Non-blocking (returns {}).
-    options.hooks = {
-      Stop: [
-        {
-          hooks: [
-            async (input) => {
-              rec.stopHookBackground = Array.isArray(input?.background_tasks)
-                ? input.background_tasks
-                : []
-              return {}
-            },
-          ],
-        },
-      ],
-    }
   }
 
   // The thread's long-lived consumer loop. Unlike the legacy per-turn loop it
@@ -1335,7 +1310,6 @@ export class Server {
           backgroundRequested: result.terminal_reason === 'background_requested',
         }),
       )
-      if (result.terminal_reason === 'background_requested') rec.backgroundRequested = true
     }
 
     this.runToThread.delete(runId)
@@ -1409,61 +1383,39 @@ export class Server {
     )
   }
 
-  // Track a background task's lifecycle and forward it on the dedicated
-  // chat/task channel. `backgroundTaskIds` is our own in-flight set; combined
-  // with the Stop hook's snapshot it tells the reaper when a thread still has
-  // work pending. (Confirmed by probe: a `background:true` agent emits
-  // task_started → task_progress → task_notification{status,output_file}; the
-  // spawning turn's result is terminal_reason 'completed', NOT
-  // 'background_requested' — so we must NOT rely on that flag for keep-alive.)
-  // Whether a `task_started` represents work that OUTLIVES its turn, and so
-  // must keep the thread alive. Ordered so a future SDK wins over our fallback:
+  // Maintain the thread's live background-work set, and forward every task
+  // event on the dedicated chat/task channel.
   //
-  //   1. If the event ever carries an explicit flag, believe it. Nothing emits
-  //      one today (`task_started` has no such field on 0.3.187), but this is
-  //      where a fixed SDK would put it, and then the vault lookup stops
-  //      mattering without anyone having to notice.
-  //   2. A Task subagent is background only if its agent file says
-  //      `background: true`. This is the case the SDK gets wrong.
-  //   3. Anything else — shells (`run_in_background`), monitors, workflows —
-  //      is treated as background, as before. Conservative on purpose: those
-  //      genuinely do outlive the turn, and mis-classifying one the other way
-  //      would reap a thread with live work and lose its result.
-  #isBackgroundTask(rec, event) {
-    if (typeof event.is_backgrounded === 'boolean') return event.is_backgrounded
-    const type = event.subagent_type
-    if (!type) return true
-    // `subagent_type` is plugin-qualified ("writer-agent-skills:researcher");
-    // the frontmatter `name` is not.
-    const bare = type.includes(':') ? type.slice(type.lastIndexOf(':') + 1) : type
-    return rec.backgroundAgentNames?.has(bare) ?? false
-  }
-
+  // The set comes from ONE source: `background_tasks_changed`, whose contract is
+  // "every live background task after the change" with REPLACE semantics. A
+  // level signal, not a pair of edges — which is what makes it trustworthy here.
+  // Measured on CLI 2.1.220: a `background: true` subagent produces
+  // `[{task_id, task_type:'local_agent', …}]` then `[]`; a `run_in_background`
+  // Bash produces the same with `task_type:'local_bash'`; and an ordinary
+  // BLOCKING subagent produces no event at all, because it isn't background
+  // work. That last case is the one that used to need guessing.
+  //
+  // What this replaced, and why none of it survives:
+  //   - a Set built by pairing task_started → task_notification. Blocking
+  //     subagents emit the opening edge and never the closing one, so their ids
+  //     accumulated and the thread read as permanently busy.
+  //   - a classifier that read `background: true` out of the vault's agent files
+  //     to decide which task_started counted. A workaround for the SDK not
+  //     saying; it now says.
+  //   - the Stop hook's `background_tasks` snapshot, ORed in as a second
+  //     "authoritative" source. Two sources for one fact is how they drift.
+  // Losing the edge-pairing costs nothing: a missed edge can no longer wedge the
+  // indicator, since the next membership change re-states the whole set.
+  //
+  // Per-process by contract: nothing is emitted at startup, so an empty set is
+  // the correct initial value — which is what a fresh `rec` already has, and a
+  // reaped thread gets a fresh one.
   #trackBackground(rec, event) {
     const st = event.subtype
-    if (st === 'task_started' && event.task_id) {
-      // Only OUTSTANDING work belongs in this set. An ordinary blocking
-      // subagent is finished by the time its turn produces an answer, but the
-      // SDK never emits a completion event for one — so adding it here left a
-      // permanent phantom entry, and `#backgroundInFlight` then reported the
-      // thread as busy forever. That silently disabled BOTH the idle reaper and
-      // LRU eviction (`#threadBusy`), so every thread that used a subagent kept
-      // its CLI subprocess alive for the life of the app. Measured 2026-07-27.
-      //
-      // Fix is deliberately confined to the ADD side; the removal branches below
-      // are untouched. If a future SDK does start reporting these properly, its
-      // completion events flow through the existing deletes and this filter just
-      // becomes redundant — it can never fight a fixed SDK.
-      // NB: only the tracking is skipped — the event still forwards on the
-      // chat/task channel below, so the UI keeps showing subagent progress.
-      if (this.#isBackgroundTask(rec, event)) rec.backgroundTaskIds.add(event.task_id)
-    } else if (st === 'task_notification' && event.task_id) {
-      rec.backgroundTaskIds.delete(event.task_id)
-    } else if (st === 'task_updated' && event.task_id) {
-      const s = event.patch?.status
-      if (s === 'completed' || s === 'failed' || s === 'killed') {
-        rec.backgroundTaskIds.delete(event.task_id)
-      }
+    if (st === 'background_tasks_changed') {
+      rec.backgroundTaskIds = new Set(
+        Array.isArray(event.tasks) ? event.tasks.map((t) => t.task_id) : [],
+      )
     }
     const kind =
       st === 'task_started'
@@ -1611,11 +1563,7 @@ export class Server {
   // fires. (Deliberately NOT `query.backgroundTasks()`, which is an ACTION that
   // backgrounds foreground tasks, not a live inventory.)
   #backgroundInFlight(rec) {
-    return (
-      rec.backgroundTaskIds.size > 0 ||
-      rec.stopHookBackground.length > 0 ||
-      rec.backgroundRequested
-    )
+    return backgroundInFlight(rec)
   }
 
   // Whether a thread is doing (or about to do) work and so must NOT be reaped or
@@ -1626,7 +1574,7 @@ export class Server {
   // queued-turn signal is the turn-loss race: an evict in that window tears the
   // thread down and the queued turn vanishes with no terminal for its runId.
   #threadBusy(rec) {
-    return rec.turnActive || rec.turnQueue.length > 0 || this.#backgroundInFlight(rec)
+    return threadBusy(rec)
   }
 
   // Build the `writer-relay` MCP server from the enabled relay-tool names, or
@@ -1955,6 +1903,31 @@ export class Server {
 // premature teardown here kills the whole thread (and any in-flight background
 // tasks), so we only escalate when the stream is genuinely wedged, not merely
 // slow to settle.
+/** Whether a thread still has background work that must outlive the current
+ * turn. One signal, replaced wholesale by `background_tasks_changed`. */
+export function backgroundInFlight(rec) {
+  return rec.backgroundTaskIds.size > 0
+}
+
+/** Whether a thread may NOT be idle-reaped or LRU-evicted.
+ *
+ * Exported, and the class methods delegate here, so a test can CALL this
+ * instead of restating it. That is not tidiness: `verify-background-classification`
+ * previously hand-copied this expression, dropped two of the three signals it
+ * then had, and passed green against a thread the product still considered
+ * busy — the regression it was written to catch. A predicate that decides
+ * whether a subprocess lives or dies needs exactly one definition.
+ *
+ * Three signals: a turn is generating (`turnActive`), a turn is queued but not
+ * yet picked up (`turnQueue.length` — the settle→re-park window where
+ * `#settleTurn` has cleared turnActive but `#threadInput` hasn't shifted the
+ * next item), or background work is live. Missing the queued-turn signal is the
+ * turn-loss race: an evict in that window tears the thread down and the queued
+ * turn vanishes with no terminal for its runId. */
+export function threadBusy(rec) {
+  return rec.turnActive || rec.turnQueue.length > 0 || backgroundInFlight(rec)
+}
+
 const PERSIST_INTERRUPT_GRACE_MS = 5000
 
 // Persistent-query path (chat mode) resource bounds.
@@ -1967,7 +1940,7 @@ const IDLE_TTL_MS = 300_000
 // Each live thread = one subprocess. Cap concurrent live threads; on overflow
 // the LRU idle, background-free thread is evicted (it resumes from disk on its
 // next turn). A thread that's mid-turn or has background work is never evicted.
-const MAX_LIVE_THREADS = 6
+export const MAX_LIVE_THREADS = 6
 
 // Persistent path: max wall-clock gap between events WITHIN an active turn
 // before we treat the turn as network-wedged and hard-close the thread (it

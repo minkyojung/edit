@@ -39,8 +39,16 @@ function nowMs(): number {
   return Date.now()
 }
 
+/** Map a wire status onto a terminal display status, or undefined if the task
+ * is still running.
+ *
+ * `killed` maps onto `stopped`: the SDK uses it for a task torn down rather
+ * than finished (notably a background subagent severed by an interrupt), and
+ * the sidecar already treats it as terminal. Omitting it here left the row
+ * spinning forever for a task everything else considered over. */
 function terminalFromStatus(status?: string): BackgroundTaskStatus | undefined {
   if (status === 'completed' || status === 'failed' || status === 'stopped') return status
+  if (status === 'killed') return 'stopped'
   return undefined
 }
 

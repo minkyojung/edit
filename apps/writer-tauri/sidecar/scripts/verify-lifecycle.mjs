@@ -69,7 +69,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', {
   },
 })
 
-const { Server } = await import(`${SIDECAR}/src/server.mjs`)
+const { Server, threadBusy } = await import(`${SIDECAR}/src/server.mjs`)
 
 // ── Harness ──────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -280,8 +280,57 @@ async function t8() {
   check('one chat/done, no error', ev.done.length === 1 && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
 }
 
+// ── T9: background work decides whether a thread may be reaped/evicted ────
+// The predicate that decides whether a subprocess lives or dies, driven by
+// synthetic `background_tasks_changed` events — no API calls, no waiting out
+// IDLE_TTL_MS, and deterministic. Until now nothing covered this: the only
+// #threadBusy test (T5) exercises the `turnActive` leg, and the real-model
+// script covers the set but never the reap decision itself.
+async function t9() {
+  console.log('\n[T9] background_tasks_changed drives threadBusy (REPLACE semantics)')
+  fakes.length = 0
+  const { server, send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'x' }, nid())
+  const f = await awaitFake(1)
+  await runTurn(f, r1, ev)
+  const rec = server.activeThreads.get(tid)
+  check('idle thread is not busy', !threadBusy(rec))
+
+  // A background task appears.
+  f.pushEvent({ type: 'system', subtype: 'background_tasks_changed',
+    tasks: [{ task_id: 'bg1', task_type: 'local_agent', description: 'work' }] })
+  await waitFor(() => rec.backgroundTaskIds.size === 1)
+  check('live background work makes the thread busy', threadBusy(rec))
+
+  // REPLACE, not merge: a payload naming a different task must not accumulate.
+  f.pushEvent({ type: 'system', subtype: 'background_tasks_changed',
+    tasks: [{ task_id: 'bg2', task_type: 'local_bash', description: 'other' }] })
+  await waitFor(() => rec.backgroundTaskIds.has('bg2'))
+  check('a later payload REPLACES the set (no accumulation)',
+    rec.backgroundTaskIds.size === 1 && !rec.backgroundTaskIds.has('bg1'),
+    `set=${[...rec.backgroundTaskIds]}`)
+
+  // Empty payload = nothing live. This is the leg that used to latch.
+  f.pushEvent({ type: 'system', subtype: 'background_tasks_changed', tasks: [] })
+  await waitFor(() => rec.backgroundTaskIds.size === 0)
+  check('empty payload clears it and the thread is reapable', !threadBusy(rec))
+
+  // A blocking subagent emits task_started and never a terminal. It must not
+  // reach the set — that edge-pairing was the original leak.
+  f.pushEvent({ type: 'system', subtype: 'task_started', task_id: 'fg1',
+    description: 'blocking', subagent_type: 'plugin:counter' })
+  await sleep(50)
+  check('a bare task_started does NOT make the thread busy', !threadBusy(rec),
+    `set=${[...rec.backgroundTaskIds]}`)
+
+  // …but it must still reach the UI channel.
+  check('task_started still forwards on chat/task',
+    ev.task.some((t) => t.kind === 'started' && t.taskId === 'fg1'))
+}
+
 try {
-  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9()
 } finally {
   process.stderr.write = origWrite
 }

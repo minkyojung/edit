@@ -1,34 +1,25 @@
-// Which tasks count as OUTSTANDING background work — the signal that keeps a
-// thread (and its CLI subprocess) alive against the idle reaper and LRU
-// eviction.
+// Which work keeps a chat thread (and its CLI subprocess) alive.
 //
-// Pins the fix for a leak measured on SDK 0.3.187 / CLI 2.1.187 (2026-07-27):
-// an ordinary BLOCKING subagent emits `task_started` but never a completion
-// event, so tracking it left a permanent phantom entry and the thread was
-// reported busy forever — neither reapable nor evictable. The SDK offers no way
-// to tell the two kinds apart (no flag on `task_started`; no `is_backgrounded`
-// for a `background: true` agent; the Stop hook's `background_tasks` snapshot
-// reports a long-finished blocking subagent as `status: "running"`), so the host
-// classifies by the agent file's own frontmatter.
+// Two directions, and they fail in opposite ways:
+//   - a BLOCKING subagent counted as background → the thread is never reaped or
+//     evicted, and subprocesses pile up for as long as the app runs
+//   - a BACKGROUND subagent NOT counted → the thread is torn down mid-flight and
+//     the user silently loses the result
 //
-// Both directions matter, and they fail in opposite ways:
-//   - blocking subagent tracked   → threads never close, subprocesses pile up
-//   - background subagent dropped → a thread gets reaped mid-flight, work lost
+// The set is driven solely by `background_tasks_changed` (REPLACE semantics).
+// Measured on CLI 2.1.220: a blocking subagent emits no such event at all, a
+// `background: true` one emits the task then `[]`, and a `run_in_background`
+// Bash behaves like the latter with `task_type: 'local_bash'`.
 //
-// If a future SDK starts reporting blocking subagents as completed, the first
-// two checks keep passing (the filter just becomes redundant) — see
-// #isBackgroundTask in server.mjs, which prefers an explicit SDK flag when one
-// ever appears.
+// Assertions call `threadBusy()` from the product rather than restating it —
+// see the note at the first use.
 //
 // Usage:
 //   CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat... node scripts/verify-background-classification.mjs
 
-// Both directions after the fix, in ONE vault holding both kinds of agent:
-//   counter     (no background:)   → must NOT be tracked  (was the leak)
-//   slowcounter (background: true) → must     be tracked  (must stay protected)
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'; import { join } from 'node:path'; import { randomUUID } from 'node:crypto'
-import { Server } from '../src/server.mjs'
+import { Server, threadBusy } from '../src/server.mjs'
 const token = process.env.CLAUDE_CODE_OAUTH_TOKEN
 // Every sibling harness guards here; this one didn't. Without it, no token means
 // both chats fail, `waitFor` burns its 120s, and the run dies on a TypeError
@@ -63,7 +54,11 @@ await waitFor(()=>ev.done.some(d=>d.runId===a1),120000)
 const r1 = server.activeThreads.get(t1)
 check('blocking subagent still shown in the UI', ev.task.some(t=>t.kind==='started'))
 check('blocking subagent NOT counted as background work', r1.backgroundTaskIds.size === 0, `size=${r1.backgroundTaskIds.size}`)
-check('thread is reapable again', !(r1.turnActive || r1.turnQueue.length > 0 || r1.backgroundTaskIds.size > 0))
+// CALL the product predicate. An earlier revision restated it here and dropped
+// two of the three signals it had at the time, so this line reported "reapable"
+// while the reaper still saw the thread as busy — green on exactly the bug it
+// existed to catch.
+check('thread is reapable again', !threadBusy(r1), `threadBusy=${threadBusy(r1)}`)
 send('chat/close-thread',{threadId:t1}); await sleep(300)
 
 // B — fire-and-forget subagent
@@ -74,10 +69,12 @@ send('chat',{runId:a2,threadId:t2,persistentQuery:true,vaultPath:vault,builtinTo
 await waitFor(()=>ev.task.some(t=>t.kind==='started'&&t.subagentType),90000)
 const r2 = server.activeThreads.get(t2)
 check('background subagent IS counted (still protected)', r2.backgroundTaskIds.size > 0, `size=${r2.backgroundTaskIds.size}`)
+check('and the thread is protected from reaping while it runs', threadBusy(r2))
 // Wait for the SET to drain, not for the first notification: a subagent's
 // inner task notifies a few seconds before the subagent itself does.
 await waitFor(()=>r2.backgroundTaskIds.size===0,90000)
 check('cleared once it settles', r2.backgroundTaskIds.size === 0, `size=${r2.backgroundTaskIds.size}`)
+check('and the thread becomes reapable again', !threadBusy(r2))
 send('chat/close-thread',{threadId:t2}); await sleep(400)
 rmSync(vault,{recursive:true,force:true})
 console.log(fail ? '\nRESULT: FAIL' : '\nRESULT: PASS'); process.exit(fail?1:0)
