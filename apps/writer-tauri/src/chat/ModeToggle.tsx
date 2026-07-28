@@ -44,10 +44,13 @@ export function ModeToggle({ value, onChange, disabled }: Props) {
             stays OFF the trigger itself: Radix anchors the menu and restores
             focus through the trigger's ref, and remounting it breaks both.
             The chevron sits outside for the same reason it doesn't change: only
-            what the switch actually swaps should move. */}
+            what the switch actually swaps should move.
+            duration/ease are the app's state-change motion (--motion-state:
+            200ms ease-tahoe), not tw-animate-css's 150ms/ease default — these
+            utilities feed --tw-duration/--tw-ease, which `animate-in` reads. */}
         <span
           key={active.mode}
-          className="inline-flex items-center gap-2 duration-150 animate-in fade-in-0 zoom-in-95 motion-reduce:animate-none"
+          className="inline-flex items-center gap-2 duration-200 ease-tahoe animate-in fade-in-0 zoom-in-95 motion-reduce:animate-none"
         >
           <TriggerIcon className="size-[18px] shrink-0" stroke={1.5} />
           {/* Selected label inherits the trigger's color (same as the icon).
