@@ -1,6 +1,7 @@
 import { readdir } from 'node:fs/promises'
 import { join, normalize, relative, isAbsolute, resolve as resolvePath } from 'node:path'
 import { tmpdir, homedir } from 'node:os'
+import { createHash } from 'node:crypto'
 import { query, tool, createSdkMcpServer, getSessionInfo } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import {
@@ -48,6 +49,51 @@ function withCliStderr(message, lines) {
   if (!Array.isArray(lines) || lines.length === 0) return message
   const tail = lines.join('').trim().split('\n').slice(-6).join('\n').trim()
   return tail ? `${message}\n--- claude CLI stderr ---\n${tail}` : message
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** Ids we have already warned about, so a long-lived thread logs once, not per turn. */
+const coercedSessionIds = new Map()
+
+/** Make an id the SDK will accept as `sessionId` / `resume`.
+ *
+ * `sdk.d.ts` is explicit — "Must be a valid UUID" — and the CLI enforces it by
+ * dying with `Error: Invalid session ID. Must be a valid UUID.` The failure is
+ * invisible from the outside: the query never produces a result, the turn just
+ * never finishes. FIVE verification harnesses ran dead this way for weeks,
+ * passing readable ids like `roundtrip-1`, and nobody noticed until
+ * `options.stderr` was wired up and the CLI's own message finally surfaced.
+ *
+ * The app itself is safe — thread ids are `crypto.randomUUID()`
+ * (`useThreads.ts`) — so this is not a fix for a user-facing bug. It is a fix
+ * for the NEXT caller, which is usually a harness or a new code path, and which
+ * currently gets no signal at all.
+ *
+ * Coerce rather than reject: a non-UUID id is a caller mistake, but refusing the
+ * run turns a working-but-oddly-named thread into a hard failure, and the value
+ * doubles as our own bookkeeping key. Deriving a UUID from a SHA-256 of the
+ * input keeps it stable across turns and restarts, so `resume` still finds the
+ * same session — while the warning makes the mistake findable instead of silent. */
+export function asSessionId(value, label = 'sessionId') {
+  if (typeof value !== 'string' || value.length === 0) return value
+  if (UUID_RE.test(value)) return value
+  let derived = coercedSessionIds.get(value)
+  if (!derived) {
+    const h = createHash('sha256').update(value).digest()
+    // RFC 4122 layout: version 5 (name-based, SHA-1 in the spec — we use SHA-256
+    // and truncate, which is not a conformant v5 but is a valid UUID string, and
+    // the only requirement here is "parses as a UUID and is stable").
+    h[6] = (h[6] & 0x0f) | 0x50
+    h[8] = (h[8] & 0x3f) | 0x80
+    const hex = h.subarray(0, 16).toString('hex')
+    derived = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`
+    coercedSessionIds.set(value, derived)
+    console.error(
+      `[sidecar ${label}] ${JSON.stringify(value)} is not a UUID; the CLI rejects those. ` +
+        `Using ${derived} instead. Pass crypto.randomUUID() to silence this.`,
+    )
+  }
+  return derived
 }
 
 /** True if the SDK has a resumable session persisted under this id. Asks the SDK
@@ -942,10 +988,14 @@ export class Server {
     if (effort) options.effort = effort
     // Session lifecycle: resume when the thread already has a persisted session
     // (reaped/app-restarted), else create it under threadId.
-    if (resume) options.resume = resume
-    else if (sessionId) options.sessionId = sessionId
-    else if (await sessionPersisted(rec.threadId)) options.resume = rec.threadId
-    else options.sessionId = rec.threadId
+    // asSessionId: the CLI rejects a non-UUID here by dying silently mid-query.
+    // Every branch goes through it — a caller that got one of these wrong got
+    // them all wrong. See the helper for why it coerces instead of refusing.
+    if (resume) options.resume = asSessionId(resume, 'resume')
+    else if (sessionId) options.sessionId = asSessionId(sessionId)
+    else if (await sessionPersisted(asSessionId(rec.threadId, 'threadId')))
+      options.resume = asSessionId(rec.threadId, 'threadId')
+    else options.sessionId = asSessionId(rec.threadId, 'threadId')
     if (typeof maxTurns === 'number' && maxTurns > 0) options.maxTurns = maxTurns
     if (process.env.CLAUDE_CODE_CLI_PATH) {
       options.pathToClaudeCodeExecutable = process.env.CLAUDE_CODE_CLI_PATH

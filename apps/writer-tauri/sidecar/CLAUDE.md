@@ -35,6 +35,7 @@ Everything except the first two needs `CLAUDE_CODE_OAUTH_TOKEN`.
 | script | covers |
 |---|---|
 | `verify-lifecycle` | thread lifecycle, LRU eviction, busy/reap predicate, the prompt generator never finishing — fake SDK, no token |
+| `verify-session-id` | a thread id the CLI would reject still runs (the boundary normalises it) |
 | `verify-git-revert-and-applied` | git revert + applied-edit signalling — no token |
 | `verify-persistent` | multi-turn reuse, cancel, background survival, pinned defect #352 |
 | `verify-ask-gate` | AskUserQuestion parks the turn and the answer reaches the model, twice on one thread; plan-mode enforcement |
