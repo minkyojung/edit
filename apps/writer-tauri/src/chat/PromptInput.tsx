@@ -32,6 +32,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
 import { ModeToggle } from '@/chat/ModeToggle'
+import { nextChatMode } from '@/chat/modes'
 import { FastToggle } from '@/chat/FastToggle'
 import { ContextGauge } from '@/chat/ContextGauge'
 import { SlashPalette } from '@/chat/SlashPalette'
@@ -501,6 +502,22 @@ export function PromptInput({
     ) {
       e.preventDefault()
       onStop?.()
+      return
+    }
+
+    // Shift+Tab cycles the approval mode — the keyboard path to the same
+    // ModeToggle the footer renders, so it routes through onModeChange and adds
+    // no state of its own. Claimed before the palette block below, which also
+    // binds Tab; otherwise the shortcut would silently die whenever an @-mention
+    // or slash palette happened to be open.
+    if (e.key === 'Tab' && e.shiftKey) {
+      // Always swallow it: with the toggle locked, letting focus jump out of the
+      // composer is worse than doing nothing.
+      e.preventDefault()
+      // Same lock as ModeToggle's `disabled`. The mode is read at send time, so
+      // a switch mid-turn wouldn't apply to the turn in flight anyway.
+      if (isStreaming) return
+      onModeChange(nextChatMode(mode))
       return
     }
 
