@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { parseFilePathFromPath } from '@/lib/viewUrl'
-import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
+import { IconMessageCircle, IconSparkles, IconX } from '@tabler/icons-react'
 import { useEditorSelectionStore } from '@/state/editorSelectionStore'
 import { useDocsStore } from '@/state/docsStore'
 import { useDocLabel } from '@/hooks/useDocLabel'
@@ -44,6 +44,7 @@ import { useVaultCommands } from '@/state/vaultCommandsStore'
 import { pathForSlug } from '@/lib/docPaths'
 import { MessageRow } from '@/chat/messages/MessageRow'
 import { cn } from '@/lib/utils'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { composeTranscript } from '@/chat/composeTranscript'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import {
@@ -935,7 +936,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
             // Queued turns read as sent-but-waiting. Dimming is the whole
             // signal: the bubble is in the transcript at the position it will
             // occupy, just not live yet. VS Code uses 0.7 for the same state.
-            className={cn(queuedIds.has(turn.id) && 'opacity-60')}
+            className={cn(
+              queuedIds.has(turn.id) && 'group/queued relative opacity-60',
+            )}
             aria-busy={queuedIds.has(turn.id) || undefined}
             style={
               scrollMode === 'ANCHORED' && i === renderedTurns.length - 1
@@ -943,6 +946,36 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
                 : undefined
             }
           >
+            {/* Remove, on hover, for a turn that hasn't run yet. Only offered
+                while it is still parked: once dispatched there is nothing local
+                left to drop, and pretending otherwise would be a button that
+                sometimes silently does nothing. Hover-revealed rather than
+                always-on so the transcript stays quiet — the same shape VS Code
+                and Zed use for their queued rows. */}
+            {queuedIds.has(turn.id) && activeId && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      useTurnState.getState().removeQueuedTurn(activeId, turn.id)
+                    }
+                    aria-label="Remove queued message"
+                    className={cn(
+                      'absolute -top-1 right-0 z-10 flex size-6 items-center justify-center rounded-full',
+                      'text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
+                      'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+                      // Hidden until hover, but never hidden from the keyboard:
+                      // focus-visible brings it back so it is reachable by Tab.
+                      'opacity-0 group-hover/queued:opacity-100 focus-visible:opacity-100',
+                    )}
+                  >
+                    <IconX size={14} stroke={2} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="left">Remove from queue</TooltipContent>
+              </Tooltip>
+            )}
             <MessageRow
               turn={turn}
               threadId={activeId}

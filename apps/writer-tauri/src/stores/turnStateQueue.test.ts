@@ -115,6 +115,37 @@ describe('turn queue', () => {
     })
   })
 
+  describe('remove', () => {
+    it('drops just that turn and keeps the order of the rest', () => {
+      const s = useTurnState.getState()
+      s.enqueueTurn(T, item('a'))
+      s.enqueueTurn(T, item('b'))
+      s.enqueueTurn(T, item('c'))
+      useTurnState.getState().removeQueuedTurn(T, 'b')
+      expect(queued().map((q) => q.turn.id)).toEqual(['a', 'c'])
+    })
+
+    // The X only renders while a turn is parked, but a click can land on the
+    // frame the drain takes it. Removing something already dispatched must not
+    // disturb the rest of the queue.
+    it('is a no-op for a turn that is no longer queued', () => {
+      const s = useTurnState.getState()
+      s.enqueueTurn(T, item('a'))
+      useTurnState.getState().removeQueuedTurn(T, 'gone')
+      expect(queued().map((q) => q.turn.id)).toEqual(['a'])
+      useTurnState.getState().removeQueuedTurn('no-such-thread', 'a')
+      expect(queued().map((q) => q.turn.id)).toEqual(['a'])
+    })
+
+    it('leaves an emptied queue drainable rather than stuck', () => {
+      const s = useTurnState.getState()
+      s.enqueueTurn(T, item('a'))
+      useTurnState.getState().removeQueuedTurn(T, 'a')
+      expect(queued()).toEqual([])
+      expect(useTurnState.getState().dequeueTurn(T)).toBeNull()
+    })
+  })
+
   it('keeps queues per thread', () => {
     const s = useTurnState.getState()
     s.enqueueTurn(T, item('a'))

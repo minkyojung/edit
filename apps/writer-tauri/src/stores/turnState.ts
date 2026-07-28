@@ -82,6 +82,11 @@ interface TurnStateStore {
   /** Park a user turn behind the answer currently streaming. Also resumes a
    * queue Stop had paused: sending again IS the resume gesture. */
   enqueueTurn: (threadId: string, item: QueuedTurn) => void
+  /** Drop one parked turn before it ever runs. Cheap because the queue lives
+   * here rather than in the sidecar: a turn the sidecar had already accepted
+   * would need a control-protocol retraction, and the SDK only exposes that
+   * untyped. No-op once the turn has been dequeued for dispatch. */
+  removeQueuedTurn: (threadId: string, turnId: string) => void
   /** Hold parked turns instead of draining them. Called by Stop. */
   pauseQueue: (threadId: string) => void
   /** Release the hold. Called by any send, including one that doesn't queue. */
@@ -122,6 +127,17 @@ export const useTurnState = create<TurnStateStore>((set, get) => ({
       // a hold left over from an earlier Stop would strand both this turn and
       // everything already parked ahead of it.
       next.set(threadId, { ...cur, queued: [...cur.queued, item], queuePaused: false })
+      return { byThread: next }
+    })
+  },
+  removeQueuedTurn: (threadId, turnId) => {
+    set((s) => {
+      const cur = s.byThread.get(threadId)
+      if (!cur) return s
+      const queued = cur.queued.filter((q) => q.turn.id !== turnId)
+      if (queued.length === cur.queued.length) return s
+      const next = new Map(s.byThread)
+      next.set(threadId, { ...cur, queued })
       return { byThread: next }
     })
   },
