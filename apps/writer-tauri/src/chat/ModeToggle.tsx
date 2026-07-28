@@ -12,6 +12,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Kbd } from '@/components/ui/kbd'
 import { CHAT_MODES, chatModeOption } from '@/chat/modes'
 import type { ChatMode } from '@/chat/types'
 import { cn } from '@/lib/utils'
@@ -28,40 +30,55 @@ export function ModeToggle({ value, onChange, disabled }: Props) {
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        disabled={disabled}
-        aria-label={`Edit approval: ${active.title}`}
-        aria-keyshortcuts="Shift+Tab"
-        className={cn(
-          'inline-flex h-8 items-center gap-2 rounded-full px-2.5 text-muted-foreground transition-colors',
-          'hover:bg-accent hover:text-foreground',
-          'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
-          'disabled:pointer-events-none disabled:opacity-50',
-        )}
-      >
-        {/* Keyed on the mode so React remounts this span on every change and the
-            enter animation replays — `animate-in` only fires on mount. The key
-            stays OFF the trigger itself: Radix anchors the menu and restores
-            focus through the trigger's ref, and remounting it breaks both.
-            The chevron sits outside for the same reason it doesn't change: only
-            what the switch actually swaps should move.
-            duration/ease are the app's state-change motion (--motion-state:
-            200ms ease-tahoe), not tw-animate-css's 150ms/ease default — these
-            utilities feed --tw-duration/--tw-ease, which `animate-in` reads. */}
-        <span
-          key={active.mode}
-          className="inline-flex items-center gap-2 duration-200 ease-tahoe animate-in fade-in-0 zoom-in-95 motion-reduce:animate-none"
-        >
-          <TriggerIcon className="size-[18px] shrink-0" stroke={1.5} />
-          {/* Selected label inherits the trigger's color (same as the icon).
-              Container query: shown only when the footer is wide enough; the
-              footer drops it to icon-only when space gets tight (no JS measure). */}
-          <span className="hidden whitespace-nowrap text-body font-medium @[440px]/footer:inline">
-            {active.title}
-          </span>
-        </span>
-        <IconChevronDown className="size-3.5 shrink-0 opacity-60" />
-      </DropdownMenuTrigger>
+      {/* Tooltip wraps the trigger (DropdownMenu is the outer context provider,
+          so the trigger still reaches it through TooltipTrigger's asChild).
+          This is where Shift+Tab is advertised: the shortcut fires from the
+          textarea, where nothing can announce itself, so the control it drives
+          has to carry the hint — same shape the Stop and Send buttons use. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger
+            disabled={disabled}
+            aria-label={`Edit approval: ${active.title}`}
+            aria-keyshortcuts="Shift+Tab"
+            className={cn(
+              'inline-flex h-8 items-center gap-2 rounded-full px-2.5 text-muted-foreground transition-colors',
+              'hover:bg-accent hover:text-foreground',
+              'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+              'disabled:pointer-events-none disabled:opacity-50',
+            )}
+          >
+            {/* Keyed on the mode so React remounts this span on every change and
+                the enter animation replays — `animate-in` only fires on mount.
+                The key stays OFF the trigger itself: Radix anchors the menu and
+                restores focus through the trigger's ref, and remounting it
+                breaks both. The chevron sits outside for the same reason it
+                doesn't change: only what the switch actually swaps should move.
+                duration/ease are the app's state-change motion (--motion-state:
+                200ms ease-tahoe), not tw-animate-css's 150ms/ease default —
+                these utilities feed --tw-duration/--tw-ease, which `animate-in`
+                reads. */}
+            <span
+              key={active.mode}
+              className="inline-flex items-center gap-2 duration-200 ease-tahoe animate-in fade-in-0 zoom-in-95 motion-reduce:animate-none"
+            >
+              <TriggerIcon className="size-[18px] shrink-0" stroke={1.5} />
+              {/* Selected label inherits the trigger's color (same as the icon).
+                  Container query: shown only when the footer is wide enough; the
+                  footer drops it to icon-only when space gets tight (no JS measure). */}
+              <span className="hidden whitespace-nowrap text-body font-medium @[440px]/footer:inline">
+                {active.title}
+              </span>
+            </span>
+            <IconChevronDown className="size-3.5 shrink-0 opacity-60" />
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top">
+          <span>Edit approval · {active.title}</span>
+          <Kbd>⇧</Kbd>
+          <Kbd>⇥</Kbd>
+        </TooltipContent>
+      </Tooltip>
       <DropdownMenuContent side="top" align="start" className="w-[420px] rounded-xl p-1">
         {CHAT_MODES.map(({ mode, Icon, title, description }) => (
           <DropdownMenuItem
@@ -82,6 +99,14 @@ export function ModeToggle({ value, onChange, disabled }: Props) {
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>
+      {/* Shift+Tab changes this control while focus stays in the textarea, so a
+          screen reader — which reads the focused element — would say nothing.
+          A live region is read wherever focus is. Picking from the menu returns
+          focus here and re-reads the trigger's aria-label, so that path is
+          mildly redundant; silence on the keyboard path is the worse failure. */}
+      <span aria-live="polite" className="sr-only">
+        {active.title}
+      </span>
     </DropdownMenu>
   )
 }

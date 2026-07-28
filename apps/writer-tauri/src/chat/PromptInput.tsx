@@ -10,7 +10,7 @@
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type DragEvent, type KeyboardEvent } from 'react'
 import { useLayoutStore } from '@/state/layoutStore'
 import { notify } from '@/lib/notify'
 import { writeVaultBinary, deleteVaultDir } from '@/lib/vault'
@@ -31,6 +31,7 @@ import {
 import { classifyAsset, type AssetKind } from '@/lib/attachments'
 import { ContextChip } from '@/chat/ContextChip'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Kbd } from '@/components/ui/kbd'
 import { ModelSelect } from '@/chat/ModelSelect'
 import { EffortButton } from '@/chat/EffortButton'
 import { ModeToggle } from '@/chat/ModeToggle'
@@ -857,19 +858,5 @@ export function PromptInput({
         </div>
       </div>
     </div>
-  )
-}
-
-/** Inline keyboard glyph used in tooltips. The tooltip CSS auto-styles
- * anything with `data-slot="kbd"` (rounded corners, inset shadow); we just
- * supply the muted text + monospace layer. */
-function Kbd({ children }: { children: ReactNode }) {
-  return (
-    <kbd
-      data-slot="kbd"
-      className="bg-foreground/10 text-foreground/80 font-mono text-footnote leading-none px-1 py-0.5"
-    >
-      {children}
-    </kbd>
   )
 }
