@@ -44,7 +44,7 @@ Everything except the first two needs `CLAUDE_CODE_OAUTH_TOKEN`.
 | `verify-sandbox-confinement` | OS sandbox: subprocess reads and network egress |
 | `verify-secret-lockdown` | permission deny rules on the file tools |
 | `verify-deny-rules-unconditional` | deny rules hold with the sandbox off |
-| `verify-sandbox-git-write` | the vault's git repo stays writable inside the sandbox |
+| `verify-sandbox-git-write` | the vault's git repo stays writable inside the sandbox — but its `hooks/` and `config` do not |
 | `verify-edit-roundtrip` | `propose_edit` reports its outcome back to the model |
 | `verify-stale-retry` | whole-doc stale → model rebase loop |
 | `verify-query-notes` | `query_notes` tool and its data-carrying relay |

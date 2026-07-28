@@ -166,7 +166,26 @@ export function sandboxLockdown({ gitDir } = {}) {
       denyRead: secretPaths(),
       // Scoped to the repo the agent is meant to be able to rewrite — NOT the
       // enclosing app-data folder, which also holds the encrypted token stores.
-      ...(gitDir ? { allowWrite: [gitDir] } : {}),
+      ...(gitDir
+        ? {
+            allowWrite: [gitDir],
+            // …but not the two paths inside it that git EXECUTES rather than
+            // stores. `hooks/` scripts run on the next commit, and `config`
+            // can point `core.hooksPath` somewhere else — either way outside
+            // this sandbox, with the user's own privileges, so a write here
+            // is a sandbox escape rather than a file change. Measured before
+            // adding: with `allowWrite: [gitDir]` alone the model plants
+            // `hooks/post-commit` successfully.
+            //
+            // Nothing legitimate loses access. Only the HOST writes git
+            // config (`git config --local user.name/.email` at repo init,
+            // git.rs) and the host runs outside the sandbox; the app installs
+            // no hooks; and `git revert` only READS hooks. Pinned by
+            // verify-sandbox-git-write.mjs, which also keeps proving the
+            // repo itself stays writable.
+            denyWrite: [`${gitDir}/hooks`, `${gitDir}/config`],
+          }
+        : {}),
     },
   }
 }
