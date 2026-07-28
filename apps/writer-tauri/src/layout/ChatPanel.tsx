@@ -576,7 +576,14 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     mentionPaths: string[] = [],
     pastedTexts: { preview: string; content: string }[] = [],
   ) {
-    if (!ready || chatStatus === 'streaming') return
+    // No streaming guard: a send while an answer is in flight is QUEUED, not
+    // dropped. The sidecar owns the queue (`#dispatchTurn` — strict FIFO, one
+    // turn generating at a time), so the two runs never produce output at once
+    // and the single per-thread streaming buffer stays correct. PromptInput
+    // gates the keyboard path (`canQueue`); the footer button is Stop mid-answer
+    // and is unchanged. Regenerate deliberately still refuses mid-answer — it
+    // rewrites an existing turn rather than appending one.
+    if (!ready) return
     const threadId = activeId
     if (!threadId) return
     // Latch BEFORE any await / state set so a fast double-Enter can't

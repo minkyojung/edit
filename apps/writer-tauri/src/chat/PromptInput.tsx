@@ -84,6 +84,37 @@ const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl'
 
 export type PromptStatus = 'idle' | 'streaming' | 'error'
 
+/** What pressing Enter should do, given the composer's state.
+ *
+ *   'send'  — nothing in flight; the normal path, and what the footer button shows.
+ *   'queue' — an answer is still streaming. The turn goes to the sidecar anyway:
+ *             `#dispatchTurn` there queues it and runs it as its OWN turn once
+ *             the current one settles (strict FIFO, one turn generating at a
+ *             time). Measured end-to-end, and the same shape the Claude Code CLI
+ *             uses for type-ahead — "a message sent while Claude is working stays
+ *             queued and runs as its own turn".
+ *   null    — refuse.
+ *
+ * Queueing is keyboard-only by construction: mid-answer the footer button is
+ * Stop, and one button can't be both. Exported so the rule is asserted directly
+ * instead of restated in a test — there is no render-interaction harness here,
+ * so a hand-copied `!disabled && !isStreaming && …` in a test would be the only
+ * thing under assertion, and it would drift the first time this changes. */
+export function submitIntent({
+  disabled,
+  isStreaming,
+  hasContent,
+  valid,
+}: {
+  disabled: boolean
+  isStreaming: boolean
+  hasContent: boolean
+  valid: boolean
+}): 'send' | 'queue' | null {
+  if (disabled || !hasContent || !valid) return null
+  return isStreaming ? 'queue' : 'send'
+}
+
 /** Result of pre-submit input validation. When `ok` is false, the parent
  * surfaces `message` as an inline hint and blocks submission. */
 export interface ValidationResult {
@@ -385,11 +416,16 @@ export function PromptInput({
     () => (validate && trimmed.length > 0 ? validate(trimmed) : { ok: true }),
     [validate, trimmed],
   )
-  const canSubmit =
-    !disabled &&
-    !isStreaming &&
-    (trimmed.length > 0 || pastedTexts.length > 0 || attachments.length > 0) &&
-    validation.ok
+  const intent = submitIntent({
+    disabled: !!disabled,
+    isStreaming,
+    hasContent:
+      trimmed.length > 0 || pastedTexts.length > 0 || attachments.length > 0,
+    valid: validation.ok,
+  })
+  // Send: the idle path, and the only one the footer button reflects — mid-answer
+  // that button is Stop and cannot also be Send.
+  const canSubmit = intent === 'send'
 
   // Palette opens while the user is typing the command name itself —
   // before any space. Filter is the partial name (everything after `/`).
@@ -473,7 +509,7 @@ export function PromptInput({
   }
 
   function submit() {
-    if (!canSubmit) return
+    if (intent === null) return
     // Pasted text now rides as a chip (committed onto the turn), NOT folded into
     // the visible message — so the bubble shows a compact chip, not a wall of
     // text. buildUserPrompt reattaches its content to the model prompt.
