@@ -7,7 +7,7 @@ import remarkGfm from 'remark-gfm'
 // Reuses the same react-markdown + remark-gfm pipeline the chat renders
 // with (StreamingMarkdown), so there is one markdown→HTML definition in
 // the app. But it deliberately omits the chat's component overrides
-// (wikilinks, shiki code blocks, mermaid/artifact widgets): those emit
+// (wikilinks, shiki code blocks, mermaid diagrams): those emit
 // app-specific markup that is meaningless — or broken — when pasted into
 // an external editor. External targets (Substack, Notion, Google Docs,
 // CodeMirror/ProseMirror) want plain h1–h6 / ul / ol / li / strong / em
