@@ -13,7 +13,6 @@
 // hashing a multi-MB audio file on every drop is wasted latency for
 // a check that almost never fires.
 
-import { readFile } from '@tauri-apps/plugin-fs'
 import { sanitizeFilename } from './docPaths'
 import { vaultFileExists, writeVaultBinary } from './vault'
 
@@ -61,13 +60,6 @@ async function writeAudioBytes(
 
   await writeVaultBinary(relPath, bytes)
   return relPath
-}
-
-/** Copy an external audio file into the vault's `audio/` folder.
- * Used by the file-dialog entry point when one is wired up. */
-export async function copyAudioIntoVault(absolutePath: string): Promise<string> {
-  const bytes = await readFile(absolutePath)
-  return writeAudioBytes(bytes, basename(absolutePath))
 }
 
 /** Import a browser-side File (drag-and-drop or clipboard paste) into

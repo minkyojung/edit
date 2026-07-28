@@ -1,15 +1,13 @@
-// Source adapters — given one URL, produce a list of Documents
-// (one post = one Document). Three implementations: RSS feeds,
-// HTML sitemaps, single-page Readability. The router below tries
-// them in order and returns the first non-empty result.
+// Shared shapes for the page-extraction path, plus the one Tauri fetch it
+// needs. `extractPage.ts` is the sole consumer; it lives next door and imports
+// `Document` / `FetchedPage` / `fetchPage` from here.
 //
-// Caller (profile/pipeline.ts) just calls discoverAndFetch and
-// feeds the resulting documents into the LLM section prompts.
+// This file used to be a router: given a URL it tried RSS, then an HTML
+// sitemap, then single-page extraction, and handed the resulting Documents to
+// the profile pipeline. That pipeline and the two multi-post adapters are gone
+// (nothing called them), so only the single-page shapes remain.
 
 import { invoke } from '@tauri-apps/api/core'
-import { fetchViaRss } from './rss'
-import { fetchViaSitemap } from './sitemap'
-import { extractPage } from './extractPage'
 
 /** A single fetched post. Adapter output and pipeline input.
  * contentMarkdown is structure-preserving Markdown (headings, lists,
@@ -40,39 +38,4 @@ export interface FetchedPage {
 
 export async function fetchPage(url: string): Promise<FetchedPage> {
   return invoke('fetch_url', { url })
-}
-
-/** Adapter results capped so the prompt size stays bounded. 8
- * recent posts is enough signal for Voice/Themes/About — going
- * higher just hits the OAuth-token per-minute token limit faster
- * (429 rate_limit_error) without measurably improving the analysis. */
-export const MAX_DOCS_PER_RUN = 8
-
-export interface DiscoveryResult {
-  adapter: 'rss' | 'sitemap' | 'page' | 'none'
-  documents: Document[]
-}
-
-/** Try adapters in order; return the first non-empty result.
- * Order rationale:
- *   - RSS first: cheapest, structured, gives 10-20 posts at once
- *   - Sitemap next: covers blogs without feeds but with sitemap.xml
- *   - Page last: single-post fallback for when the input is
- *     a leaf article URL, not a blog root */
-export async function discoverAndFetch(url: string): Promise<DiscoveryResult> {
-  for (const [name, fn] of [
-    ['rss', fetchViaRss],
-    ['sitemap', fetchViaSitemap],
-    ['page', extractPage],
-  ] as const) {
-    try {
-      const docs = await fn(url)
-      if (docs.length > 0) {
-        return { adapter: name, documents: docs.slice(0, MAX_DOCS_PER_RUN) }
-      }
-    } catch (err) {
-      console.warn(`[adapters] ${name} failed`, err)
-    }
-  }
-  return { adapter: 'none', documents: [] }
 }

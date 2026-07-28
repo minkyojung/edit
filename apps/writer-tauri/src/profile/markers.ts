@@ -175,22 +175,6 @@ export function splitOutBackground(markdown: string): {
   return { summary: summary.trim(), background }
 }
 
-/** Read back the body of a single zone, without the heading line.
- * Returns null when the heading isn't found. */
-export function readZone(
-  markdown: string,
-  kind: ProfileSectionKey,
-): string | null {
-  const heading = zoneHeading(kind)
-  const start = findHeadingLine(markdown, heading)
-  if (start === null) return null
-
-  const afterHeading = start + heading.length + 1
-  const nextHeadingAt = findNextH2(markdown, afterHeading)
-  const end = nextHeadingAt === null ? markdown.length : nextHeadingAt
-  return markdown.slice(afterHeading, end).trim()
-}
-
 /** Locate a heading line in the markdown. Matches the heading text
  * only when it starts at column 0 — avoids false hits on `## Voice`
  * mentioned inside a paragraph or code block (rare, but not zero). */
