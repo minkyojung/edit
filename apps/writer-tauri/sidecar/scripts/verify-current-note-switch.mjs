@@ -162,12 +162,12 @@ function turn(prompt) {
       // from a Read — a model that can Read the vault might find the right note
       // by luck and pass without the mechanism working.
       //
-      // NOT `[]`. server.mjs reads an empty array as "unspecified" and hands
-      // over the full claude_code preset — Read, Grep, Bash and all — so the
-      // `[]` that used to be here granted precisely the access this comment
-      // claims to deny, over a vault holding both notes under test. Naming one
-      // harmless tool is how you actually withhold the rest.
-      builtinTools: ['Glob'],
+      // `[]` is the SDK's documented "disable all built-in tools", which is
+      // exactly what this wants. It briefly had to say `['Glob']` instead,
+      // because server.mjs was reading an empty array as "unspecified" and
+      // answering with the full preset — granting the very access this comment
+      // claims to deny. That inversion is fixed; `[]` means what it says again.
+      builtinTools: [],
       relayTools: [],
       allowDelegation: false,
       sandboxEnabled: false,

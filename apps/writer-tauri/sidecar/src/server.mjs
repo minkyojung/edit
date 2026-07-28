@@ -988,14 +988,25 @@ export class Server {
   // ONLY through the Stop hook (never query.backgroundTasks()).
   async #applySkillsAndRelay(rec, options) {
     const { vaultPath, builtinTools, allowDelegation = true, relayTools } = rec.optionsSeed
-    // Vault: cwd + built-in toolset + agent plugin (commands/agents/skills).
+    // Vault: cwd + agent plugin (commands/agents/skills). The toolset is set
+    // OUTSIDE that gate — see below.
     let existingSkills = []
+    // Honoured whether or not a vault is set: they are independent concerns, and
+    // coupling them meant a caller asking for a narrow list but no vaultPath
+    // silently received the full CLI default instead.
+    //
+    // `Array.isArray`, not `.length > 0`. The SDK documents `[]` as "Disable all
+    // built-in tools" (sdk.d.ts, `tools?:`) — MCP tools only, the MAXIMALLY
+    // restricted state. Treating it as "unspecified" turned that into the full
+    // claude_code preset, Edit/Write/Bash included: the most restrictive input
+    // producing the most permissive result. Nothing passes `[]` today, but
+    // commands.rs forwards `Option<Vec<String>>` verbatim, so `Some([])` reaches
+    // here unfiltered.
+    options.tools = Array.isArray(builtinTools)
+      ? builtinTools
+      : { type: 'preset', preset: 'claude_code' }
     if (vaultPath) {
       options.cwd = vaultPath
-      options.tools =
-        Array.isArray(builtinTools) && builtinTools.length > 0
-          ? builtinTools
-          : { type: 'preset', preset: 'claude_code' }
       try {
         const pluginRoot = join(vaultPath, '_system/agent')
         await readdir(pluginRoot)
