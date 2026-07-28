@@ -18,6 +18,7 @@ Current: `@anthropic-ai/claude-agent-sdk` **0.3.220** / bundled CLI **2.1.220**
 | `systemPrompt` is resolved once, at thread creation, and silently dropped on later turns. | 2.1.187 | `verify-current-note-switch` (indirect: it passes only because the per-turn user message wins over a stale system prompt) |
 | Hooks stop firing once the prompt async-iterable returns, because the SDK then closes stdin. Our generator parks forever, so hooks DO fire per turn here. | 2.1.220 | **unpinned** |
 | Plan mode is enforced by `permissionMode` (applied per turn), not by the frozen `builtinTools` list — so the frozen tool list is not a hole. | 2.1.220 | **unpinned** |
+| `AskUserQuestion` reaches `canUseTool` under **every** permission mode, including `bypassPermissions` — despite the runtime warning that the callback "will not be invoked" there. It asks the host to render UI, which no mode can auto-answer. | 2.1.220 | `verify-ask-gate` arm B |
 
 `unpinned` means we measured it once and nothing would tell us if it changed.
 Worth a check the next time either area is touched.

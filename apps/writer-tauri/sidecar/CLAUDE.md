@@ -37,6 +37,7 @@ Everything except the first two needs `CLAUDE_CODE_OAUTH_TOKEN`.
 | `verify-lifecycle` | thread lifecycle, LRU eviction, the busy/reap predicate — fake SDK, no token |
 | `verify-git-revert-and-applied` | git revert + applied-edit signalling — no token |
 | `verify-persistent` | multi-turn reuse, cancel, background survival, pinned defect #352 |
+| `verify-ask-gate` | AskUserQuestion parks the turn and the answer reaches the model |
 | `verify-background-classification` | which work keeps a thread alive |
 | `verify-effort-midthread` | a settings change reaching later turns |
 | `verify-current-note-switch` | per-turn note / selection / viewed-file context |
