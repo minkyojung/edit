@@ -96,14 +96,26 @@ export function egressDenyRules() {
   ]
 }
 
-/** Deny the commands that dump the process environment, where the SDK-required
- * CLAUDE_CODE_OAUTH_TOKEN lives (the CLI must receive it via env; Bash children
- * inherit it). This is defense-in-depth, NOT a complete boundary: it stops the
- * literal `printenv CLAUDE_CODE_OAUTH_TOKEN` / `env` probe an injected note is
- * likely to use, but shell expansion (`echo $CLAUDE_CODE_OAUTH_TOKEN`) can't be
- * caught by a command-name rule. The real closure is the sandbox blocking
- * network egress (so a read token can't leave the machine) — see sandboxLockdown
- * / failIfUnavailable. `set`/`export` are intentionally omitted: prefix-denying
+/** Deny the commands that dump the process environment.
+ *
+ * NOT for CLAUDE_CODE_OAUTH_TOKEN — the CLI does not pass it down to Bash. This
+ * comment used to say the token "lives" here and that "Bash children inherit
+ * it"; measured against the real sidecar and that is false. Asking the model to
+ * run `printf "LEN=%s" "${#CLAUDE_CODE_OAUTH_TOKEN}"` returns 0, while the same
+ * command against a control variable planted in the sidecar's own env returns
+ * its true length — so Bash CAN read the environment and the token simply is not
+ * in it. Holds with sandboxEnabled both true and false. Do not add
+ * `sandbox.credentials.envVars` for the token on the strength of the old wording:
+ * there is nothing there to unset.
+ *
+ * What these rules are still worth: the environment carries whatever the USER's
+ * shell exported into the app (cloud CLI creds, tokens from a dotfile), and a
+ * bare `env` / `printenv` is the cheapest probe an injected note can reach for.
+ * Defense-in-depth, NOT a boundary — shell expansion (`echo $SOME_TOKEN`) can't
+ * be caught by a command-name rule, and command denylists are not a security
+ * boundary in the first place. The real closure is the sandbox blocking network
+ * egress so a read secret can't leave the machine — see sandboxLockdown /
+ * failIfUnavailable. `set`/`export` are intentionally omitted: prefix-denying
  * them would break legitimate `set -e` / `export FOO=…` usage for little gain. */
 export function envDumpDenyRules() {
   return ['Bash(printenv:*)', 'Bash(env:*)']
