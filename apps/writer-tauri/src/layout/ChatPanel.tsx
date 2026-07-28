@@ -508,9 +508,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       next.attachments,
       next.mentionPaths,
     )
-    // turnsHook / runner are recreated per render; depending on them would fire
-    // this on every streaming tick. The gate is chatStatus and the queue length.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Deps are deliberately narrower than what the body closes over: turnsHook
+    // and runner are rebuilt every render, so listing them would re-run this on
+    // every streaming tick. The gate is the thread, its status, the queue length
+    // and the hold. (No eslint-disable here — react-hooks isn't among this
+    // project's plugins, so silencing that rule is itself a lint error.)
   }, [activeId, chatStatus, queuedTurns.length, queuePaused])
 
   // Regenerate is only offered on the most-recent settled assistant turn —
