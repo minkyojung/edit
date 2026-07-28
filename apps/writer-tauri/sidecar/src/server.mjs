@@ -37,6 +37,19 @@ import {
 } from './tools/relay.mjs'
 
 
+/** Attach the CLI's own stderr tail to an error message.
+ *
+ * "Claude Code process exited with code 1" names the symptom and discards the
+ * cause. The CLI had already printed the cause — five harnesses were dying on
+ * "Error: Invalid session ID. Must be a valid UUID." — and nothing carried it
+ * out, so a one-line fix read as an unexplained INTERNAL. Only the tail is
+ * kept, and only when there is something to say. */
+function withCliStderr(message, lines) {
+  if (!Array.isArray(lines) || lines.length === 0) return message
+  const tail = lines.join('').trim().split('\n').slice(-6).join('\n').trim()
+  return tail ? `${message}\n--- claude CLI stderr ---\n${tail}` : message
+}
+
 /** True if the SDK has a resumable session persisted under this id. Asks the SDK
  * directly via `getSessionInfo(sessionId)` — the canonical API — instead of
  * reproducing its on-disk layout (`~/.claude/projects/<cwd-encoded>/<id>.jsonl`,
@@ -1026,6 +1039,20 @@ export class Server {
     )
     if (relayServer) options.mcpServers = { 'writer-relay': relayServer }
 
+    // Keep the CLI's own stderr. Without it a startup refusal reaches us only as
+    // "Claude Code process exited with code 1" → chat/error INTERNAL, and the
+    // actual reason is discarded. That cost an hour today: five harnesses were
+    // dying on a one-line message the SDK had already printed —
+    //   Error: Invalid session ID. Must be a valid UUID.
+    // — which nothing surfaced. Bounded to the tail because a debug-heavy run
+    // can emit a lot, and only the last lines carry the failure.
+    const cliStderr = []
+    options.stderr = (d) => {
+      cliStderr.push(String(d))
+      if (cliStderr.length > 40) cliStderr.shift()
+    }
+    rec.cliStderr = cliStderr
+
     // Stop: snapshot the authoritative in-flight background inventory each turn
     // end, so the reaper can tell "thread idle & done" from "idle but awaiting a
     // background wake". Non-blocking (returns {}).
@@ -1175,7 +1202,7 @@ export class Server {
             this.#emitChatError(
               rec.currentRunId,
               code,
-              err?.message ?? String(err),
+              withCliStderr(err?.message ?? String(err), rec.cliStderr),
               !NON_RETRYABLE_CODES.has(code),
               undefined,
               rec.threadId,
