@@ -29,6 +29,26 @@ interface ThreadTurnState {
    * and would place it wrongly in the transcript. They move into `turns` at the
    * moment they are dispatched. */
   queued: QueuedTurn[]
+  /** Stop was pressed while turns were parked: hold them instead of draining.
+   *
+   * Without this, Stop reads as not working. Cancelling settles the turn, the
+   * thread goes idle, and the drain fires on that very transition — so the next
+   * queued message starts generating immediately and text keeps flowing. The
+   * user asked it to stop and it visibly did not.
+   *
+   * Three behaviours were available and only one fits a VISIBLE queue:
+   *   - run them anyway. This is the SDK's own default for its internal queue
+   *     ("messages that survive this interrupt WILL run unless cancelled
+   *     first"), and it is what we shipped by accident. It works for the CLI,
+   *     where the queue isn't on screen.
+   *   - drop them (the SDK's `cancel_queued`). Loses what the user typed.
+   *   - hold them, which is what Zed does. The bubbles stay exactly where they
+   *     are, dimmed, and simply don't run; the next send resumes.
+   * The last one is the only one where what's on screen matches what happens.
+   *
+   * Cleared by the next send rather than by a timer or a button, so resuming is
+   * the same gesture as continuing the conversation. */
+  queuePaused: boolean
 }
 
 /** A parked turn plus the two run arguments that do NOT live on ChatTurn.
@@ -41,7 +61,12 @@ export interface QueuedTurn {
   mentionPaths?: string[]
 }
 
-const IDLE: ThreadTurnState = { status: 'idle', streamingTurn: null, queued: [] }
+const IDLE: ThreadTurnState = {
+  status: 'idle',
+  streamingTurn: null,
+  queued: [],
+  queuePaused: false,
+}
 
 interface TurnStateStore {
   byThread: Map<string, ThreadTurnState>
@@ -54,8 +79,13 @@ interface TurnStateStore {
    * resurrected. The turn ref is only replaced when a streaming turn exists,
    * so the `status` selector stays referentially stable across ticks. */
   patchStreamingTurn: (threadId: string, patch: Partial<ChatTurn>) => void
-  /** Park a user turn behind the answer currently streaming. */
+  /** Park a user turn behind the answer currently streaming. Also resumes a
+   * queue Stop had paused: sending again IS the resume gesture. */
   enqueueTurn: (threadId: string, item: QueuedTurn) => void
+  /** Hold parked turns instead of draining them. Called by Stop. */
+  pauseQueue: (threadId: string) => void
+  /** Release the hold. Called by any send, including one that doesn't queue. */
+  resumeQueue: (threadId: string) => void
   /** Take the oldest queued turn, or null. Removal and dispatch stay with one
    * caller, so a turn is never both parked and in flight: the drain effect can
    * fire twice for one idle transition, and the second call finds the queue
@@ -88,7 +118,28 @@ export const useTurnState = create<TurnStateStore>((set, get) => ({
     set((s) => {
       const cur = s.byThread.get(threadId) ?? IDLE
       const next = new Map(s.byThread)
-      next.set(threadId, { ...cur, queued: [...cur.queued, item] })
+      // queuePaused:false — queueing behind a live answer is itself a send, and
+      // a hold left over from an earlier Stop would strand both this turn and
+      // everything already parked ahead of it.
+      next.set(threadId, { ...cur, queued: [...cur.queued, item], queuePaused: false })
+      return { byThread: next }
+    })
+  },
+  pauseQueue: (threadId) => {
+    set((s) => {
+      const cur = s.byThread.get(threadId) ?? IDLE
+      if (cur.queuePaused) return s
+      const next = new Map(s.byThread)
+      next.set(threadId, { ...cur, queuePaused: true })
+      return { byThread: next }
+    })
+  },
+  resumeQueue: (threadId) => {
+    set((s) => {
+      const cur = s.byThread.get(threadId)
+      if (!cur?.queuePaused) return s
+      const next = new Map(s.byThread)
+      next.set(threadId, { ...cur, queuePaused: false })
       return { byThread: next }
     })
   },

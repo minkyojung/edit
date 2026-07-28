@@ -66,6 +66,55 @@ describe('turn queue', () => {
     expect(out?.mentionPaths).toEqual(['wiki/Note.md'])
   })
 
+  // Stop must HOLD the queue, not drain it and not drop it. Draining is what
+  // made Stop look broken: the cancel settles the turn, the thread goes idle,
+  // and the drain effect starts the next queued message on that transition.
+  describe('pause', () => {
+    it('is off until Stop asks for it', () => {
+      useTurnState.getState().enqueueTurn(T, item('a'))
+      expect(useTurnState.getState().byThread.get(T)?.queuePaused).toBe(false)
+    })
+
+    it('holds the turns rather than dropping them', () => {
+      const s = useTurnState.getState()
+      s.enqueueTurn(T, item('a'))
+      s.pauseQueue(T)
+      const st = useTurnState.getState().byThread.get(T)
+      expect(st?.queuePaused).toBe(true)
+      // Still there — the bubbles stay on screen, they just don't run.
+      expect(st?.queued.map((q) => q.turn.id)).toEqual(['a'])
+    })
+
+    it('is released by resumeQueue', () => {
+      const s = useTurnState.getState()
+      s.enqueueTurn(T, item('a'))
+      s.pauseQueue(T)
+      useTurnState.getState().resumeQueue(T)
+      expect(useTurnState.getState().byThread.get(T)?.queuePaused).toBe(false)
+    })
+
+    // Queueing behind a live answer is itself a send. A hold left over from an
+    // earlier Stop would strand this turn and everything parked ahead of it.
+    it('is released by queueing another turn', () => {
+      const s = useTurnState.getState()
+      s.enqueueTurn(T, item('a'))
+      s.pauseQueue(T)
+      useTurnState.getState().enqueueTurn(T, item('b'))
+      const st = useTurnState.getState().byThread.get(T)
+      expect(st?.queuePaused).toBe(false)
+      expect(st?.queued.map((q) => q.turn.id)).toEqual(['a', 'b'])
+    })
+
+    it('is per thread', () => {
+      const s = useTurnState.getState()
+      s.enqueueTurn(T, item('a'))
+      s.enqueueTurn('thread-2', item('b'))
+      useTurnState.getState().pauseQueue(T)
+      expect(useTurnState.getState().byThread.get(T)?.queuePaused).toBe(true)
+      expect(useTurnState.getState().byThread.get('thread-2')?.queuePaused).toBe(false)
+    })
+  })
+
   it('keeps queues per thread', () => {
     const s = useTurnState.getState()
     s.enqueueTurn(T, item('a'))

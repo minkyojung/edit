@@ -255,6 +255,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   const queuedTurns = useTurnState((s) =>
     (activeId ? s.byThread.get(activeId)?.queued : undefined) ?? EMPTY_QUEUE,
   )
+  const queuePaused = useTurnState((s) =>
+    (activeId ? s.byThread.get(activeId)?.queuePaused : false) ?? false,
+  )
 
   const handleScroll = useCallback(() => {
     // Ignore our own smooth scrolls (see suppressScrollRef); only genuine user
@@ -489,6 +492,10 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // bug that draining eagerly produced.
   useEffect(() => {
     if (!activeId || chatStatus === 'streaming' || queuedTurns.length === 0) return
+    // Stop holds the queue. Without this the cancel settles the turn, the thread
+    // goes idle, and this very effect starts the next queued message on that
+    // transition — text keeps flowing and Stop looks broken.
+    if (queuePaused) return
     const next = useTurnState.getState().dequeueTurn(activeId)
     if (!next) return
     turnsHook.appendTurn(next.turn)
@@ -503,7 +510,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     // turnsHook / runner are recreated per render; depending on them would fire
     // this on every streaming tick. The gate is chatStatus and the queue length.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, chatStatus, queuedTurns.length])
+  }, [activeId, chatStatus, queuedTurns.length, queuePaused])
 
   // Regenerate is only offered on the most-recent settled assistant turn —
   // rewriting an older one would orphan every later turn's context. Hidden
@@ -722,6 +729,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       }
 
       // The user's turn is finished text — push to Yjs once and let it sync.
+      // Sending again is the resume gesture — a hold from an earlier Stop must
+      // not outlive it, or turns parked behind it would never run.
+      useTurnState.getState().resumeQueue(threadId)
       turnsHook.appendTurn(userTurn)
       // First turn follows the bottom; later turns anchor to the top.
       anchorSentTurn(userTurn.id, isFirstTurn)
@@ -794,7 +804,12 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   }
 
   function handleStop() {
-    if (activeId) useChatRuns.getState().abortByThread(activeId)
+    if (!activeId) return
+    // Pause BEFORE aborting. The abort settles the turn and flips the thread to
+    // idle, which is exactly what wakes the drain effect — set the hold first or
+    // the next queued message is already away.
+    useTurnState.getState().pauseQueue(activeId)
+    useChatRuns.getState().abortByThread(activeId)
   }
 
   // Pre-submit validator: blocks unknown commands. Free chat (no leading
