@@ -6,9 +6,18 @@ parks between turns.
 
 ## Build
 
-`src/` is the source. `sidecar-pkg/` is a build artifact (gitignored) and is what
-the app actually loads — so an edit to `src/` changes nothing in the app until
-`pnpm --filter writer-tauri pack:sidecar`.
+`src/` is the source. `sidecar-pkg/` is a build artifact (gitignored). Which one
+the app loads depends on the build, and this used to be written here as if
+`sidecar-pkg` were always it:
+
+- **`tauri dev`** spawns `sidecar/src/index.mjs` directly (`manager.rs`, under
+  `#[cfg(debug_assertions)]`). An edit to `src/` is live on the next app
+  restart — no packing, and packing does not make it any more live.
+- **A release build** loads `sidecar-pkg/`, so an edit to `src/` changes nothing
+  there until `pnpm --filter writer-tauri pack:sidecar`.
+
+The log line at startup says which one you got:
+`args: [".../sidecar/src/index.mjs"]` vs a path under `sidecar-pkg`.
 
 ## Two things that fail silently
 
