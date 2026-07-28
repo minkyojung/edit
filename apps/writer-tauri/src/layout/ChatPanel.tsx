@@ -8,7 +8,7 @@
 // in the document body (inline diff widgets) and in the Review tray, not
 // here.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { parseFilePathFromPath } from '@/lib/viewUrl'
 import { IconMessageCircle, IconSparkles } from '@tabler/icons-react'
@@ -22,7 +22,7 @@ import { type UseThreadsResult } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
 import { generateThreadTitle } from '@/agent/generateThreadTitle'
 import { useChatRuns } from '@/stores/chatRuns'
-import { useTurnState } from '@/stores/turnState'
+import { useTurnState, type QueuedTurn } from '@/stores/turnState'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useFastModeStore } from '@/state/fastModeStore'
 import { usePendingPermissions } from '@/state/pendingPermissionsStore'
@@ -43,6 +43,8 @@ import { useChatRunner, type RunOverrides } from '@/chat/hooks/useChatRunner'
 import { useVaultCommands } from '@/state/vaultCommandsStore'
 import { pathForSlug } from '@/lib/docPaths'
 import { MessageRow } from '@/chat/messages/MessageRow'
+import { cn } from '@/lib/utils'
+import { composeTranscript } from '@/chat/composeTranscript'
 import { ScrollToBottomButton } from '@/chat/ScrollToBottomButton'
 import {
   REPLY_GAP,
@@ -54,6 +56,10 @@ import {
 } from '@/chat/scroll/scrollMath'
 import { ReviewTray } from '@/chat/ReviewTray'
 import { SkillProposalTray } from '@/chat/SkillProposalTray'
+
+// Stable empty array for the queued-turns selector. A fresh `[]` per read hands
+// zustand a new reference on every streaming tick and re-renders the transcript.
+const EMPTY_QUEUE: QueuedTurn[] = []
 
 /** Parse a submitted prompt string for a leading slash invocation.
  * Matches `/<name>` optionally followed by whitespace + args. Returns
@@ -245,6 +251,9 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   )
   const streamingTurn = useTurnState((s) =>
     (activeId ? s.byThread.get(activeId)?.streamingTurn : null) ?? null,
+  )
+  const queuedTurns = useTurnState((s) =>
+    (activeId ? s.byThread.get(activeId)?.queued : undefined) ?? EMPTY_QUEUE,
   )
 
   const handleScroll = useCallback(() => {
@@ -458,9 +467,43 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
   // for rendering. `streamingTurn` is already scoped to the active thread by
   // its store selector, so a thread-switch mid-stream can't leak another
   // session's buffer into this transcript.
-  const renderedTurns = streamingTurn
-    ? [...turnsHook.turns, streamingTurn]
-    : turnsHook.turns
+  // Settled → streaming → queued. The ordering lives in composeTranscript so it
+  // is under test; inlined here, reversing the last two terms (the original bug)
+  // left the whole suite green.
+  const renderedTurns = composeTranscript(turnsHook.turns, streamingTurn, queuedTurns)
+  const queuedIds = useMemo(
+    () => new Set(queuedTurns.map((q) => q.turn.id)),
+    [queuedTurns],
+  )
+
+  // Drain: the moment the thread goes idle, promote the oldest queued turn into
+  // the settled list and run it. `dequeueTurn` removes and returns in one store
+  // write and returns null if another drain already took the head, so a double
+  // effect fire can't run the same turn twice.
+  //
+  // Only the VISIBLE thread drains, because chatStatus is selector-scoped to it.
+  // Switching away parks the queue rather than losing it — the effect re-runs on
+  // the next activeId change, so coming back resumes. That is a pause, not a
+  // drop, and it is the behaviour worth having if this ever moves: Zed's queue
+  // pauses on stop for the same reason, and its comments name the "frozen queue"
+  // bug that draining eagerly produced.
+  useEffect(() => {
+    if (!activeId || chatStatus === 'streaming' || queuedTurns.length === 0) return
+    const next = useTurnState.getState().dequeueTurn(activeId)
+    if (!next) return
+    turnsHook.appendTurn(next.turn)
+    anchorSentTurn(next.turn.id, false)
+    void runner.run(
+      activeId,
+      [...turnsHook.turns, next.turn],
+      undefined,
+      next.attachments,
+      next.mentionPaths,
+    )
+    // turnsHook / runner are recreated per render; depending on them would fire
+    // this on every streaming tick. The gate is chatStatus and the queue length.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, chatStatus, queuedTurns.length])
 
   // Regenerate is only offered on the most-recent settled assistant turn —
   // rewriting an older one would orphan every later turn's context. Hidden
@@ -656,14 +699,32 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
         }
       }
 
+      // Detach the one-shot prop-backed chips now that they're committed to the
+      // turn (draft chips were already cleared by the composer's submit).
+      // Done before the queue branch so a parked turn keeps the context it was
+      // written against rather than whatever is on screen when it finally runs.
+      resetContextChips()
+
+      // Answer still streaming → park it. NOT appendTurn: the settled list
+      // renders above the streaming answer, so committing it now would drop the
+      // message into the middle of the transcript instead of the end.
+      //
+      // The frontend owns this queue even though the sidecar has one of its own
+      // (#dispatchTurn, FIFO). Dispatching late is what buys the affordances:
+      // cancel, edit and reorder are array operations here, whereas a turn the
+      // sidecar has already accepted would need a control-protocol message to
+      // retract — and the SDK's own cancel for that is untyped.
+      if (chatStatus === 'streaming') {
+        useTurnState
+          .getState()
+          .enqueueTurn(threadId, { turn: userTurn, attachments, mentionPaths })
+        return
+      }
+
       // The user's turn is finished text — push to Yjs once and let it sync.
       turnsHook.appendTurn(userTurn)
       // First turn follows the bottom; later turns anchor to the top.
       anchorSentTurn(userTurn.id, isFirstTurn)
-
-      // Detach the one-shot prop-backed chips now that they're committed to the
-      // turn (draft chips were already cleared by the composer's submit).
-      resetContextChips()
 
       await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, attachments, mentionPaths)
     } finally {
@@ -834,6 +895,11 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
           <div
             key={turn.id}
             data-turn-id={turn.id}
+            // Queued turns read as sent-but-waiting. Dimming is the whole
+            // signal: the bubble is in the transcript at the position it will
+            // occupy, just not live yet. VS Code uses 0.7 for the same state.
+            className={cn(queuedIds.has(turn.id) && 'opacity-60')}
+            aria-busy={queuedIds.has(turn.id) || undefined}
             style={
               scrollMode === 'ANCHORED' && i === renderedTurns.length - 1
                 ? { minHeight: 'calc(100dvh - var(--chat-top-inset))' }

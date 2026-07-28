@@ -767,21 +767,24 @@ export function PromptInput({
             <TooltipContent side="top">Attach file · max 20 MB</TooltipContent>
           </Tooltip>
           <ModeToggle value={mode} onChange={onModeChange} disabled={isStreaming} />
-          {/* Stop lives HERE, not in the send slot, because the two act on
-              different things: Send acts on what you typed, Stop acts on the turn
-              already running. Sharing one slot only worked while Send was
-              meaningless mid-answer — and it stopped being meaningless when Enter
-              started queueing. Every product that merges them (Zed, Cursor, the
-              Claude Code IDE extension) keys the slot on "is the input empty",
-              which means the Stop button vanishes the instant you start typing.
-              That is precisely the moment you want it: you saw the answer going
-              the wrong way, so you began writing the correction. Cursor has a
-              user-filed bug for exactly that. VS Code and Cline keep Stop as its
-              own control for the same reason.
-              Appended rather than swapped in for ModeToggle: one slot with two
-              meanings is the mistake being fixed, and the left group grows
-              rightward while the right group stays right-anchored, so the Send
-              button never moves. */}
+        </div>
+        <div className="flex items-center gap-1">
+          <ContextGauge snapshot={contextSnapshot} />
+          <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />
+          {/* Stop is its own control, not a second meaning for the send button,
+              because the two act on different things: Send acts on what you
+              typed, Stop acts on the turn already running. Sharing one slot only
+              worked while Send was meaningless mid-answer — and it stopped being
+              meaningless when Enter started queueing. Every product that merges
+              them (Zed, Cursor, the Claude Code IDE extension) keys that slot on
+              "is the input empty", so the Stop button vanishes the instant you
+              start typing — precisely when you want it, since you began typing
+              because the answer was going the wrong way. Cursor has a user-filed
+              bug for exactly that; VS Code and Cline keep Stop separate for the
+              same reason.
+              Here rather than in the left group so it sits next to the control it
+              relates to. It is the LAST thing before Send, so Send stays pinned
+              to the right edge and never moves between states. */}
           {isStreaming && (
             <Tooltip>
               <TooltipTrigger asChild>
@@ -806,10 +809,6 @@ export function PromptInput({
               </TooltipContent>
             </Tooltip>
           )}
-        </div>
-        <div className="flex items-center gap-1">
-          <ContextGauge snapshot={contextSnapshot} />
-          <ModelSelect value={model} onChange={onModelChange} disabled={isStreaming} />
           <Tooltip>
           <TooltipTrigger asChild>
             <button
