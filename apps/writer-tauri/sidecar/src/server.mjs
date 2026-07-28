@@ -520,6 +520,10 @@ export class Server {
 
     const existing = this.activeThreads.get(threadId)
     if (existing && !existing.dead) {
+      // Every reused turn, not just one that changes a live control — a turn
+      // that ONLY changes a frozen param would otherwise pass in silence, which
+      // is exactly the shape the effort bug had.
+      this.#warnFrozenParamChange(existing, params)
       // A turn that changes model / permissionMode / fastMode / effort reconciles the
       // live query via control requests issued from OUTSIDE the input generator
       // (the canonical placement — a control request awaited from INSIDE the
@@ -581,6 +585,71 @@ export class Server {
       const r = rec.nextTurnResolve
       rec.nextTurnResolve = null
       r(rec.turnQueue.shift())
+    }
+  }
+
+  // Which chat params a LATER turn can still change, and which are fixed once the
+  // thread's query() exists. The split isn't ours to choose — it follows what
+  // the SDK exposes as a live control request:
+  //
+  //   applied per turn        SDK control              #applyThreadControls
+  //     model                 setModel
+  //     permissionMode        setPermissionMode
+  //     fastMode              applyFlagSettings({fastMode})
+  //     effort                applyFlagSettings({effortLevel})
+  //
+  //   fixed at thread creation (no control request exists)
+  //     systemPrompt, builtinTools, relayTools, allowDelegation,
+  //     sandboxEnabled, vaultPath, maxTurns, gitDir, gitWorkTree
+  //
+  // The failure mode is silence: the host resends every param on every turn, and
+  // the reuse path in #handleChatPersistent simply drops the fixed ones. Nothing
+  // errors. `effort` sat broken this way — the dropdown was editable mid-chat and
+  // did nothing — until it was measured, because there was no signal and no list
+  // like this one to check against.
+  //
+  // Two of the fixed entries deserve their own note:
+  //
+  //   systemPrompt is fixed but changes legitimately every turn (the date, the
+  //   growing profile), so it is NOT warned about below. Anything in it that
+  //   tracks where the user IS must ride the per-turn USER message instead —
+  //   see currentNoteBlock / selectionBlock / viewingFileBlock. That is the
+  //   whole reason those blocks exist.
+  //
+  //   builtinTools is fixed, and plan mode narrows it — but plan mode's teeth
+  //   are permissionMode, which IS applied per turn. Measured: a thread started
+  //   in edit mode and switched to plan attempts Write and the file is not
+  //   modified. So the frozen toolset is not a hole.
+  //
+  // The rest should never differ mid-thread; if one does, the caller has changed
+  // something that cannot take effect, and #warnFrozenParamChange says so once.
+  static #FROZEN_WARN_PARAMS = [
+    'builtinTools',
+    'relayTools',
+    'allowDelegation',
+    'sandboxEnabled',
+    'vaultPath',
+    'maxTurns',
+  ]
+
+  // One line per (thread, param) the first time a later turn tries to change
+  // something the SDK gives us no way to change. Warn, don't throw: the turn is
+  // still valid, it just runs under the thread's original value — and a hard
+  // failure here would break chat for a caller bug that is usually harmless.
+  #warnFrozenParamChange(rec, params) {
+    const seed = rec.optionsSeed ?? {}
+    for (const key of Server.#FROZEN_WARN_PARAMS) {
+      const before = JSON.stringify(seed[key] ?? null)
+      const after = JSON.stringify(params[key] ?? null)
+      if (before === after) continue
+      rec.warnedFrozen ??= new Set()
+      if (rec.warnedFrozen.has(key)) continue
+      rec.warnedFrozen.add(key)
+      process.stderr.write(
+        `[sidecar frozen-param] threadId=${rec.threadId} ${key} changed mid-thread ` +
+          `but is fixed at thread creation — this turn runs with the original value. ` +
+          `was=${before.slice(0, 80)} now=${after.slice(0, 80)}\n`,
+      )
     }
   }
 
