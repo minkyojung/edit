@@ -23,12 +23,10 @@ import { useChatActivity } from '@/stores/chatActivity'
 import { useCloseConfirmStore } from '@/state/closeConfirmStore'
 import { flushDirty, stopAutoFlush } from '@/lib/docFileSync'
 import { useSaveFailureStore } from '@/state/saveFailureStore'
-import { stopGitHubSync } from '@/lib/githubSync'
 
 async function quitApp() {
   await flushDirty()
   stopAutoFlush()
-  stopGitHubSync()
   invoke('app_quit').catch(() => {})
 }
 
