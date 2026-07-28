@@ -850,16 +850,23 @@ export class Server {
       settings: {
         autoCompactEnabled: true,
         ...(fastMode ? { fastMode: true } : {}),
-        ...(sandboxEnabled
-          ? {
-              permissions: {
-                deny: [...egressDenyRules(), ...envDumpDenyRules(), ...secretDenyRules()],
-              },
-            }
-          : {}),
+        // UNCONDITIONAL. These govern the in-process tools (Read, Glob) and the
+        // network shells; the OS sandbox governs subprocesses. security.mjs
+        // states the split and says of this layer: "It also holds when the
+        // sandbox can't initialise. Zero dependency."
+        //
+        // It used to be gated on `sandboxEnabled` alongside options.sandbox,
+        // which made that claim false — one flag turned off BOTH layers, so a
+        // caller asking to skip the OS sandbox also un-blocked
+        // `Read(~/.ssh/id_rsa)`. Eight harnesses pass sandboxEnabled:false and
+        // had therefore been running with no secret protection at all.
+        permissions: {
+          deny: [...egressDenyRules(), ...envDumpDenyRules(), ...secretDenyRules()],
+        },
       },
       settingSources: [],
     }
+    // Only the OS sandbox is opt-out; the deny rules above are not.
     if (sandboxEnabled) options.sandbox = sandboxLockdown({ gitDir })
     if (model) options.model = model
     if (systemPrompt) options.systemPrompt = systemPrompt
