@@ -4,7 +4,9 @@
 //
 // Status flow:
 //   idle        → ready to send. Submit button enabled iff value.trim() != ''.
-//   streaming   → assistant turn in flight. Submit button toggles to Stop.
+//   streaming   → assistant turn in flight. Submit button still SENDS (the turn
+//                 is queued behind the running one); Stop is its own control in
+//                 the footer's left group.
 //   error       → last send errored. Same as idle but rendered with an error
 //                 icon hint; the actual error message lives in the turn.
 
@@ -95,8 +97,7 @@ export type PromptStatus = 'idle' | 'streaming' | 'error'
  *             queued and runs as its own turn".
  *   null    — refuse.
  *
- * Queueing is keyboard-only by construction: mid-answer the footer button is
- * Stop, and one button can't be both. Exported so the rule is asserted directly
+ * Exported so the rule is asserted directly
  * instead of restated in a test — there is no render-interaction harness here,
  * so a hand-copied `!disabled && !isStreaming && …` in a test would be the only
  * thing under assertion, and it would drift the first time this changes. */
@@ -425,7 +426,6 @@ export function PromptInput({
   })
   // Send: the idle path, and the only one the footer button reflects — mid-answer
   // that button is Stop and cannot also be Send.
-  const canSubmit = intent === 'send'
 
   // Palette opens while the user is typing the command name itself —
   // before any space. Filter is the partial name (everything after `/`).
@@ -588,11 +588,11 @@ export function PromptInput({
     submit()
   }
 
+  // Send only — the streaming branch used to live here and is now the dedicated
+  // Stop button in the left group. This is what makes the mouse path reach
+  // queueing at all: before, a click mid-answer meant Stop, so there was no way
+  // to queue without the keyboard.
   function handleSubmitClick() {
-    if (isStreaming) {
-      onStop?.()
-      return
-    }
     submit()
   }
 
@@ -767,6 +767,45 @@ export function PromptInput({
             <TooltipContent side="top">Attach file · max 20 MB</TooltipContent>
           </Tooltip>
           <ModeToggle value={mode} onChange={onModeChange} disabled={isStreaming} />
+          {/* Stop lives HERE, not in the send slot, because the two act on
+              different things: Send acts on what you typed, Stop acts on the turn
+              already running. Sharing one slot only worked while Send was
+              meaningless mid-answer — and it stopped being meaningless when Enter
+              started queueing. Every product that merges them (Zed, Cursor, the
+              Claude Code IDE extension) keys the slot on "is the input empty",
+              which means the Stop button vanishes the instant you start typing.
+              That is precisely the moment you want it: you saw the answer going
+              the wrong way, so you began writing the correction. Cursor has a
+              user-filed bug for exactly that. VS Code and Cline keep Stop as its
+              own control for the same reason.
+              Appended rather than swapped in for ModeToggle: one slot with two
+              meanings is the mistake being fixed, and the left group grows
+              rightward while the right group stays right-anchored, so the Send
+              button never moves. */}
+          {isStreaming && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onStop?.()}
+                  aria-label="Stop"
+                  className={cn(
+                    'flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors',
+                    'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
+                    'hover:bg-accent hover:text-foreground',
+                  )}
+                >
+                  <IconPlayerStop size={16} stroke={2} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <span>Stop</span>
+                <Kbd>{MOD_KEY}</Kbd>
+                <Kbd>⇧</Kbd>
+                <Kbd>⌫</Kbd>
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
         <div className="flex items-center gap-1">
           <ContextGauge snapshot={contextSnapshot} />
@@ -778,31 +817,33 @@ export function PromptInput({
               onClick={handleSubmitClick}
               // aria-disabled (not disabled) so the button still fires
               // hover/focus events — that's what makes the tooltip
-              // discoverable when validation blocks Send. handleSubmitClick
-              // short-circuits via canSubmit, so semantically it's still
-              // disabled to clicks.
-              aria-disabled={!isStreaming && !canSubmit}
-              aria-label={isStreaming ? 'Stop' : 'Send'}
+              // discoverable when validation blocks Send. submit() short-circuits
+              // on a null intent, so semantically it's still disabled to clicks.
+              // One meaning now: send. Stop moved to its own control on the left,
+              // so this stays the same action in every state and the label no
+              // longer changes out from under a screen reader mid-turn.
+              aria-disabled={intent === null}
+              aria-label={intent === 'queue' ? 'Queue' : 'Send'}
               className={cn(
                 'flex size-8 items-center justify-center rounded-full transition-colors',
                 'outline-none focus-visible:ring-3 focus-visible:ring-ring/30',
-                isStreaming
+                intent !== null
                   ? 'bg-foreground text-background hover:bg-foreground/90'
-                  : canSubmit
-                    ? 'bg-foreground text-background hover:bg-foreground/90'
-                    : 'bg-muted text-muted-foreground cursor-not-allowed',
+                  : 'bg-muted text-muted-foreground cursor-not-allowed',
               )}
             >
-              <SubmitIcon status={status} canSubmit={canSubmit} />
+              <IconArrowUp
+                size={16}
+                stroke={2}
+                className={cn(intent === null && 'opacity-60')}
+              />
             </button>
           </TooltipTrigger>
           <TooltipContent side="top">
-            {isStreaming ? (
+            {intent === 'queue' ? (
               <>
-                <span>Stop</span>
-                <Kbd>{MOD_KEY}</Kbd>
-                <Kbd>⇧</Kbd>
-                <Kbd>⌫</Kbd>
+                <span>Queue · runs after this answer</span>
+                <Kbd>⏎</Kbd>
               </>
             ) : !validation.ok && validation.message ? (
               <span>{validation.message}</span>
@@ -818,11 +859,6 @@ export function PromptInput({
       </div>
     </div>
   )
-}
-
-function SubmitIcon({ status, canSubmit }: { status: PromptStatus; canSubmit: boolean }) {
-  if (status === 'streaming') return <IconPlayerStop size={16} stroke={2} />
-  return <IconArrowUp size={16} stroke={2} className={cn(!canSubmit && 'opacity-60')} />
 }
 
 /** Inline keyboard glyph used in tooltips. The tooltip CSS auto-styles
