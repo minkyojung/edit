@@ -74,7 +74,9 @@ export function ModeToggle({ value, onChange, disabled }: Props) {
           </DropdownMenuTrigger>
         </TooltipTrigger>
         <TooltipContent side="top">
-          <span>Edit approval · {active.title}</span>
+          {/* Just the control's name — the pill already shows which mode is on,
+              and repeating it here made this the longest tooltip in the footer. */}
+          <span>Edit approval</span>
           <Kbd>⇧</Kbd>
           <Kbd>⇥</Kbd>
         </TooltipContent>
