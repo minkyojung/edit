@@ -16,8 +16,8 @@ Current: `@anthropic-ai/claude-agent-sdk` **0.3.220** / bundled CLI **2.1.220**
 | The OS sandbox denies a *subprocess* read of a secret. `cat` never reaches it — the permission layer refuses that first, identically with the sandbox on and off. | 2.1.220 | `verify-sandbox-confinement` |
 | Secret deny rules apply whether or not the sandbox is enabled. | 2.1.220 | `verify-deny-rules-unconditional` |
 | `systemPrompt` is resolved once, at thread creation, and silently dropped on later turns. | 2.1.187 | `verify-current-note-switch` (indirect: it passes only because the per-turn user message wins over a stale system prompt) |
-| Hooks stop firing once the prompt async-iterable returns, because the SDK then closes stdin. Our generator parks forever, so hooks DO fire per turn here. | 2.1.220 | **unpinned** |
-| Plan mode is enforced by `permissionMode` (applied per turn), not by the frozen `builtinTools` list — so the frozen tool list is not a hole. | 2.1.220 | **unpinned** |
+| The SDK closes stdin once the prompt async-iterable returns (`streamInput` awaits the first result, then `endInput`), killing every later control request — canUseTool included — with no error. `hasBidirectionalNeeds()` is true for us because we always pass `canUseTool` + a relay MCP server, so this applies. Our generator parks forever, which is why the gate survives. | 2.1.220 | `verify-lifecycle` T10 (free) + `verify-ask-gate` arm A round 2 |
+| Plan mode is enforced by `permissionMode` (applied per turn), NOT by the frozen `builtinTools` list — drop the mode and the narrowed list alone lets the write through. So the frozen tool list is not a hole, and not the protection either. | 2.1.220 | `verify-ask-gate` arm C |
 | `AskUserQuestion` reaches `canUseTool` under **every** permission mode, including `bypassPermissions` — despite the runtime warning that the callback "will not be invoked" there. It asks the host to render UI, which no mode can auto-answer. | 2.1.220 | `verify-ask-gate` arm B |
 
 `unpinned` means we measured it once and nothing would tell us if it changed.

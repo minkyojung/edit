@@ -30,7 +30,7 @@
 // Usage:
 //   CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat... node scripts/verify-ask-gate.mjs
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
@@ -84,6 +84,52 @@ const waitFor = async (pred, ms = 180000) => {
   }
   return false
 }
+/** One ask→answer round-trip on an existing thread. Returns false when the
+ * model simply didn't ask (nothing to conclude), true when the full loop ran. */
+async function askRound(send, ev, threadId, prompt, label) {
+  const runId = randomUUID()
+  const permBefore = ev.perm.length
+  const doneBefore = ev.done.length
+  send('chat', {
+    runId, threadId, persistentQuery: true, vaultPath: vault,
+    model: 'claude-sonnet-5', permissionMode: 'default',
+    builtinTools: ['AskUserQuestion'], relayTools: [], allowDelegation: false,
+    sandboxEnabled: false, systemPrompt: SYSTEM, prompt,
+  }, 10)
+  await waitFor(() => ev.perm.length > permBefore || ev.done.length > doneBefore || ev.err.length > 0)
+  if (ev.perm.length === permBefore) {
+    punt(`${label}: the model never called AskUserQuestion, so the gate was not exercised`)
+    return false
+  }
+  ok(`${label}: the gate fired`)
+
+  // Parked means NOT finished — the whole point of the mechanism.
+  await sleep(3000)
+  ev.done.length === doneBefore
+    ? ok(`${label}: the turn is parked, no chat/done while waiting`)
+    : bad(`${label}: the turn completed without waiting for an answer`)
+
+  const p = ev.perm[ev.perm.length - 1]
+  const q = p.input?.questions?.[0]
+  const opts = q?.options ?? []
+  const chosen = opts[1] ?? opts[0]
+  const answer = typeof chosen === 'string' ? chosen : chosen?.label ?? 'non-fiction'
+  console.log(`    asked: ${JSON.stringify(q?.question ?? '').slice(0, 74)}`)
+
+  // Payload shape mirrors the real host (QuestionPanel.tsx): nested under
+  // `decision`, answers keyed by the question TEXT. Sent flat, the turn resumes
+  // and the model reports the question went unanswered — which reads exactly
+  // like a product bug and isn't one.
+  send('chat/decision', {
+    runId, decisionId: p.decisionId, decision: { answers: { [q?.question ?? 'q']: answer } },
+  }, 11)
+  const finished = await waitFor(() => ev.done.length > doneBefore || ev.err.length > 0)
+  finished && ev.done.length > doneBefore
+    ? ok(`${label}: the decision released the turn`)
+    : bad(`${label}: the turn never completed after the decision`, `err=${ev.err.map((e) => e.code)}`)
+  return true
+}
+
 const start = (send, ev, permissionMode) => {
   const runId = randomUUID()
   send({
@@ -96,51 +142,30 @@ const start = (send, ev, permissionMode) => {
 }
 
 try {
-  // ── A. permissionMode 'default' — what the app sends for chat ───────────
-  console.log("\n  --- A. 'default': the gate must fire and hold the turn ---")
+  // ── A. 'default': the gate fires, parks, and keeps doing so ─────────────
+  //
+  // TWO rounds on ONE thread, and the second is the one with teeth. If the
+  // prompt generator ever finishes, the SDK closes stdin after the first result
+  // and every later control request dies quietly — so round 1 passes and round 2
+  // silently doesn't gate. A single-round check would stay green through that
+  // forever. (verify-lifecycle T10 guards the same property for free; this is
+  // the user-visible half.)
   {
+    console.log("\n  --- A. 'default': the gate holds the turn, twice ---")
     const { send, ev } = makeServer()
-    const runId = start((p) => send('chat', p, 10), ev, 'default')
-    await waitFor(() => ev.perm.length > 0 || ev.done.length > 0 || ev.err.length > 0)
-
-    if (ev.perm.length === 0) {
-      // Could be the model declining to ask rather than a broken gate — say so
-      // instead of banking a failure.
-      punt('the model never called AskUserQuestion, so the gate was not exercised')
-    } else {
-      ok('the gate fired', `tool=${ev.perm[0].toolName}`)
-
-      // The point of the whole mechanism: parked means NOT finished.
-      await sleep(3000)
-      ev.done.length === 0
-        ? ok('the turn is parked — no chat/done while waiting for an answer')
-        : bad('the turn completed without waiting for an answer')
-
-      const p = ev.perm[0]
-      const q = p.input?.questions?.[0]
-      const opts = q?.options ?? []
-      const chosen = opts[1] ?? opts[0]
-      const label = typeof chosen === 'string' ? chosen : chosen?.label ?? 'non-fiction'
-      console.log(`    asked: ${JSON.stringify(q?.question ?? '').slice(0, 80)}`)
-
-      // Payload shape mirrors the real host (QuestionPanel.tsx): the decision is
-      // NESTED under `decision`, and answers are keyed by the question text.
-      // Sent flat, the turn resumes and the model reports the question went
-      // unanswered — which reads exactly like a product bug and isn't one.
-      send('chat/decision', {
-        runId, decisionId: p.decisionId, decision: { answers: { [q?.question ?? 'q']: label } },
-      }, 11)
-
-      const finished = await waitFor(() => ev.done.length > 0 || ev.err.length > 0)
-      finished && ev.done.length > 0
-        ? ok('the decision released the turn and it completed')
-        : bad('the turn never completed after the decision', `err=${ev.err.map((e) => e.code)}`)
-
-      // The answer has to reach the model, not just unblock it.
+    const threadId = randomUUID()
+    const first = await askRound(send, ev, threadId,
+      'Write me a short piece. Use AskUserQuestion first to ask whether it should be fiction or non-fiction.',
+      'round 1')
+    if (first) {
       const unanswered = /(did ?n.?t get answered|no answer|ask again)/i.test(ev.text)
       unanswered
-        ? bad('the model says the question went unanswered — the answer did not arrive')
-        : ok('the model proceeded on the answer', `chose ${JSON.stringify(label)}`)
+        ? bad('round 1: the model says the question went unanswered')
+        : ok('round 1: the model proceeded on the answer it was given')
+
+      await askRound(send, ev, threadId,
+        'Now write another short piece. Use AskUserQuestion again to ask whether it should be funny or serious.',
+        'round 2')
     }
   }
 
@@ -158,6 +183,52 @@ try {
       bad('the gate did NOT fire — AskUserQuestion is no longer exempt from bypass')
     } else {
       punt('the model never called AskUserQuestion, so the arm was not exercised')
+    }
+  }
+
+  // ── C. Plan mode is enforced by permissionMode, not the tool list ────────
+  //
+  // The app narrows builtinTools for plan mode AND sets permissionMode 'plan'.
+  // builtinTools is frozen at thread creation, so a thread that starts in edit
+  // mode keeps the full toolset — which looks like plan mode would leak. It
+  // doesn't: permissionMode IS applied per turn, and it is what actually
+  // refuses. Worth pinning both because the frozen half is the intuitive
+  // suspect, and because the refusal runs through the same canUseTool gate the
+  // arms above cover.
+  {
+    console.log('\n  --- C. plan mode after starting in edit mode ---')
+    const { send, ev } = makeServer()
+    const threadId = randomUUID()
+    const target = join(vault, 'plan-target.txt')
+    writeFileSync(target, 'ORIGINAL\n')
+
+    const editRun = randomUUID()
+    send('chat', {
+      runId: editRun, threadId, persistentQuery: true, vaultPath: vault,
+      model: 'claude-sonnet-5', permissionMode: 'default',
+      builtinTools: undefined, relayTools: [], allowDelegation: false, sandboxEnabled: false,
+      prompt: `Use the Write tool to replace the contents of ${target} with the single word EDITED.`,
+    }, 30)
+    await waitFor(() => ev.done.length > 0 || ev.err.length > 0)
+    readFileSync(target, 'utf-8').includes('EDITED')
+      ? ok('edit mode wrote the file (control — the model can do this at all)')
+      : punt('edit mode did not write the file, so plan mode blocking it proves nothing')
+
+    if (readFileSync(target, 'utf-8').includes('EDITED')) {
+      writeFileSync(target, 'ORIGINAL\n')
+      const planRun = randomUUID()
+      send('chat', {
+        runId: planRun, threadId, persistentQuery: true, vaultPath: vault,
+        model: 'claude-sonnet-5', permissionMode: 'plan',
+        builtinTools: ['Read', 'Glob', 'Grep', 'Write', 'AskUserQuestion', 'ExitPlanMode'],
+        relayTools: [], allowDelegation: false, sandboxEnabled: false,
+        prompt: `Use the Write tool to replace the contents of ${target} with the single word EDITED.`,
+      }, 31)
+      await waitFor(() => ev.done.length > 1 || ev.err.length > 0 || ev.perm.length > 0, 180000)
+      await sleep(2000)
+      readFileSync(target, 'utf-8').includes('EDITED')
+        ? bad('plan mode wrote the file — the mode did not hold')
+        : ok('plan mode refused the write on a thread that began in edit mode')
     }
   }
 

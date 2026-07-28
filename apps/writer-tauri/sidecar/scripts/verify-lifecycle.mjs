@@ -18,7 +18,7 @@ function makeFakeQuery(prompt) {
   const outQ = []
   let outResolve = null
   let outEnded = false
-  const rec = { messages: [], calls: [], pushEvent, endOutput }
+  const rec = { messages: [], calls: [], inputEnded: false, pushEvent, endOutput }
   function pushEvent(e) {
     if (outResolve) { const r = outResolve; outResolve = null; r({ value: e, done: false }) }
     else outQ.push(e)
@@ -38,6 +38,13 @@ function makeFakeQuery(prompt) {
         rec.messages.push(value)
       }
     } catch { /* input aborted */ }
+    // The real SDK does more than end the stream here: `streamInput` falls out
+    // of its `for await`, waits for the first result, and calls
+    // `transport.endInput()` — closing stdin to the CLI for good. Every control
+    // request after that (canUseTool, hooks) is answered by a dead channel and
+    // silently no-ops, with tools still running and no error anywhere. Recording
+    // it lets T10 assert the generator never gets here.
+    rec.inputEnded = true
     endOutput() // input ended → stream ends (mirrors the SDK)
   })()
   const iter = {
@@ -329,8 +336,48 @@ async function t9() {
     ev.task.some((t) => t.kind === 'started' && t.taskId === 'fg1'))
 }
 
+// ── T10: the prompt generator must never finish ──────────────────────────
+// The thread's input iterable (#threadInput) loops forever and parks between
+// turns. That is load-bearing, not stylistic: the SDK's `streamInput` closes
+// stdin once the iterable returns (it awaits the first result, then calls
+// transport.endInput), and `hasBidirectionalNeeds()` is true for us because we
+// always pass canUseTool and a relay MCP server. With stdin gone, every control
+// request is answered by a dead channel — the AskUserQuestion gate stops
+// parking turns and the model answers its own question, with no error and tools
+// still working. Nothing about that looks broken from the outside.
+//
+// So the cheap net lives here, on the fake: assert the generator is still
+// pending after turns settle. A refactor to per-turn `query.streamInput()` —
+// which the SDK's own docs make look reasonable — trips this immediately,
+// without an API call.
+async function t10() {
+  console.log('\n[T10] the prompt generator parks forever (stdin stays open)')
+  fakes.length = 0
+  const { server, send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
+
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'one' }, nid())
+  const f = await awaitFake(1)
+  await runTurn(f, r1, ev)
+  check('generator still pending after turn 1 settles', f.inputEnded === false)
+
+  // A second turn on the same thread — the case that would already be broken if
+  // the generator had finished, since its message could not be delivered.
+  send('chat', { runId: r2, threadId: tid, persistentQuery: true, prompt: 'two' }, nid())
+  await waitFor(() => f.messages.length >= 2)
+  check('turn 2 reached the same live query', f.messages.length >= 2, `messages=${f.messages.length}`)
+  await runTurn(f, r2, ev)
+  check('generator still pending after turn 2', f.inputEnded === false)
+  check('one query served both turns', server.activeThreads.size === 1)
+
+  // Closing the thread is the ONLY thing that may end it.
+  send('chat/close-thread', { threadId: tid })
+  await waitFor(() => f.inputEnded === true, 3000)
+  check('closing the thread does end the generator', f.inputEnded === true)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10()
 } finally {
   process.stderr.write = origWrite
 }
