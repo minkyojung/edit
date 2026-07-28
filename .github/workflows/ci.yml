@@ -38,8 +38,9 @@ jobs:
           cache-dependency-path: casablanca/pnpm-lock.yaml
 
       # Skip postinstall here — binaries setup is needed only for the
-      # Rust/Tauri build, not for vite typecheck/build. Faster CI, and
-      # avoids requiring bun network access on every PR.
+      # Rust/Tauri build, not for vite typecheck/build/test. postinstall only
+      # fetches the pinned bun used by the sidecar at runtime; the vitest suite
+      # runs in jsdom and the two test files touching @tauri-apps both mock it.
       - name: pnpm install (skip postinstall)
         working-directory: casablanca
         run: pnpm install --frozen-lockfile --ignore-scripts
@@ -51,6 +52,20 @@ jobs:
       - name: Typecheck (writer-tauri)
         working-directory: casablanca
         run: pnpm --filter writer-tauri typecheck
+
+      # ~1000 tests in 17 seconds, no network, no secrets — the textbook
+      # presubmit suite. It had never run here, which is how five sidecar
+      # harnesses came to be completely dead without anyone noticing.
+      #
+      # No `retry`. Vitest re-runs a failed test in a DIFFERENT state, so for the
+      # one failure mode we've actually observed here — passes alone, failed once
+      # under a heavily loaded parallel run — a retry would reliably mask the
+      # isolation bug rather than report it. If retry is ever added, every
+      # retry-pass has to be reported as a defect signal (Shopify's guardrail),
+      # otherwise it just converts an actionable red into silence.
+      - name: Test (writer-tauri)
+        working-directory: casablanca
+        run: pnpm --filter writer-tauri test
 
       - name: Build (writer-tauri vite)
         working-directory: casablanca
