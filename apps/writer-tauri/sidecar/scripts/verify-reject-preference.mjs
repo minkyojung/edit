@@ -64,6 +64,13 @@ const systemPrompt = [
 
 // ── User turn: the reject HOST NOTE (mirrors buildEditOutcomeNote) + a
 //    correction that implies a DURABLE preference (casual, not formal). ─────
+//
+// The nudge is UNCONDITIONAL here; production gates it on `anyRejected`
+// (buildEditOutcomeNote.ts: `...(anyRejected ? ['', ...PREFERENCE_NUDGE_LINES] : [])`).
+// Sound, because every scenario in this file is a rejection — but the copy hides
+// that the gate exists at all, so a change to WHEN production emits the nudge
+// would leave this passing against a shape production no longer produces.
+// harnessProseParity.test.ts pins the wording; nothing pins the condition.
 // The reject REASON is itself part of the signal. A style reject (durable case)
 // implies a reusable rule; a factual reject (oneoff case) does not — so the
 // oneoff case must vary BOTH the reject reason and the follow-up message,

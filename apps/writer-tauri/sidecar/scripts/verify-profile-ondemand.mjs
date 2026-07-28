@@ -56,6 +56,13 @@ const claudeMd = readFileSync(join(APP_SRC, 'CLAUDE.md'), 'utf8')
 
 // The SELF PROFILE block exactly as composeSystemBlocks now builds it: summary
 // (About only) + the on-demand pointer with the absolute profile path.
+//
+// A COPY, and unlike the currentNoteBlock family it is not pinned by
+// harnessProseParity.test.ts — production assembles this inline inside
+// composeSystemBlocks (systemPrompt.ts ~204-221) rather than in a callable
+// function, so there is nothing to invoke and diff against. If you change the
+// pointer wording there, change it here too; nothing will tell you. Extracting
+// it into a named function in production would make it pinnable.
 const selfProfileBlock =
   `--- SELF PROFILE ---\n## About\n\n${ABOUT}\n\n` +
   `Fuller background facts about the user (history, ongoing projects, ` +
