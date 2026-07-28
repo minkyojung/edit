@@ -6,9 +6,11 @@
 // real model then RETRIES propose_write and REBASES onto the injected latest
 // (i.e. keeps the user's line instead of resubmitting its stale version).
 //
-// This validates the Layer A/C mechanism — reusing the existing edit-ack
-// `reason` channel + the sidecar's PostToolUse hook to drive a model retry —
-// BEFORE any live host wiring is enabled.
+// This validates the Layer A/C mechanism — the edit-ack `reason` channel
+// carrying the host's refusal back to the model so it retries. The delivery is
+// the propose_write ROUND-TRIP: the tool handler awaits the verdict and returns
+// it as its own result. (It rode a PostToolUse hook when this file was written;
+// see HISTORY below for why that path was replaced.)
 //
 //   CLAUDE_CODE_CLI_PATH=/path/to/claude \
 //   CLAUDE_CONFIG_DIR=$(mktemp -d) \        # avoid unrelated user hooks
@@ -155,13 +157,13 @@ try {
   console.log('\n  --- assistant reply ---\n  ' + assistantText.trim().replace(/\n/g, '\n  ') + '\n')
   sawStaleErrorToModel
     ? ok('stale error was delivered to the model as a tool_result')
-    : bad('stale error NEVER reached the model — hook did not rewrite the tool output')
+    : bad('stale error NEVER reached the model — the round-trip did not return the verdict')
 
   // Assertions.
   writes.length >= 1 ? ok(`model called propose_write (${writes.length}x)`) : bad('model never called propose_write')
   writes.length >= 2
     ? ok('model RETRIED after the stale ack (the loop fired)')
-    : bad('model did NOT retry after stale — the reason→hook→retry loop failed')
+    : bad('model did NOT retry after stale — the reason→verdict→retry loop failed')
 
   if (writes.length >= 2) {
     const retry = writes[writes.length - 1].content

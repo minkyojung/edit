@@ -6,7 +6,8 @@
 //
 // Covers: (1) multi-turn reuse, (2) background survival + autonomous completion,
 // (3) cancel keeps the thread, (4) mid-thread model change (no abort),
-// (5) background survives a cancel.
+// (5) a cancel KILLS an in-flight background task — pinned SDK defect #352,
+//     not the behaviour we want. See the comment inside scenario 5.
 
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -131,8 +132,8 @@ async function scenario4_modelChange() {
   await sleep(400)
 }
 
-async function scenario5_cancelKeepsBackground() {
-  console.log('\n[5] cancel does NOT kill an in-flight background task')
+async function scenario5_cancelKillsBackground() {
+  console.log('\n[5] cancel KILLS an in-flight background task (pinned SDK defect #352)')
   const { server, send, ev } = makeServer()
   const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
   send('chat', {
@@ -181,7 +182,7 @@ try {
   await scenario2_background()
   await scenario3_cancel()
   await scenario4_modelChange()
-  await scenario5_cancelKeepsBackground()
+  await scenario5_cancelKillsBackground()
 } finally {
   rmSync(vault, { recursive: true, force: true })
 }

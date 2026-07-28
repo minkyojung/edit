@@ -118,14 +118,14 @@ function record(name, ok, detail) {
   console.log(`${ok ? '✓' : '✗'} ${name}${detail ? ` — ${detail}` : ''}`)
 }
 
-// Drives one propose_edit call through the sidecar's PostToolUse ack hook,
-// answering the resulting `chat/edit-pending` with `chat/edit-ack` (acting as
-// "the host") for either the CONTROL (ok: true, the common/happy path) or
-// TREATMENT (ok: false, the path that should rewrite the tool's own returned
-// text) case. Returns what the model actually saw, so the caller can compare
-// control vs treatment — the differential is what proves the hook fired at
-// all, since a hook that silently stopped matching/working would otherwise
-// look identical to a hook that's working (both "look fine" on their own).
+// Drives one propose_edit call and answers the resulting `chat/edit-pending`
+// with `chat/edit-ack` (acting as "the host") for either the CONTROL (ok: true,
+// the happy path) or TREATMENT (ok: false, the refusal) case. propose_edit is a
+// ROUND-TRIP tool: its handler awaits that verdict and returns it as its own
+// result. Returns what the model actually saw, so the caller can compare the
+// two — the differential is what proves the verdict reached the model at all,
+// since a path that silently stopped delivering would otherwise look identical
+// to a working one (both "look fine" on their own).
 async function runProposeEditCheck(c, runId, ok) {
   const scratchDir = await mkdtemp(join(tmpdir(), 'sidecar-smoke-'))
   const filePath = join(scratchDir, 'test.txt')
@@ -145,8 +145,8 @@ async function runProposeEditCheck(c, runId, ok) {
       const ev = msg.params.event
       // Tool results are always echoed back as a `user` message (PROTOCOL.md
       // Section 4, `chat/event`'s passthrough list) — including whatever the
-      // PostToolUse hook rewrote them to. This is the most direct externally
-      // observable signal that the hook's `updatedToolOutput` actually landed.
+      // the tool returned after awaiting the host verdict. This is the most
+      // direct externally observable signal that the verdict actually landed.
       if (ev?.type === 'user') {
         const blocks = ev.message?.content ?? []
         for (const b of blocks) {
@@ -280,12 +280,12 @@ async function run() {
   // avoid. A deeper, interactive check belongs in a separate, manually-run
   // script, not this fast/deterministic one.
 
-  // 4c. propose_edit + PostToolUse hook + chat/edit-ack — the highest-risk path
-  // per the SDK-conformance audit (the hook's matcher format and
-  // `updatedToolOutput` shape aren't strictly documented by the SDK's own
-  // types). Run CONTROL (ok: true) then TREATMENT (ok: false) and compare —
-  // the differential is what proves the hook actually fired, so a silent
-  // break can't hide behind the hook's own fail-open behavior.
+  // 4c. propose_edit + chat/edit-ack round-trip. Run CONTROL (ok: true) then
+  // TREATMENT (ok: false) and compare — the differential is what proves the
+  // verdict actually reached the model, so a silent break can't hide behind a
+  // fail-open timeout. (This checked a PostToolUse hook until that path was
+  // removed for racing the model's consumption of the tool result ~1/3 of the
+  // time; the handler now returns the verdict directly.)
   try {
     const control = await runProposeEditCheck(c, 'edit-control', true)
     const treatment = await runProposeEditCheck(c, 'edit-treatment', false)
@@ -298,25 +298,25 @@ async function run() {
       )
     } else if (control.toolResultText !== treatment.toolResultText) {
       record(
-        'propose_edit + PostToolUse hook (tool_result rewritten)',
+        'propose_edit verdict round-trip (control and refusal differ)',
         true,
         'control/treatment tool_result differ, as expected',
       )
     } else if (control.finalText !== treatment.finalText) {
       record(
-        'propose_edit + PostToolUse hook (behavioral diff only — WARN)',
+        'propose_edit verdict round-trip (behavioral diff only — WARN)',
         true,
         'tool_result identical but downstream response differs; verify manually that the SDK still folds the rewrite in some other way',
       )
     } else {
       record(
-        'propose_edit + PostToolUse hook',
+        'propose_edit verdict round-trip',
         false,
-        'no observable difference between ok:true and ok:false — the hook may not be firing (matcher syntax or updatedToolOutput shape may have changed in this SDK version)',
+        'no observable difference between ok:true and ok:false — the tool handler may not be awaiting the ack, or the host verdict never arrived',
       )
     }
   } catch (e) {
-    record('propose_edit + PostToolUse hook', false, e.message)
+    record('propose_edit verdict round-trip', false, e.message)
   }
 
   // 5. cancel mid-flight
