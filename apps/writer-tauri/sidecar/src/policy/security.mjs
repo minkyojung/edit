@@ -154,10 +154,24 @@ export function sandboxLockdown({ gitDir } = {}) {
     // ("the dangerouslyDisableSandbox parameter is completely ignored and
     // all commands must run sandboxed" — Claude Code sandbox docs.)
     allowUnsandboxedCommands: false,
-    // No allowed domains → tool subprocesses get no network egress (the
-    // proxy pre-allows nothing, so every new host is blocked in headless).
-    // The SDK↔model API channel and server-side WebSearch/WebFetch run
-    // OUTSIDE this sandbox, so live web research still works.
+    // No allowed domains. Read the docs carefully here: an empty allowlist is
+    // not documented as a DENY. "No domains are pre-allowed by default. The
+    // first time a command needs a new domain, Claude Code PROMPTS for
+    // approval." We are headless — there is no one to prompt and no UI to
+    // prompt with — so every new host is refused, and verify-sandbox-confinement
+    // measures exactly that ("egress works unsandboxed and is blocked
+    // sandboxed"). Egress really is closed; it is closed as a CONSEQUENCE of
+    // having no prompt channel, not because we asked for a deny.
+    //
+    // `network.strictAllowlist: true` (CLI 2.1.219+) is the setting that says
+    // deny instead of prompt. Deliberately not set yet: it would change nothing
+    // measurable today, and the harness above would keep passing either way, so
+    // it can't be added under this project's rule that a new check must first
+    // be shown to fail. Add it if a prompt channel ever appears — that is the
+    // moment this comment stops being true.
+    //
+    // The SDK↔model API channel and server-side WebSearch/WebFetch run OUTSIDE
+    // this sandbox, so live web research still works.
     network: { allowedDomains: [] },
     // OS-level backstop for the SUBPROCESS reads the permission rules can't
     // reach (a python/node script opening a file itself). The tool-level
