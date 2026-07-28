@@ -721,7 +721,15 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // cancel, edit and reorder are array operations here, whereas a turn the
       // sidecar has already accepted would need a control-protocol message to
       // retract — and the SDK's own cancel for that is untyped.
-      if (chatStatus === 'streaming') {
+      // Read the status LIVE rather than from `chatStatus`. That binding is the
+      // value from the render this closure was created in, so two Enters in one
+      // tick both see 'idle' — which is the whole reason sendInFlightRef exists.
+      // `runner.run` sets the store to 'streaming' synchronously before its
+      // first await, so a second call in the same tick reads 'streaming' here
+      // and queues instead of double-sending.
+      const liveStatus =
+        useTurnState.getState().byThread.get(threadId)?.status ?? 'idle'
+      if (liveStatus === 'streaming') {
         useTurnState
           .getState()
           .enqueueTurn(threadId, { turn: userTurn, attachments, mentionPaths })
@@ -736,7 +744,21 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
       // First turn follows the bottom; later turns anchor to the top.
       anchorSentTurn(userTurn.id, isFirstTurn)
 
-      await runner.run(threadId, [...turnsHook.turns, userTurn], undefined, attachments, mentionPaths)
+      const started = runner.run(
+        threadId,
+        [...turnsHook.turns, userTurn],
+        undefined,
+        attachments,
+        mentionPaths,
+      )
+      // Release the latch as soon as the run is DISPATCHED, not when the answer
+      // finishes. Holding it for the whole run is what broke queueing: a second
+      // send bounced off the latch above and never reached the branch that parks
+      // it. By this line the store already reads 'streaming', so the latch has
+      // nothing left to protect. (The finally below repeats this; Set.delete is
+      // idempotent, and it still covers the throwing paths.)
+      sendInFlightRef.current.delete(threadId)
+      await started
     } finally {
       sendInFlightRef.current.delete(threadId)
     }
