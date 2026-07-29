@@ -153,6 +153,19 @@ export interface DocPolicy {
   isAgentManaged: boolean
 }
 
+/** Why a metadata write did or did not land.
+ *
+ * The reasons are the store's own refusal points, not a UI vocabulary — the
+ * caller decides what to say. They are distinguished because the reader's next
+ * move differs: a doc type that cannot carry the field is a dead end, while a
+ * note the store has never heard of means the vault view is behind and a
+ * re-read is worth trying. The AI relay tools are the reason this exists —
+ * they reported success for writes that never happened — but nothing here is
+ * specific to them. */
+export type MetadataOutcome =
+  | { ok: true }
+  | { ok: false; reason: 'no-such-note' | 'unsupported-doc-type' }
+
 /** Top-level store shape. Slices each implement a sub-shape of this
  * interface; the combined creator in `index.ts` spreads them into a
  * single zustand store. */
@@ -323,12 +336,18 @@ export interface DocsState {
   moveFolder: (folderPath: string, destParent: string) => Promise<boolean>
   /** Toggle a read-it-later article's read/unread state (sets/clears
    * `readAt` and flushes the sidecar). No-op for non-article docs. */
-  setArticleRead: (slug: string, read: boolean) => void
-  /** Set (or clear, with `undefined`) a note's workflow status and flush.
-   * No-op for doc types that don't carry status (daily / system). */
-  setDocStatus: (slug: string, status: DocStatus | undefined) => void
-  /** Replace a note's tag list (trimmed/de-duped; empty clears) and flush. */
-  setDocTags: (slug: string, tags: string[]) => void
+  setArticleRead: (slug: string, read: boolean) => void  /** Set (or clear, with `undefined`) a note's workflow status and flush.
+   *
+   * Returns the outcome rather than nothing. The store used to decline in
+   * four different ways, all of them a bare `return`, so `set_note_status`
+   * told the model "Status set" whether or not anything happened. An
+   * already-correct status is `ok` — the user's request is satisfied, and
+   * reporting it as a refusal would have the model apologise for a state
+   * that is right. */
+  setDocStatus: (slug: string, status: DocStatus | undefined) => MetadataOutcome
+  /** Replace a note's tag list (trimmed/de-duped; empty clears) and flush.
+   * Reports its outcome for the same reason as {@link setDocStatus}. */
+  setDocTags: (slug: string, tags: string[]) => MetadataOutcome
   /** Set a property's value by panel key. Typed keys (status/tags/
    * created/…) coerce into their catalog field (invalid values are
    * rejected — no-op); custom keys upsert into `fm`. Returns false when
