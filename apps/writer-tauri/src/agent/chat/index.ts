@@ -248,7 +248,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // Queue article list / wiki handoff: fixed for this run and still delivered
     // through the system prompt's DOCUMENT block, so the base is what we're
     // about to show.
-    if (slug) setModelBase(slug, docText)
+    if (slug) setModelBase(threadId, slug, docText)
   } else if (attachCurrentNote && slug && currentFilePath) {
     const shownEarlier = !needsNoteBody(threadId, slug, docText)
     // `appendDocument: false` means the caller is supplying the note text
@@ -261,7 +261,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       shownEarlier,
     )
     if (sendBody) {
-      setModelBase(slug, docText)
+      setModelBase(threadId, slug, docText)
       markNoteBodyShown(threadId, slug, docText)
     }
   }
@@ -279,7 +279,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     const body = doc ? readDocBody(doc.slug) : undefined
     // Same CAS base as the current doc: a mentioned note's shown body is what a
     // later whole-doc overwrite must not silently clobber.
-    if (doc && body) setModelBase(doc.slug, body)
+    if (doc && body) setModelBase(threadId, doc.slug, body)
     return { path, body: body && body.trim() ? body : undefined }
   })
 
@@ -706,6 +706,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
                 const body = mapped.edits.map((ed) => ed.after ?? '').join('\n\n')
                 const filePath = String(e.payload.input?.file_path ?? mapped.pageSlug)
                 const outcome = await guardedWholeDocWrite(
+                  threadId,
                   mapped.pageSlug,
                   body,
                   mapped.id,

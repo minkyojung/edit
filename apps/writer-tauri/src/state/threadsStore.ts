@@ -39,6 +39,7 @@ import type { ChatTurn, ThreadMeta } from '@/chat/types'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useChatDraftStore } from '@/state/chatDraftStore'
 import { forgetThreadNoteContext } from '@/agent/chat/noteContextLedger'
+import { forgetThreadModelBase } from '@/agent/modelBodyBase'
 import {
   appendThreadTurn,
   appendThreadTurns,
@@ -241,6 +242,10 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
     // inherit a claim that a note had already been sent, suppressing the block
     // for a thread that never saw it.
     forgetThreadNoteContext(id)
+    // And the CAS bases stamped alongside it — same shape, same reason, and a
+    // reused id inheriting a base would judge a write against a body this
+    // thread was never shown.
+    forgetThreadModelBase(id)
     set((s) => {
       const threads = { ...s.threads }
       const turns = { ...s.turns }
