@@ -31,7 +31,7 @@ import {
   getPersistentQueryEnabled,
 } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
-import { pathForDoc, pathForSlug, pathToKnownSlug, type DocStatus } from '@/lib/docPaths'
+import { pathForDoc, pathForSlug, type DocStatus } from '@/lib/docPaths'
 import { queryNotes } from '@/lib/queryNotes'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
@@ -79,6 +79,7 @@ import {
   truncateDocForPrompt,
 } from './systemPrompt'
 import { markNoteBodyShown, needsNoteBody } from './noteContextLedger'
+import { resolveAndSet } from './metadataWrite'
 import { createStreamParser } from './streamParser'
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
@@ -376,6 +377,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     string,
     Promise<{ pageSlug: string; pendingId: string } | null>
   >()
+
+  /** Answer a parked `host/*` request. The sidecar's tool call is blocked on
+   *  this, so a failure to send is a hung tool — log it loudly rather than
+   *  swallowing, and let the run-release path be the backstop. */
+  const answerHost = (requestId: string, result: unknown) => {
+    void invoke('claude_chat_host_answer', { args: { requestId, result } }).catch((err) =>
+      console.warn('[chat] host-answer failed', { requestId, err }),
+    )
+  }
 
   const cleanup = () => {
     useChatRuns.getState().end(runId)
@@ -830,43 +840,25 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       // set_note_status MCP tool → set a note's workflow status. Resolve via
       // pathToKnownSlug (not a relPath match) so writing/wiki docs resolve too,
       // then hand to setDocStatus, which guards non-status doc types itself.
-      listen<{ runId: string; path: string; status: DocStatus }>(
+      listen<{ runId: string; requestId: string; path: string; status: DocStatus }>(
         'claude:set-status',
         (e) => {
           if (e.payload.runId !== runId) return
-          const rel = toVaultRelative(e.payload.path, getActiveVaultPath())
-          if (!rel) {
-            console.warn('[chat] set-status: unresolved path', e.payload.path)
-            return
-          }
-          const slug = pathToKnownSlug(rel, useDocsStore.getState().knownDocs)
-          if (!slug) {
-            console.warn('[chat] set-status: no note at', rel)
-            return
-          }
-          useDocsStore.getState().setDocStatus(slug, e.payload.status)
-          console.log('[chat] set-status', { path: rel, status: e.payload.status })
+          answerHost(e.payload.requestId, resolveAndSet(e.payload.path, (slug) =>
+            useDocsStore.getState().setDocStatus(slug, e.payload.status),
+          ))
         },
       ),
       // set_note_tags MCP tool → replace a note's tags. Resolve via
       // pathToKnownSlug (writing/wiki docs too), then hand to setDocTags,
       // which trims/de-dupes and guards non-metadata doc types.
-      listen<{ runId: string; path: string; tags: string[] }>(
+      listen<{ runId: string; requestId: string; path: string; tags: string[] }>(
         'claude:set-tags',
         (e) => {
           if (e.payload.runId !== runId) return
-          const rel = toVaultRelative(e.payload.path, getActiveVaultPath())
-          if (!rel) {
-            console.warn('[chat] set-tags: unresolved path', e.payload.path)
-            return
-          }
-          const slug = pathToKnownSlug(rel, useDocsStore.getState().knownDocs)
-          if (!slug) {
-            console.warn('[chat] set-tags: no note at', rel)
-            return
-          }
-          useDocsStore.getState().setDocTags(slug, e.payload.tags)
-          console.log('[chat] set-tags', { path: rel, tags: e.payload.tags })
+          answerHost(e.payload.requestId, resolveAndSet(e.payload.path, (slug) =>
+            useDocsStore.getState().setDocTags(slug, e.payload.tags),
+          ))
         },
       ),
       // query_notes MCP tool → filter the catalog by metadata (status/tags)

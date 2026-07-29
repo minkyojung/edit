@@ -372,6 +372,34 @@ pub struct ChatQueryResultArgs {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostAnswerArgs {
+    /// The key the host parked the request under, echoed back verbatim.
+    pub request_id: String,
+    /// Opaque to Rust — the sidecar's tool decides what it means.
+    pub result: Value,
+}
+
+/// Answers a parked `host/*` request with a payload the host does not read.
+///
+/// Deliberately generic, where `claude_chat_query_result` /
+/// `claude_chat_edit_ack` / `claude_chat_decision` each name their own fields.
+/// Those three predate the transport and are typed at this boundary for
+/// reasons that still hold — `results` must be an array, an ack has three
+/// specific flags. A metadata write's answer is `{ok, reason}` and Rust has no
+/// stake in either field, so typing it here would only mean editing this file
+/// every time a relay tool gains a case.
+#[tauri::command]
+pub async fn claude_chat_host_answer(app: AppHandle, args: HostAnswerArgs) -> Result<(), String> {
+    let manager = get_manager(&app)?;
+    if !manager.pending_frontend().answer(&args.request_id, args.result).await {
+        // Already released — the run was cancelled or the sidecar restarted.
+        return Err(format!("request {} is no longer waiting", args.request_id));
+    }
+    Ok(())
+}
+
 /// Answers a `host/queryNotes` request the sidecar parked with the host. This
 /// is the second half of a JSON-RPC request the host could not answer itself:
 /// the note catalogue lives in the frontend's docs store, so the reply travels

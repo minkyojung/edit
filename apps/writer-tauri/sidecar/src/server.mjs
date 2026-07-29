@@ -122,7 +122,28 @@ async function sessionPersisted(sessionId) {
   }
 }
 
-function buildSetNoteStatusTool(getRunId, emit) {
+/** What to tell the model when the host declined a metadata write. Shared by
+ *  status and tags so the two never drift into saying different things about
+ *  the same refusal. Each reason names the next move, because "it didn't work"
+ *  alone sends the model round the same loop. */
+function refusalText(field, path, reason) {
+  if (reason === 'unsupported-doc-type') {
+    return (
+      `(error: ${path} is a doc type that carries no ${field} — a daily journal or a system ` +
+      `page. Nothing was changed and nothing can be. Tell the user this note cannot have a ` +
+      `${field}; do not retry.)`
+    )
+  }
+  if (reason === 'no-such-note') {
+    return (
+      `(error: no note exists at ${path}, so its ${field} was NOT changed. Check the path — ` +
+      `use Glob or query_notes to find the real one — then call this again.)`
+    )
+  }
+  return `(error: the ${field} was NOT changed${reason ? ` — ${reason}` : ''}.)`
+}
+
+export function buildSetNoteStatusTool(askHost) {
   return tool(
     'set_note_status',
     "Set a note's workflow status when the user asks (e.g. \"이거 완료 처리해줘\" → done, \"진행 중으로\" → in-progress, \"아직 시작 안 함\" → not-started). `path` is the note's vault-relative or absolute path; `status` is one of not-started / in-progress / done. Only editable notes carry a status — a daily journal or a system page will be ignored by the host. Applied IMMEDIATELY (not queued for review) and reversible. Returns immediately — do not wait. This is the ONLY way to change a note's status; never write a `status:` line into a `---` frontmatter block yourself.",
@@ -131,21 +152,23 @@ function buildSetNoteStatusTool(getRunId, emit) {
       status: z.enum(['not-started', 'in-progress', 'done']),
     },
     async (input) => {
-      emit(
-        notification('chat/set-status', {
-          runId: getRunId(),
-          path: input.path,
-          status: input.status,
-        }),
-      )
-      return {
-        content: [{ type: 'text', text: `Status set: ${input.path} → ${input.status}` }],
+      // Round-trip. The host declines silently for a note it cannot find and
+      // for doc types that carry no status — the description below says so,
+      // but until this awaited a verdict the model was told "Status set"
+      // either way and passed that on to the user.
+      const said = (text) => ({ content: [{ type: 'text', text }] })
+      try {
+        const r = await askHost('host/setNoteStatus', { path: input.path, status: input.status })
+        if (r?.ok) return said(`Status set: ${input.path} → ${input.status}`)
+        return said(refusalText('status', input.path, r?.reason))
+      } catch (e) {
+        return said(`(error: the status was NOT set — ${e?.message ?? 'the host did not answer'}.)`)
       }
     },
   )
 }
 
-function buildSetNoteTagsTool(getRunId, emit) {
+export function buildSetNoteTagsTool(askHost) {
   return tool(
     'set_note_tags',
     "Set a note's tags when the user asks (e.g. \"이 노트에 태그 달아줘\", \"ai, 금융 태그 붙여줘\"). `path` is the note's vault-relative or absolute path; `tags` is the COMPLETE list of tags the note should have (this REPLACES the existing tags, so include the ones to keep). Pass an empty list to clear all tags. Only editable notes carry tags — a daily journal or system page is ignored by the host. Applied IMMEDIATELY (not queued) and reversible. Returns immediately — do not wait. This is the ONLY way to change a note's tags; never write a `tags:` block into a `---` frontmatter block yourself.",
@@ -154,17 +177,13 @@ function buildSetNoteTagsTool(getRunId, emit) {
       tags: z.array(z.string()),
     },
     async (input) => {
-      emit(
-        notification('chat/set-tags', {
-          runId: getRunId(),
-          path: input.path,
-          tags: input.tags,
-        }),
-      )
-      return {
-        content: [
-          { type: 'text', text: `Tags set: ${input.path} → [${input.tags.join(', ')}]` },
-        ],
+      const said = (text) => ({ content: [{ type: 'text', text }] })
+      try {
+        const r = await askHost('host/setNoteTags', { path: input.path, tags: input.tags })
+        if (r?.ok) return said(`Tags set: ${input.path} → [${input.tags.join(', ')}]`)
+        return said(refusalText('tags', input.path, r?.reason))
+      } catch (e) {
+        return said(`(error: the tags were NOT set — ${e?.message ?? 'the host did not answer'}.)`)
       }
     },
   )
@@ -1734,9 +1753,9 @@ export class Server {
       } else if (name === 'move_note') {
         relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
       } else if (name === 'set_note_status') {
-        relayDefs.push(buildSetNoteStatusTool(getRunId, this.emit))
+        relayDefs.push(buildSetNoteStatusTool((m, p) => this.#askHost(getRunId(), m, p)))
       } else if (name === 'set_note_tags') {
-        relayDefs.push(buildSetNoteTagsTool(getRunId, this.emit))
+        relayDefs.push(buildSetNoteTagsTool((m, p) => this.#askHost(getRunId(), m, p)))
       } else if (name === 'query_notes') {
         relayDefs.push(
           buildQueryNotesTool(getRunId, (where, limit, cursor) =>
@@ -1784,6 +1803,12 @@ export class Server {
   // Registering-before-emitting used to be load-bearing here, because the ack
   // was a separate notification that could land before the slot existed. A
   // request has no such window: the id exists before the frame does.
+  // Ask the host to do something only it can do, and hear back. `runId` is
+  // what the host parks the request under so a cancelled run releases it.
+  #askHost(runId, method, params) {
+    return this.peer.request(method, { runId, ...params })
+  }
+
   #askVerdict(runId, proposal) {
     return this.peer.request('host/editPending', { runId, ...proposal })
   }

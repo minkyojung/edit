@@ -529,32 +529,47 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
 /// frontend, and the frontend's reply arrives later as its own
 /// `#[tauri::command]`. Answering inline is not an option, and blocking is not
 /// either — this runs on the reader task that drains the sidecar's stdout.
+/// Where a request's parking key comes from. Some already carry an id the
+/// frontend threads through its own work and quotes back; the rest get a
+/// minted one written into the outgoing event under the named field.
+enum Key {
+    FromParam(&'static str),
+    Mint(&'static str),
+}
+
+/// The requests the host serves, and how each is announced to the frontend.
+/// One table rather than a branch per method — a new one is a row.
+fn route(method: &str) -> Option<(&'static str, Key)> {
+    Some(match method {
+        "host/queryNotes" => ("claude:query-notes", Key::Mint("queryId")),
+        // The review card's own identity, already threaded through the
+        // frontend's per-path queueing before any ack is sent.
+        "host/editPending" => ("claude:edit-pending", Key::FromParam("pendingId")),
+        // Keys the permission card the user is looking at.
+        "host/permission" => ("claude:permission", Key::FromParam("decisionId")),
+        "host/setNoteStatus" => ("claude:set-status", Key::Mint("requestId")),
+        "host/setNoteTags" => ("claude:set-tags", Key::Mint("requestId")),
+        _ => return None,
+    })
+}
+
 fn build_request_handler(app: AppHandle, pending: Arc<PendingFrontend>) -> RequestHandler {
     Arc::new(move |method, params, responder| {
-        // `key` is what the frontend will quote back. `query_notes` has no
-        // natural id so the host mints one; a proposal already travels under
-        // its `pendingId`, which is the review card's identity and is already
-        // threaded through the frontend's queueing path.
-        let (event, key) = match method.as_str() {
-            "host/queryNotes" => ("claude:query-notes", None),
-            "host/editPending" => match params.get("pendingId").and_then(Value::as_str) {
-                Some(id) => ("claude:edit-pending", Some(id.to_owned())),
+        let Some((event, key_source)) = route(&method) else {
+            responder.err(METHOD_NOT_FOUND, &format!("method not found: {method}"));
+            return;
+        };
+        // Resolved before the spawn so a malformed request is refused on the
+        // spot rather than after a task hop.
+        let key = match key_source {
+            Key::Mint(field) => Err(field),
+            Key::FromParam(field) => match params.get(field).and_then(Value::as_str) {
+                Some(id) => Ok(id.to_owned()),
                 None => {
-                    responder.err(INVALID_PARAMS, "host/editPending requires a pendingId");
+                    responder.err(INVALID_PARAMS, &format!("{method} requires a {field}"));
                     return;
                 }
             },
-            "host/permission" => match params.get("decisionId").and_then(Value::as_str) {
-                Some(id) => ("claude:permission", Some(id.to_owned())),
-                None => {
-                    responder.err(INVALID_PARAMS, "host/permission requires a decisionId");
-                    return;
-                }
-            },
-            _ => {
-                responder.err(METHOD_NOT_FOUND, &format!("method not found: {method}"));
-                return;
-            }
         };
         // Parked under the runId so a cancelled run releases it. Without one we
         // could park it but never know when to give up, so refuse instead.
@@ -564,19 +579,21 @@ fn build_request_handler(app: AppHandle, pending: Arc<PendingFrontend>) -> Reque
         };
         let (app, pending) = (app.clone(), pending.clone());
         tauri::async_runtime::spawn(async move {
+            let mut payload = params;
             // Park before emitting, never after: the frontend replies by
             // quoting the key, so the slot has to exist before the event that
             // carries it goes out. The window where a slot is parked but
             // unannounced is closed by releasing it if the emit fails.
-            let key = key.unwrap_or_else(|| pending.mint());
+            let key = match key {
+                Ok(from_param) => from_param,
+                Err(field) => {
+                    let minted = pending.mint();
+                    payload[field] = json!(minted);
+                    minted
+                }
+            };
             if !pending.park(run_id, &key, responder).await {
                 return; // park answered the loser itself
-            }
-            let mut payload = params;
-            // Only queryNotes needs this written in; editPending's key is
-            // already `pendingId` in the payload the sidecar sent.
-            if event == "claude:query-notes" {
-                payload["queryId"] = json!(key);
             }
             if let Err(e) = app.emit(event, payload) {
                 eprintln!("[sidecar manager] emit {event} failed: {e}");
@@ -922,5 +939,37 @@ mod tests {
         // ...while a malformed, non-namespaced method is dropped (logged), not
         // forwarded as a bare event.
         assert_eq!(notification_event_name("shutdown"), None);
+    }
+
+    /// Every method the sidecar can ask, and the event each becomes. A typo on
+    /// either side is a silent -32601 at runtime — the sidecar's tool reports a
+    /// failure the user reads as a product bug — so the pairing is pinned here
+    /// rather than discovered in the app.
+    #[test]
+    fn every_served_method_maps_to_its_frontend_event() {
+        for (method, event, minted) in [
+            ("host/queryNotes", "claude:query-notes", Some("queryId")),
+            ("host/editPending", "claude:edit-pending", None),
+            ("host/permission", "claude:permission", None),
+            ("host/setNoteStatus", "claude:set-status", Some("requestId")),
+            ("host/setNoteTags", "claude:set-tags", Some("requestId")),
+        ] {
+            let (got_event, key) = route(method).unwrap_or_else(|| panic!("{method} is unserved"));
+            assert_eq!(got_event, event, "{method}");
+            match (key, minted) {
+                (Key::Mint(f), Some(want)) => assert_eq!(f, want, "{method} mint field"),
+                (Key::FromParam(_), None) => {}
+                _ => panic!("{method}: wrong key source"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_unserved_method_is_refused_rather_than_routed_somewhere() {
+        assert!(route("host/whatever").is_none());
+        // Near-misses, because a rename that only lands on one side is the
+        // realistic way this breaks.
+        assert!(route("host/setNoteStatuses").is_none());
+        assert!(route("chat/set-status").is_none());
     }
 }
