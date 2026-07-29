@@ -1,9 +1,13 @@
 // Headless end-to-end check for the `query_notes` tool + its data-carrying
 // request/response bridge. Drives a live sidecar; this harness plays the HOST:
-// when the sidecar emits `chat/query-notes`, it replies with `chat/query-result`
-// carrying canned references (as the real frontend would after filtering
-// knownDocs). Verifies the model (a) calls query_notes with the right filter
-// and (b) uses the returned references in its answer.
+// the sidecar sends a real JSON-RPC *request* (`host/queryNotes`) and this
+// answers it with a response carrying canned references, as the real host does
+// after the frontend filters knownDocs. Verifies the model (a) calls
+// query_notes with the right filter and (b) uses the returned references.
+//
+// The request being a request is the point: a reply on the wrong id, or no
+// reply at all, parks the tool call forever rather than timing out — the
+// sidecar deliberately has no transport-level deadline (see peer.mjs).
 //
 //   CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat... node scripts/verify-query-notes.mjs
 
@@ -49,23 +53,26 @@ function request(method, params) {
   return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); child.stdin.write(encode({ jsonrpc: '2.0', id, method, params })) })
 }
 function notify(method, params) { child.stdin.write(encode({ jsonrpc: '2.0', method, params })) }
+/** Answer a request the sidecar sent US. The id must be echoed exactly. */
+function respond(id, result) { child.stdin.write(encode({ jsonrpc: '2.0', id, result })) }
 
 let failed = false
 const ok = (l) => console.log(`  ✓ ${l}`)
 const bad = (l, e) => { failed = true; console.log(`  ✗ ${l}${e ? ` — ${e}` : ''}`) }
 
 let queryWhere = null
+let sawRequestId
 let assistantText = ''
 notifListeners.push((msg) => {
   if (msg.method === 'chat/event' && msg.params?.event?.type === 'assistant') {
     for (const b of msg.params.event.message?.content ?? []) if (b.type === 'text') assistantText += b.text
   }
   // HOST role: answer the query with canned references (as the frontend would).
-  if (msg.method === 'chat/query-notes') {
+  if (msg.method === 'host/queryNotes') {
     queryWhere = msg.params?.where ?? {}
-    console.log(`  … sidecar asked query_notes where=${JSON.stringify(queryWhere)}`)
-    notify('chat/query-result', {
-      queryId: msg.params.queryId,
+    sawRequestId = msg.id
+    console.log(`  … sidecar asked query_notes where=${JSON.stringify(queryWhere)} id=${msg.id}`)
+    respond(msg.id, {
       results: [
         { path: 'wiki/Alpha.md', title: 'Alpha', status: 'in-progress', tags: [] },
         { path: 'wiki/Beta.md', title: 'Beta', status: 'in-progress', tags: [] },
@@ -107,6 +114,11 @@ try {
   console.log('\n  --- assistant reply ---\n  ' + assistantText.trim().replace(/\n/g, '\n  ') + '\n')
 
   queryWhere ? ok('model called query_notes') : bad('model did NOT call query_notes')
+  // A notification would have no id. If this is undefined the sidecar is on
+  // the old hand-rolled bridge and the host reply correlated by luck, not id.
+  typeof sawRequestId === 'number'
+    ? ok(`asked as a JSON-RPC request (id ${sawRequestId}), not a notification`)
+    : bad('host/queryNotes arrived without an id')
   if (queryWhere) {
     queryWhere.status === 'in-progress'
       ? ok("query filter where.status === 'in-progress'")

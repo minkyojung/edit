@@ -874,7 +874,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       // query_result), so it must always fire, even on empty results.
       listen<{
         runId: string
-        queryId: string
+        // A host-minted token, echoed back verbatim so the host can reconnect
+        // the reply to the sidecar request it parked.
+        queryId: number
         where?: { status?: DocStatus; tags?: string[] }
         limit?: number
         cursor?: string | null

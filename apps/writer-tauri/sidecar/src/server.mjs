@@ -226,7 +226,7 @@ const SIDECAR_VERSION = '0.1.0'
 // during `initialize` and refuses to run a mismatched sidecar — this turns
 // the "forgot to run `pnpm pack:sidecar`" foot-gun into a loud, immediate
 // failure instead of a silently stale sidecar.
-const PROTOCOL_VERSION = 1
+const PROTOCOL_VERSION = 2
 
 // Plan-mode workflow body. Replaces the SDK's default code-implementation
 // plan steps (the CLI still wraps this with its read-only preamble + the
@@ -328,11 +328,6 @@ export class Server {
     // which returns the verdict as its own result — so only that one tool call
     // blocks, never the agent loop's progress on other files.
     this.pendingAcks = new Map()
-    // queryId -> { resolve, reject, runId } for an in-flight `query_notes`
-    // tool call awaiting the host's filtered result (references). Unlike
-    // pendingAcks, the tool handler AWAITS this and returns the payload to the
-    // model. Modeled on pendingDecisions (awaited + cancellable + data-carrying).
-    this.pendingQueries = new Map()
     this.shuttingDown = false
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
@@ -384,8 +379,6 @@ export class Server {
           return this.#handleDecision(params)
         case 'chat/edit-ack':
           return this.#handleEditAck(params)
-        case 'chat/query-result':
-          return this.#handleQueryResult(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -1763,7 +1756,12 @@ export class Server {
       } else if (name === 'query_notes') {
         relayDefs.push(
           buildQueryNotesTool(getRunId, (where, limit, cursor) =>
-            this.#requestQuery(getRunId(), where, limit, cursor),
+            this.peer.request('host/queryNotes', {
+              runId: getRunId(),
+              where,
+              limit,
+              cursor,
+            }),
           ),
         )
       }
@@ -1847,54 +1845,9 @@ export class Server {
     pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null, applied: !!params?.applied })
   }
 
-  // Ask the host to filter its note catalog by metadata and return references.
-  // Awaited by the `query_notes` tool handler, as the propose_* acks are. The
-  // host's filter is a near-instant in-memory pass, so a 5s timeout backstop
-  // (host never answers) plus per-run rejection on cancel is enough — no
-  // controller is threaded through the fire-once relay tools.
-  #requestQuery(runId, where, limit, cursor) {
-    return new Promise((resolve, reject) => {
-      const queryId = globalThis.crypto.randomUUID()
-      let timer = null
-      const settle = (fn) => (v) => {
-        if (timer) clearTimeout(timer)
-        this.pendingQueries.delete(queryId)
-        fn(v)
-      }
-      this.pendingQueries.set(queryId, {
-        runId,
-        resolve: settle(resolve),
-        reject: settle(reject),
-      })
-      timer = setTimeout(() => {
-        const q = this.pendingQueries.get(queryId)
-        if (q) q.reject(new Error('query_notes: host did not respond in time'))
-      }, 5000)
-      this.emit(notification('chat/query-notes', { runId, queryId, where, limit, cursor }))
-    })
-  }
-
-  // Host's filtered result for a parked query_notes call.
-  #handleQueryResult(params) {
-    const queryId = params?.queryId
-    if (typeof queryId !== 'string') return
-    const pending = this.pendingQueries.get(queryId)
-    if (!pending) return
-    pending.resolve({
-      results: Array.isArray(params?.results) ? params.results : [],
-      nextCursor: params?.nextCursor ?? null,
-    })
-  }
-
   #handleCancel(params) {
     const runId = params?.runId
     if (typeof runId !== 'string') return
-
-    // Fail any in-flight query_notes for this run so its slot doesn't linger
-    // until the 5s timeout.
-    for (const q of this.pendingQueries.values()) {
-      if (q.runId === runId) q.reject(new Error('cancelled'))
-    }
 
     // Every chat runs on the thread engine, so the runId maps to a thread.
     // Cancel the TURN only — keep the thread query (and any in-flight background

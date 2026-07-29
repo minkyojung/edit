@@ -12,7 +12,11 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
 
-use super::client::{ExitHandler, NotificationHandler, SidecarClient, SidecarError};
+use super::client::{
+    ExitHandler, NotificationHandler, RequestHandler, SidecarClient, SidecarError, INVALID_PARAMS,
+    METHOD_NOT_FOUND,
+};
+use super::pending_frontend::PendingFrontend;
 use super::state::{set_sidecar_state, SidecarState};
 
 // Self-reference handle for exit closures. Set after the SidecarManager Arc
@@ -124,6 +128,10 @@ pub struct SidecarManager {
     title: RwLock<Arc<SidecarClient>>,
     self_ref: SelfRef,
     notification_handler: NotificationHandler,
+    /// Requests from the chat sidecar that the frontend has to answer. Only
+    /// the chat sidecar can ask — the title sidecar runs one-shot completions
+    /// and has no relay tools.
+    pending_frontend: Arc<PendingFrontend>,
     launcher: Launcher,
     app: AppHandle,
     chat_restart: Mutex<RestartGuard>,
@@ -145,6 +153,7 @@ impl SidecarManager {
         );
 
         let handler = build_notification_handler(app.clone());
+        let pending_frontend = Arc::new(PendingFrontend::new());
         let self_ref: SelfRef = Arc::new(OnceLock::new());
 
         let chat_exit = build_exit(self_ref.clone(), Mode::Chat);
@@ -158,7 +167,7 @@ impl SidecarManager {
             &launcher.args_for("chat"),
             &launcher.env,
             handler.clone(),
-            None,
+            Some(build_request_handler(app.clone(), pending_frontend.clone())),
             Some(chat_exit),
         )
         .await?;
@@ -182,6 +191,7 @@ impl SidecarManager {
             title: RwLock::new(Arc::new(title)),
             self_ref: self_ref.clone(),
             notification_handler: handler,
+            pending_frontend,
             launcher,
             app: app.clone(),
             chat_restart: Mutex::new(RestartGuard { consecutive: 0, last_spawn: Instant::now() }),
@@ -213,6 +223,11 @@ impl SidecarManager {
     /// Snapshots the current chat client. Cheap; just clones an Arc.
     pub async fn chat_client(&self) -> Arc<SidecarClient> {
         self.chat.read().await.clone()
+    }
+
+    /// Requests from the chat sidecar still waiting on a frontend answer.
+    pub fn pending_frontend(&self) -> &Arc<PendingFrontend> {
+        &self.pending_frontend
     }
 
     /// Snapshots the current title client.
@@ -409,13 +424,25 @@ impl SidecarManager {
 
     async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
         eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
+        // The process that asked these questions is gone, so its answers have
+        // nowhere to land. Release them here rather than on the next spawn:
+        // if the respawn itself fails we return early, and the slots would
+        // otherwise sit there across every subsequent restart.
+        if matches!(mode, Mode::Chat) {
+            let released = self.pending_frontend.release_all().await;
+            if released > 0 {
+                eprintln!("[sidecar manager] released {released} pending frontend request(s)");
+            }
+        }
         let exit_handler = build_exit(self.self_ref.clone(), mode);
+        let request_handler = matches!(mode, Mode::Chat)
+            .then(|| build_request_handler(self.app.clone(), self.pending_frontend.clone()));
         let client = SidecarClient::spawn_initialized(
             &self.launcher.program,
             &self.launcher.args_for(mode.as_str()),
             &self.launcher.env,
             self.notification_handler.clone(),
-            None,
+            request_handler,
             Some(exit_handler),
         )
         .await?;
@@ -490,6 +517,44 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
         if let Err(e) = app.emit(event_name.as_str(), params) {
             eprintln!("[sidecar manager] emit {event_name} failed: {e}");
         }
+    })
+}
+
+/// Serves the requests the sidecar asks the *host*, as opposed to the
+/// notifications it merely announces. Built per client so the `Responder` it
+/// hands out carries that client's write channel.
+///
+/// Every method here has the same shape, and it is forced by where the answer
+/// lives: the host cannot produce one, so it parks the obligation, asks the
+/// frontend, and the frontend's reply arrives later as its own
+/// `#[tauri::command]`. Answering inline is not an option, and blocking is not
+/// either — this runs on the reader task that drains the sidecar's stdout.
+fn build_request_handler(app: AppHandle, pending: Arc<PendingFrontend>) -> RequestHandler {
+    Arc::new(move |method, params, responder| {
+        if method != "host/queryNotes" {
+            responder.err(METHOD_NOT_FOUND, &format!("method not found: {method}"));
+            return;
+        }
+        // Parked under the runId so a cancelled run releases it. Without one we
+        // could park it but never know when to give up, so refuse instead.
+        let Some(run_id) = params.get("runId").and_then(Value::as_str).map(str::to_owned) else {
+            responder.err(INVALID_PARAMS, "host/queryNotes requires a runId");
+            return;
+        };
+        let (app, pending) = (app.clone(), pending.clone());
+        tauri::async_runtime::spawn(async move {
+            // Park before emitting, never after: the frontend replies by
+            // quoting the token, so the token has to exist before it can be
+            // sent. The window where a slot is parked but unannounced is
+            // closed by releasing it if the emit fails.
+            let token = pending.park(run_id, responder).await;
+            let mut payload = params;
+            payload["queryId"] = json!(token);
+            if let Err(e) = app.emit("claude:query-notes", payload) {
+                eprintln!("[sidecar manager] emit claude:query-notes failed: {e}");
+                pending.release(token).await;
+            }
+        });
     })
 }
 

@@ -305,6 +305,11 @@ pub async fn claude_list_models(app: AppHandle) -> Result<Value, String> {
 #[tauri::command]
 pub async fn claude_chat_cancel(app: AppHandle, args: ChatCancelArgs) -> Result<(), String> {
     let manager = get_manager(&app)?;
+    // Fail this run's parked host requests before cancelling. The frontend
+    // listener filters by runId, so once the run is cancelled nothing will
+    // ever answer them, and the sidecar's `query_notes` await would sit there
+    // until the process died.
+    manager.pending_frontend().release_run(&args.run_id).await;
     let chat = manager.chat_client().await;
     chat.notify("chat/cancel", Some(json!({ "runId": args.run_id })))
         .await
@@ -355,34 +360,43 @@ pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Resu
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatQueryResultArgs {
-    pub query_id: String,
-    /// The filtered note references (opaque to Rust — forwarded verbatim to
-    /// the sidecar, which hands them to the model as the query_notes result).
-    pub results: Value,
+    /// The token the host minted when it parked the request, echoed back
+    /// verbatim. Not the sidecar's JSON-RPC id — see `PendingFrontend`.
+    pub query_id: i64,
+    /// The filtered note references. Each entry is opaque to Rust and
+    /// forwarded verbatim, but the array itself is pinned: the tool does
+    /// `results.length`, and the sidecar used to normalise a non-array away
+    /// before this became a typed command boundary. Serde does it now.
+    pub results: Vec<Value>,
     #[serde(default)]
     pub next_cursor: Option<String>,
 }
 
-/// Returns the host-filtered result of a `query_notes` tool call to the
-/// sidecar, resolving its parked `#requestQuery` promise (see server.mjs
-/// `#handleQueryResult`). Notification only — no response expected.
+/// Answers a `host/queryNotes` request the sidecar parked with the host. This
+/// is the second half of a JSON-RPC request the host could not answer itself:
+/// the note catalogue lives in the frontend's docs store, so the reply travels
+/// out as a Tauri event and comes back here.
+///
+/// An unknown token is reported rather than swallowed. It means the slot was
+/// already released — the run was cancelled, or the sidecar restarted — and the
+/// sidecar has been told so. The frontend's work is wasted but nothing hangs.
 #[tauri::command]
 pub async fn claude_chat_query_result(
     app: AppHandle,
     args: ChatQueryResultArgs,
 ) -> Result<(), String> {
     let manager = get_manager(&app)?;
-    let chat = manager.chat_client().await;
-    chat.notify(
-        "chat/query-result",
-        Some(json!({
-            "queryId": args.query_id,
-            "results": args.results,
-            "nextCursor": args.next_cursor,
-        })),
-    )
-    .await
-    .map_err(|e| e.to_string())
+    let answered = manager
+        .pending_frontend()
+        .answer(
+            args.query_id,
+            json!({ "results": args.results, "nextCursor": args.next_cursor }),
+        )
+        .await;
+    if !answered {
+        return Err(format!("query {} is no longer waiting for an answer", args.query_id));
+    }
+    Ok(())
 }
 
 /// Runs a single-shot chat on the title sidecar. Used for thread-title

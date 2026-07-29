@@ -63,6 +63,13 @@ impl PendingFrontend {
         }
     }
 
+    /// Releases one slot without answering it successfully. For the caller
+    /// that parked it and then could not reach the frontend at all — the
+    /// obligation is real either way, so give it back rather than leak it.
+    pub async fn release(&self, token: i64) -> bool {
+        self.slots.lock().await.remove(&token).is_some()
+    }
+
     /// Releases every obligation belonging to a finished or cancelled run.
     /// Each dropped `Responder` answers -32603, so the sidecar's awaiting tool
     /// call fails loudly instead of parking until the process dies.
@@ -81,6 +88,14 @@ impl PendingFrontend {
             slots.remove(token);
         }
         doomed.len()
+    }
+
+    /// Releases everything, for when the peer that asked is gone: a sidecar
+    /// crash or restart. Their replies would go to a closed pipe, and without
+    /// this the slots would accumulate across every restart.
+    pub async fn release_all(&self) -> usize {
+        let drained = std::mem::take(&mut *self.slots.lock().await);
+        drained.len()
     }
 }
 
@@ -173,6 +188,31 @@ mod tests {
 
         assert!(pending.answer(spared_token, json!("late but fine")).await);
         assert_eq!(replies(&mut spared_rx)[0]["result"], json!("late but fine"));
+    }
+
+    #[tokio::test]
+    async fn a_released_slot_is_answered_not_leaked() {
+        let pending = PendingFrontend::new();
+        let (r, mut rx) = responder(11);
+        let token = pending.park("run-a", r).await;
+
+        assert!(pending.release(token).await);
+        assert_eq!(replies(&mut rx)[0]["error"]["code"], json!(-32603));
+        assert!(!pending.release(token).await, "the slot is gone");
+    }
+
+    #[tokio::test]
+    async fn a_dead_peer_releases_every_run_at_once() {
+        let pending = PendingFrontend::new();
+        let (a, mut rx_a) = responder(11);
+        let (b, mut rx_b) = responder(22);
+        pending.park("run-a", a).await;
+        pending.park("run-b", b).await;
+
+        assert_eq!(pending.release_all().await, 2, "runs are not filtered here");
+        assert_eq!(replies(&mut rx_a)[0]["error"]["code"], json!(-32603));
+        assert_eq!(replies(&mut rx_b)[0]["error"]["code"], json!(-32603));
+        assert_eq!(pending.release_all().await, 0);
     }
 
     #[tokio::test]

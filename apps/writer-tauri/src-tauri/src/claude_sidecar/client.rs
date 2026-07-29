@@ -22,11 +22,12 @@ use super::framing::{encode, FrameParser};
 /// request/notification shapes in PROTOCOL.md. Asserted during `initialize`:
 /// a mismatch means the bundled sidecar is stale (typically `pnpm pack:sidecar`
 /// wasn't re-run) and we refuse to run it rather than misbehave silently.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// JSON-RPC 2.0 reserved code. Mirrors `METHOD_NOT_FOUND` in
 /// sidecar/src/jsonrpc.mjs, which already owns the constant on the far side.
-const METHOD_NOT_FOUND: i64 = -32601;
+pub(crate) const METHOD_NOT_FOUND: i64 = -32601;
+pub(crate) const INVALID_PARAMS: i64 = -32602;
 const INTERNAL_ERROR: i64 = -32603;
 
 #[derive(Debug, thiserror::Error)]

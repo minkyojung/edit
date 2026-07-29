@@ -61,21 +61,24 @@ We use the standard subset: requests, responses, and notifications.
 
 - Requests carry `id` (integer or string). Responses echo the same id.
 - Notifications must omit `id`.
-- The Rust bridge generates request ids; the sidecar never generates ids for
-  client-bound traffic — server-pushed events go out as notifications only.
+- Each side mints ids for the requests it sends, and correlates responses only
+  against ids it minted itself. **The two counters are separate namespaces and
+  may overlap without ambiguity**: a frame with an id *and* a method is a
+  request, a frame with an id and no method is a response.
 
 ### Direction
 
-- **Rust → sidecar**: requests and notifications (cancel notifications).
-- **sidecar → Rust**: responses (matched by id) and notifications (`chat/event`,
-  `chat/done`, `chat/error`).
+Both directions carry requests. The asymmetry this replaced was not a design —
+a question the sidecar needed to ask was faked with a notification out, a
+notification back, and a hand-rolled correlation map, once per feature.
 
-The sidecar **still must not send requests** — that contract is unchanged. What
-changed is what the host does when it receives one anyway: it answers
-`-32601 method not found` instead of silently discarding the frame. Tolerance,
-not permission. Until the sidecar has an id minter and a pending map, a request
-from it is a bug; the refusal exists so that bug is visible at both ends rather
-than presenting as a hang.
+- **Rust → sidecar**: requests (§3) and notifications.
+- **sidecar → Rust**: requests (§3b), responses, and notifications (§4).
+
+A request the receiver has no handler for is answered `-32601 method not
+found`. Refusing is the point: a peer told "no" recovers, a peer ignored waits
+forever — neither side puts a deadline at the transport layer, because the
+transport cannot know what a given question means.
 
 A frame with neither `id` nor `method` cannot be addressed or dispatched. The
 host logs it. In practice this is the sidecar's `errorResponse(null, -32700)`
@@ -268,6 +271,37 @@ Gracefully shut down. The sidecar finishes **all** in-flight chats with a
 
 After receiving the `shutdown` response, the Rust bridge should close the
 sidecar's stdin and wait for process exit.
+
+---
+
+## 3b. Methods (sidecar → Rust)
+
+Questions the sidecar asks the host, as opposed to the events it announces.
+They exist because the answer lives on the far side of the host: the note
+catalogue is in the frontend's docs store, and a permission verdict is in the
+user's head. The host parks the obligation, asks the frontend, and answers when
+the frontend's own command comes back — see `claude_sidecar::pending_frontend`.
+
+Consequences worth stating, because both are load-bearing:
+
+- **Answers may take arbitrarily long.** The `chat/permission` case waits on a
+  human. The sidecar sets no transport deadline; a caller that needs one adds
+  it itself.
+- **An answer is guaranteed, including on the sad paths.** If the run is
+  cancelled or the sidecar restarts, the host releases the parked request and
+  the caller sees `-32603` rather than waiting on a reply nobody will send.
+
+### `host/queryNotes`
+
+Filter the note catalogue by metadata and return references only. Backs the
+`query_notes` relay tool.
+
+**params**: `{ runId, where: { status?, tags?[] }, limit, cursor }`
+`runId` is required — it is what the host parks the request under, so a
+cancelled run can release it.
+
+**result**: `{ results: [{ path, title, status, tags }], nextCursor }`
+`results` is always an array; the host's command boundary rejects anything else.
 
 ---
 
@@ -560,3 +594,10 @@ Two independent version signals travel in `initialize`:
   request/notification shapes in this document.
 - **`clientVersion` / `sidecarVersion`** (semver strings) — advisory only, used
   for telemetry and bug reports; never gate behavior.
+
+### History
+
+| version | change |
+|---|---|
+| 1 | initial contract |
+| 2 | `query_notes` moved from the `chat/query-notes` + `chat/query-result` notification pair to the `host/queryNotes` request (§3b). A stale sidecar on either side of this leaves the tool broken while everything else appears to work, which is exactly the failure the equality assert exists to convert into a startup error. |
