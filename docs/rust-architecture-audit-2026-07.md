@@ -9,6 +9,24 @@
 > 상위 항목은 전부 코드에서 직접 재확인함 (`cargo check --tests` 포함 실측).
 > **범례**: 심각도 P0(재난) > P1(전략) > P2(부채)
 > **후속 문서**: `docs/zed-acp-comparison-2026-07.md` (Zed/ACP 대조 및 차용 설계)
+>
+> ---
+>
+> **정정 이력 (2026-07-29)** — §6의 0~4번을 실제로 구현하면서 처방 다섯 중 셋이
+> 틀렸고 하나가 불충분함이 드러났다. 각 항목을 고친 자리에 **⚠️ 정정**으로
+> 표시하고 왜 틀렸는지를 남겨둔다. 결론만 바꿔두면 다음 사람이 원래 처방으로
+> 되돌리기 때문이다.
+>
+> | # | 원래 처방 | 판정 |
+> |---|---|---|
+> | 0 | 잔해 삭제 → 테스트 20개 부활 | 18개 (2개는 삭제 대상 자신) |
+> | 1 | 토큰·키 `OnceLock` 캐시 | 키만. 토큰 캐시는 폐기된 토큰을 서빙 |
+> | 2 | `modelBodyBase`를 runId로 키잉 | **threadId.** runId면 2턴째부터 CAS가 꺼짐 |
+> | 3 | 릴레이에 `?? bgTurnRunId` | 불충분. 호스트 쪽 절반이 따로 있음 |
+> | 4 | `restart`에서 `hard_kill` | **`Drop`.** 원안대로면 재시작 폭주 |
+>
+> 0~4는 구현·검증·커밋 완료(`e073770d9`, `9e0f346a3`, `f7a47993c`, `5219d7239`,
+> `f1203f28a`). 감사에 없던 버그 2건은 §3-15에 추가했다.
 
 ---
 
@@ -25,7 +43,15 @@ error: could not compile `writer-tauri` (lib test) due to 2 previous errors
 
 직접 재현함. 삭제된 `git_push` 기능의 테스트 잔해다. `src/git.rs:917`은 `unused import: super::*` 경고까지 낸다 — 모듈이 통째로 고아 상태.
 
-**결과: crate의 단위 테스트 20개가 전부 죽어 있다.**
+**결과: crate의 단위 테스트가 전부 죽어 있다.**
+
+> **⚠️ 정정 (2026-07-29)**: "20개 부활"은 틀렸다. **18개다.** 아래 표의 `git.rs` 2개는
+> 부활하는 게 아니라 **삭제되는 대상 자신**이다. `credential_helper_args`는
+> 커밋 `8ce06ba11`("remove the GitHub integration")이 git.rs의 원격 절반을
+> 통째로 지우면서 함께 사라졌고, 그 커밋 메시지가 이 두 테스트를 남긴 것도
+> 명시해 두었다. 살아있는 호출처는 없다(`GH_TOKEN`/`credential.helper`/`git_push`
+> 전역 grep이 죽은 테스트와 낡은 주석만 잡는다) — 그러므로 함수를 복원하는
+> 게 아니라 **테스트를 지우는 것**이 맞다.
 
 | 파일 | 테스트 수 | 덮는 것 |
 |---|---:|---|
@@ -38,6 +64,22 @@ error: could not compile `writer-tauri` (lib test) due to 2 previous errors
 
 `cargo check`(`--tests` 없이)는 **통과**하기 때문에 아무도 보지 못했다.
 "에러가 전혀 없어야 하는 제품"에서 Rust 쪽 안전망이 조용히 꺼져 있었다.
+
+> **⚠️ 정정 — 진짜 이유**: "`--tests` 없이는 통과해서"는 정확하지 않다.
+> `.github/workflows/ci.yml`에는 **cargo 잡이 아예 없다**(frontend 잡 하나뿐:
+> lint/typecheck/vitest/vite build). CI가 Rust를 한 번도 돌린 적이 없다는 게
+> 방치된 진짜 이유다. Rust 잡을 붙이려면 bun 다운로드 + `sidecar-pkg` 패킹
+> (286MB) + 캐싱이 선행돼야 한다 — 별도 판단이 필요한 항목.
+
+> **⚠️ 선결 조건 (문서에 없던 것)**: `cargo check --tests`는 이 잔해에 **도달조차
+> 못 한다.** 그 전에 `build.rs`의 `tauri_build::build()`가 번들 설정을 검증하다
+> 죽는다 — 서브커맨드와 무관하므로 `check`·`--tests`·`test`가 모두 막힌다.
+> 세 가지가 필요하다:
+>
+> 1. `binaries/bun-<triple>` → `pnpm setup:binaries` (평소엔 `postinstall`이 처리)
+> 2. `sidecar-pkg/` → `pnpm pack:sidecar`
+> 3. `secrets/google_client_id`·`_secret` → 원본 워크스페이스에서 복사
+>    (gitignored이고 `.worktreeinclude`가 복사하지 않아 새 워크스페이스마다 재발)
 
 > **수정 비용: 수 분.** 이것이 0순위다.
 
@@ -162,6 +204,14 @@ commands.rs:187  try_inject_token_chat          ← 모든 채팅 시작
 
 **측정: `ioreg -rd1 -c IOPlatformExpertDevice` = 약 10ms** (3회 평균, 1885바이트 출력).
 
+> **⚠️ 정정 (2026-07-29)**: 표본 3회는 과소평가였다. **n=30 재측정: 평균 18.4ms,
+> p50 17.2ms, p90 24.1ms, 최악 31.0ms.** 그리고 갱신이 실제로 도는 턴에는 두 번
+> 돈다 — `load_token`에서 한 번, `do_refresh` 안의 `save_token`에서 또 한 번,
+> 둘 다 락 안에서. 약 37ms.
+>
+> `machine-uid` 0.5.4 소스도 확인했다: **내부 캐시가 전혀 없다.** 크레이트 전체가
+> 한 파일이고 statics가 없어서 매 호출이 무조건 서브프로세스다.
+
 에이전트 10개 동시 시작 = **락을 쥔 채 100ms 이상 직렬화**, 각각 tokio 워커 스레드를
 *블로킹으로* 점유(await가 아님). 그리고 각 시작은 공유 파이프로 `setToken` 왕복을 한 번 더 한다
 (`manager.rs:295-297` → `commands.rs:250`).
@@ -174,6 +224,30 @@ commands.rs:187  try_inject_token_chat          ← 모든 채팅 시작
 렌더러도 이 락에 경합할 수 있다.
 
 키는 불변 머신 ID에서 나온다. `OnceLock` 하나면 사라진다.
+
+> **⚠️ 정정 — 무엇을 캐시할지**: §6 #1의 "토큰·**키** `OnceLock` 캐시"에서
+> **토큰은 빼야 한다.**
+>
+> - **토큰은 캐시 불가.** 설계상 회전하고(`oauth.rs:260`이 갱신마다 새로 씀),
+>   `oauth.rs:289`·`:297`·`disconnect_claude`(`:313`) 세 곳에서 밖에서 삭제된다.
+>   `OnceLock`은 쓰기 1회라 첫 토큰이 고정되고, 가변 캐시로 바꿔도 무효화 4곳
+>   계약을 지지 않으면 **연결 해제한 뒤에도 폐기된 토큰을 서빙**한다.
+>   `get_claude_account`(`:305`)는 디스크를 직접 읽으므로 캐시와 UI가 어긋난다.
+> - **캐시할 계층은 `secure_storage.rs`의 `derive_key` 하나.** `machine_uid`는
+>   리포 전체에서 여기 한 곳에서만 쓰이고 오직 키 재료다. 여기 넣으면
+>   `oauth.rs`·`google_oauth.rs`를 건드리지 않아도 **구글 경로가 함께 고쳐진다.**
+> - **`LazyLock`은 금지.** 초기화 클로저가 실패할 수 없어 `LazyLock<Result<..>>`가
+>   되고, 그러면 **실패가 영구 기억된다** — 시작 시 `ioreg`가 한 번 튀면 그
+>   프로세스는 재시도 없이 영영 토큰을 못 읽는다. `OnceLock<Result<..>>`도 동일.
+>   성공만 기억하는 형태여야 한다.
+>
+> **`REFRESH_LOCK` 분리는 하지 않는다.** uid를 캐시해도 락은 여전히 15초 POST를
+> 감싸지만, 그건 단일 비행 갱신이 제 일을 하는 것이다(동시 호출자가 서로의
+> refresh 토큰을 무효화하는 걸 막는다). 분리하려면 위에서 위험하다고 판정한
+> 토큰 캐시를 도입해야 하므로 **성능 문제가 아니라 보안 문제**다. 트리거:
+> 실측된 경합, 또는 "갱신 뒤에서 채팅 시작이 멈췄다"는 실제 신고.
+>
+> 구현: `f1203f28a`.
 
 ### 2-5. 볼트 스캔이 JS에서 파일당 직렬 IPC · P1
 
@@ -271,6 +345,39 @@ B가 A의 기준선을 덮으면, A의 `propose_write`는 **자기가 본 적 �
 
 `noteContextLedger.ts:24`는 이미 올바르게 키를 잡고 있다 — 여기만 안 됐다.
 
+> **⚠️ 정정 (2026-07-29) — 키는 `runId`가 아니라 `threadId`다.** §6 #2의 처방을
+> 그대로 따르면 **방어막이 지금보다 더 꺼진다.**
+>
+> `setModelBase`는 본문을 실제로 모델에게 보낼 때만 찍힌다
+> (`chat/index.ts:263-266`, `sendBody`가 참일 때). 그런데 `sendBody`는
+> `noteContextLedger`가 정하고, **원장의 일이 "같은 스레드 2턴째부터는 본문을
+> 다시 보내지 않는 것"**이다. 그래서 run으로 키를 잡으면:
+>
+> 1. 1턴: 본문 전송 → `base[run1:note]` 기록
+> 2. 2턴: 원장이 "이미 보여줬다" → 본문 미전송 → **`setModelBase` 미호출**
+> 3. 2턴의 `propose_write`: `getModelBase(run2, note)` → `undefined`
+> 4. `applyIngest.ts:194-196` — **undefined면 CAS를 건너뛴다**
+>
+> → **모든 대화의 2턴째부터 게이트가 통째로 꺼진다.** 지금은 "가끔 잘못된 기준선과
+> 비교"인데, run 키잉은 "대부분 아예 비교 안 함"이 된다.
+>
+> 덧붙여 `runId`는 그 세 호출 지점에서 **스코프에 있지도 않다** — `chat/index.ts:337`
+> 에서 발급되는데 셋은 그 위다. `threadId`는 `runChat` 인자라 바로 옆 253·265행에서
+> 이미 쓰인다. 그리고 실제 동시성 축도 스레드다(`useChatRunner.ts:88-90`:
+> *"keyed by threadId, so concurrent sessions each drive their own turn"*).
+>
+> **같은 뿌리의 두 번째 버그**: `staleCountBySlug`도 전역이라 B의 stale 바운스가
+> A의 재시도 예산을 먹는다. A는 자기 **첫** 거부에서 `parked`가 되고,
+> `notify.autoAcceptWriteFailed()`가 *"Couldn't save the AI's change / The file may
+> be locked or unwritable"* 토스트를 띄운다 — **파일은 잠겨 있지 않다.** 거짓 진단.
+>
+> **덤**: `baseBySlug`를 비우는 코드가 제품에 없었다(`__resetModelBaseForTests`만).
+> 노트 본문 전문을 앱 수명 내내 들고 있었다. 원장의 `forgetThreadNoteContext`
+> 옆(`threadsStore.ts:243`)에 `forgetThreadModelBase`를 붙여 함께 해결.
+>
+> 구현: `f7a47993c`. CAS가 기준선 대 **라이브 본문**을 비교한다는 감사의 전제는
+> 실측으로 확인됨(`docBody.ts:123` → `:136`)이라, 스레드 키잉만으로 완전한 수정이다.
+
 ### 3-2. `MAX_LIVE_THREADS`가 fail-open · P1
 
 ```js
@@ -335,6 +442,37 @@ runId: rec.turnActive ? rec.currentRunId : (rec.bgTurnRunId ?? null)   // :1520
 `server.mjs:1863`이 오늘 `background: true` 에이전트를 아무것도 안 보낸다고 적어놨기 때문에
 지금은 잠복이다. **병렬 서브에이전트가 실제로 일하는 순간 발현한다.**
 
+> **⚠️ 정정 (2026-07-29) — `?? bgTurnRunId`는 수정이 아니다.** 두 가지 이유로
+> 불충분하고, 이 항목은 §6의 "극소"가 아니라 #8(이벤트 채널 재배선)과 함께
+> 가야 한다.
+>
+> **① 둘 다 null일 수 있다.** `bgTurnRunId`는 **메시지 스트림의 content 이벤트**를
+> 봐야 발급된다(`server.mjs:1209-1211`). 그런데 **MCP 툴 호출은 컨트롤 채널로
+> 온다**(`{subtype:'mcp_message'}`) — 다른 전송로이고, 서브에이전트의 `tool_use`
+> 프레임이 핸들러 호출보다 먼저 도착한다는 보장이 없다. 부모 턴이 끝난 뒤
+> 첫 릴레이 호출에서는 `bgTurnRunId`도 null일 가능성이 높다. **null을 낼 수 있는
+> 폴백은 수정이 아니다.** 필요한 것은 `#settleTurn`이 절대 지우지 않는
+> `rec.lastRunId`(→ `currentRunId ?? bgTurnRunId ?? lastRunId`).
+>
+> **② 호스트 쪽에 절반이 더 있다.** `chat/index.ts`의 `cleanup()`(`:380-390`)이
+> **턴이 정착하는 순간 그 run의 리스너 10개를 전부 떼어낸다**(`settleOk`/`settleErr`).
+> 즉 runId를 올바르게 채워도 **듣는 사람이 이미 없다.** 그리고 릴레이 페이로드에는
+> `threadId`도 `background` 플래그도 없어서(`relay.mjs:118-125`) 앱 레벨
+> `backgroundTaskListener` 패턴으로 라우팅할 수단조차 없다.
+>
+> 앱 레벨 리스너를 **복제**하는 것도 오답이다 — 지금 `edit-pending` 핸들러는 단순
+> 전달이 아니라 새 노트 생성과 "한 턴에 같은 파일 두 번" 경쟁 조정(`newNoteByPath`)까지
+> 한다. 정석은 복제가 아니라 **이동**(run별 등록 → 앱 레벨 + runId demux)이고,
+> 그건 `usePermissionGate.ts:8-10` 주석이 *"runChat이 다른 리팩터와 겹쳐서 일부러
+> 밖에 뒀다"*고 적어둔 바로 그 작업, 즉 §6 #8 영역이다.
+>
+> **SDK 판정 (설치 번들 실독)**: MCP 툴 핸들러는 호출자를 알 수 없다 —
+> 시그니처가 `(args, extra: unknown)`이고 SDK가 `extra`에 아무것도 얹지 않는다.
+> `canUseTool`의 `agentID?`와 훅의 `agent_id?`에는 있지만 MCP에는 연결돼 있지 않고,
+> 있어도 소용없다: **`runId`는 호스트 개념이라 SDK가 존재조차 모른다.**
+> 그러므로 ambient getter 자체는 SDK가 강제한 구조가 맞다. 강제되지 않은 건
+> **그 칸이 null이 되도록 놔둔 것**이다.
+
 ### 3-5. 사이드카 재시작이 CLI 손자를 흘린다 · P1
 
 `manager.rs:386-389`가 `*self.chat.write().await`를 새 `Arc`로 교체한다.
@@ -352,6 +490,32 @@ dev 핫리스타트 왓처(`manager.rs:529-534`)는 `.mjs` 저장마다 살아�
 **저장할 때마다 한 세대씩 흘린다.**
 
 > **수정**: 스왑 전에 옛 `Arc`를 캡처해 `.hard_kill()`.
+
+> **⚠️ 정정 (2026-07-29) — 위 처방을 그대로 하면 재시작 폭주가 난다.**
+>
+> **왜 위험한가**: 지금 재시작이 조용한 건 `Drop`(`client.rs:104-110`)이 프로세스가
+> 죽기 **전에** wait 태스크를 abort해서 exit 핸들러가 무장 해제되기 때문 —
+> 우연한 순서 덕이다. `Arc`가 살아있는 상태에서 `hard_kill`을 부르면 핸들러가
+> 무장된 채 프로세스가 죽고 → `handle_exit` → 크래시로 오인 → 방금 만든 인스턴스를
+> 또 죽이는 재시작 → 5회 후 `Dead { fatal: true }`. dev 워처 경로에서는
+> `last_spawn.elapsed()`가 `HEALTHY_UPTIME`(60초) 미만이라 카운터가 확실히 오른다.
+>
+> **위치도 틀렸다 — `restart`가 아니라 `Drop`이다.** 누수는 `restart` 고유 문제가
+> 아니라 `Drop` 자체에 있고, 드랍 지점은 1곳이 아니라 **6곳**이다:
+> ① `manager.rs:387`/`:388` 재시작 스왑(크래시 복구 + dev 워처)
+> ② `spawn_initialized`가 `ProtocolMismatch`로 Err를 낼 때(`client.rs:234`)
+> ③ `spawn_all`에서 title 스폰 실패 시 이미 뜬 chat(`manager.rs:144-151`)
+> ④ `SidecarManager` 자체 드랍 ⑤ 테스트 클라이언트 2곳.
+> `Drop` 하나가 전부를 덮는다.
+>
+> **정석**: `disarmed: AtomicBool` 하나를 kill·reap 중 먼저 오는 쪽이 `swap`하게
+> 해서 ① 의도한 teardown은 핸들러를 쏘지 않고 ② 이미 수거된 pgid(재활용됐을 수
+> 있는 pid)에 시그널을 보내지 않게 한다. `hard_kill`은 순수 `libc::kill`이라
+> 동기·논블로킹이고 `Drop`에서 안전하다. `restart`는 무수정.
+>
+> 구현: `9e0f346a3`. 검증은 손자를 스폰하는 셸 픽스처 + `drop(client)` +
+> `kill(pid,0)` — 토큰 없이 3초, 수정 전 실패 확인함
+> (`tests/sidecar_process_group.rs`).
 
 ### 3-6. AUTH 갱신 조율이 전역이고 동시 대기자를 떨어뜨린다 · P2
 
@@ -494,6 +658,42 @@ IPC 핸들러 스레드 = 메인 스레드에서 인라인 실행된다.
 
 ---
 
+### 3-15. 감사가 놓친 것 2건 (2026-07-29 추가)
+
+구현 중 발견. 둘 다 원 감사에 없다.
+
+**(a) 종료 중 사이드카를 새로 띄운다 · P1** — 고침 (`5219d7239`)
+
+`shutdown_all`이 graceful `shutdown`을 보내면 노드가 ~250ms 뒤 종료 → 이때
+매니저가 아직 `Arc`를 쥐고 있어 exit 핸들러가 무장 상태 → `handle_exit` →
+`restart_decision`이 500ms 백오프 → **~750ms에 새 사이드카 스폰**. `app_quit`은
+700ms 후 `app.exit(0)`인데 이건 `std::process::exit`이라 `Drop`을 건너뛴다.
+**여유 약 50ms.** 지면 완전히 고아가 된 사이드카가 남는다 — `shutdown_all` 주석이
+고쳤다고 주장하는 바로 그 부류다. 덤으로 곧 사라질 프론트엔드에 `Restarting`
+상태를 쏜다.
+
+정석: "의도한 종료인가"를 타이밍으로 추론하지 말고 **정책의 입력으로** 받는다.
+`restart_decision(shutting_down, ...)` + `RestartAction::Expected`, 플래그는
+통지 **전에** 세운다(사이드카가 0.25초 만에 반응하므로). 예상된 종료는
+크래시 예산도 쓰지 않는다 — 우리가 시켜서 나간 건 건강 여부에 대해 아무 정보가
+없고, 예산을 쓰면 나중의 진짜 크래시가 캡에 일찍 걸린다.
+
+**(b) `propose_*`가 모델에게 거짓 보고를 한다 · P1** — 미수정
+
+`relay.mjs:26-30`의 `awaitVerdict`는 15초 후 fail-open하고 모델에게
+*"queued for user review"*라고 답한다. **카드는 만들어진 적이 없다.** 모델은
+성공한 줄 알고 넘어가고, 유저는 편집을 잃고, 어디에도 신호가 없다. 3-4의
+유실이 **무음인 진짜 이유**가 이것이다.
+
+8개 릴레이 툴 중 `query_notes`만 우연히 제대로 한다 — 5초 타임아웃 후 모델에게
+보이는 오류를 반환한다(`server.mjs:206-215`). `move_note`/`set_note_status`/
+`set_note_tags`/`propose_skill`은 await조차 안 하고 무조건 성공 문자열을 반환한다.
+
+fail-open은 **"호스트가 멈췄을 때"** 정책으로는 맞지만 **"배달 불가능한 제안"**
+에는 틀렸다. 둘은 다른 조건인데 정책을 공유하고 있다. 3-4와 함께 고쳐야 한다.
+
+---
+
 ## 4. 계약 — 손으로 3~4벌, 이미 드리프트함
 
 코드젠이 없다. `src-tauri/Cargo.toml`에 `ts-rs`/`specta`/`tauri-specta`/`schemars` 없고,
@@ -609,13 +809,17 @@ IPC 핸들러 스레드 = 메인 스레드에서 인라인 실행된다.
 
 **0~4는 오늘 안에 끝난다.**
 
-| # | 할 일 | 근거 | 크기 |
-|---|---|---|---|
-| **0** | `credential_helper_args` 잔해 삭제 → `cargo test` 컴파일 복구 | §0 | 분 |
-| **1** | 토큰·키 `OnceLock` 캐시. 채팅 시작마다 `ioreg` 안 띄우기 | 2-4 | ~30줄 |
-| **2** | `modelBodyBase`를 runId로 키잉 | 3-1 | 소 |
-| **3** | 릴레이 getter에 `?? rec.bgTurnRunId` | 3-4 | 극소 |
-| **4** | `restart`에서 스왑 전 `old.hard_kill()` | 3-5 | 극소 |
+**0~4는 완료됐다.** 처방이 틀렸던 항목은 아래에 실제로 한 일을 적어두었다 —
+각 항목의 ⚠️ 정정 블록에 근거가 있다.
+
+| # | 할 일 | 근거 | 크기 | 상태 |
+|---|---|---|---|---|
+| **0** | `credential_helper_args` 잔해 삭제 → `cargo test` 컴파일 복구 (**18개** 부활, 20 아님. 선결: bun·sidecar-pkg·secrets) | §0 | 분 | ✅ `e073770d9` |
+| **1** | **`derive_key`에** `OnceLock` 캐시 (**토큰은 캐시 금지**, `LazyLock` 금지) | 2-4 | ~20줄 | ✅ `f1203f28a` |
+| **2** | `modelBodyBase`를 **threadId**로 키잉 (runId면 2턴째부터 CAS가 꺼짐) + 스레드 삭제 시 정리 | 3-1 | 소 | ✅ `f7a47993c` |
+| **3** | ~~릴레이 getter에 `?? rec.bgTurnRunId`~~ → **불충분.** `lastRunId` + 호스트 절반이 필요하므로 **#8과 함께** | 3-4 | 중 | ⏸ 보류 |
+| **4** | **`Drop`에서** `hard_kill` + `disarmed` 플래그 (`restart`에 넣으면 재시작 폭주) | 3-5 | 소 | ✅ `9e0f346a3` |
+| **4b** | 종료 중 재스폰 경쟁 — `restart_decision`에 종료 게이트 | 3-15(a) | 소 | ✅ `5219d7239` |
 | **5** | 단일 비행 마크다운 파싱 래치 | 2-1 | ~3줄 상태 |
 | **6** | `usePacedText`를 타이머 + 적응형 예산으로 | 2-1 | ~40줄 |
 | **7** | `MAX_LIVE_THREADS`를 진짜 경계로 (큐 or 거부) 또는 상수 삭제 | 3-2 | 소 |
@@ -631,6 +835,11 @@ IPC 핸들러 스레드 = 메인 스레드에서 인라인 실행된다.
 
 **5·6·8이 "빠르게"의 대부분, 13·14가 "Rust 네이티브"의 대부분,
 0·2·3·4가 "에러가 전혀 없어야"의 대부분이다.**
+
+> **2026-07-29**: 0·1·2·4·4b 완료. 3은 #8에 병합(위 표 참조). 남은 "에러가 전혀
+> 없어야" 항목은 **3-15(b) `propose_*`의 거짓 보고**이고, 이것도 3-4와 같은
+> 뿌리라 #8과 함께 간다. 다음 착수 후보는 **5·6**(체감 성능, 합쳐 ~50줄)이거나
+> CI에 cargo 잡을 붙이는 것 — 후자를 안 하면 §0이 그대로 재발한다.
 
 ---
 
