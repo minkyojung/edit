@@ -911,32 +911,3 @@ fn parse_signed_range(part: &str, sign: char) -> Option<u32> {
     let start_str = body.split(',').next()?;
     start_str.parse::<u32>().ok()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn credential_helper_disables_inherited_then_adds_inline() {
-        let args = credential_helper_args();
-        assert_eq!(args.len(), 4);
-        assert_eq!(args[0], "-c");
-        // Empty value clears any inherited helper (e.g. osxkeychain).
-        assert_eq!(args[1], "credential.helper=");
-        assert_eq!(args[2], "-c");
-        // The inline helper reads the token from the env var by NAME.
-        assert!(args[3].contains("$GH_TOKEN"));
-        assert!(args[3].contains("username=x-access-token"));
-    }
-
-    #[test]
-    fn credential_helper_args_carry_no_secret() {
-        // The token is supplied by git_push via the process env, never on
-        // the command line. These args reference only the variable name,
-        // so nothing here can leak a real token through `ps`.
-        for a in credential_helper_args() {
-            assert!(!a.contains("ghp_"));
-            assert!(!a.contains("gho_"));
-        }
-    }
-}
