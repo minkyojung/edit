@@ -27,6 +27,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// JSON-RPC 2.0 reserved code. Mirrors `METHOD_NOT_FOUND` in
 /// sidecar/src/jsonrpc.mjs, which already owns the constant on the far side.
 const METHOD_NOT_FOUND: i64 = -32601;
+const INTERNAL_ERROR: i64 = -32603;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SidecarError {
@@ -64,8 +65,19 @@ struct Notification<'a> {
     params: Option<&'a Value>,
 }
 
-/// Reply to an inbound request we can't serve. No success counterpart yet —
-/// nothing inbound is handled, so every inbound request is refused.
+#[derive(Serialize)]
+struct Response<'a> {
+    jsonrpc: &'a str,
+    id: &'a Value,
+    // Deliberately NOT skip_serializing_if: `result: null` is a valid success
+    // payload, and a response carrying neither `result` nor `error` is
+    // malformed. Mirror of the read-side note on classification.
+    result: &'a Value,
+}
+
+/// Reply to an inbound request. The id is echoed as the raw `Value` it arrived
+/// as — ids may be strings, and answering `id: "abc"` with `id: -1` is a reply
+/// to a request nobody made.
 #[derive(Serialize)]
 struct ErrorResponse<'a> {
     jsonrpc: &'a str,
@@ -106,6 +118,91 @@ struct RpcErrorPayload {
 /// Notification handler: receives (method, params) for every server-pushed
 /// JSON-RPC notification. Spawned as a tokio task; do not block.
 pub type NotificationHandler = Arc<dyn Fn(String, Value) + Send + Sync>;
+
+/// Serves one inbound JSON-RPC request. Receives (method, params, responder).
+///
+/// MUST NOT block or await: it runs on the reader task, which is the only
+/// thing draining the peer's stdout — stalling here stalls every inbound
+/// frame, including the answer to anything the handler itself is waiting on.
+/// Move the `Responder` into a spawned task and answer from there.
+///
+/// Built per client rather than shared, mirroring `build_exit`: the responder
+/// carries the write channel of the client that received the request, so a
+/// reply can never land on the wrong sidecar — including after a restart has
+/// swapped the `Arc` underneath.
+pub type RequestHandler = Arc<dyn Fn(String, Value, Responder) + Send + Sync>;
+
+/// Reply handle for exactly one inbound request.
+///
+/// Both halves of "exactly one" are structural:
+///   - at most once — `ok`/`err` take the id, and the id is the only send
+///     token. There is no second id, so there is no second send. A `bool`
+///     alongside the id could drift; taking the id makes the flag and the
+///     payload the same object.
+///   - at least once — `Drop` answers if the token is still there, so a
+///     handler that panics, early-returns or forgets cannot leave the peer
+///     waiting forever. (The ACP Rust SDK's responder sends nothing on drop
+///     for non-batch requests; this is deliberately stricter, because that
+///     silence is the same failure the three hand-rolled bridges each
+///     invented a timeout to survive.)
+pub struct Responder {
+    id: Option<Value>,
+    write_tx: mpsc::Sender<Vec<u8>>,
+}
+
+impl Responder {
+    fn new(id: Value, write_tx: mpsc::Sender<Vec<u8>>) -> Self {
+        Self { id: Some(id), write_tx }
+    }
+
+    /// Answer with a result. `Value::Null` is a valid success payload.
+    pub fn ok(mut self, result: Value) {
+        if let Some(id) = self.id.take() {
+            let body = Response { jsonrpc: "2.0", id: &id, result: &result };
+            self.send(serde_json::to_vec(&body));
+        }
+    }
+
+    /// Answer with an error.
+    pub fn err(mut self, code: i64, message: &str) {
+        if let Some(id) = self.id.take() {
+            self.send_error(&id, code, message);
+        }
+    }
+
+    fn send_error(&self, id: &Value, code: i64, message: &str) {
+        let body = ErrorResponse {
+            jsonrpc: "2.0",
+            id,
+            error: RpcError { code, message, data: None },
+        };
+        self.send(serde_json::to_vec(&body));
+    }
+
+    fn send(&self, payload: Result<Vec<u8>, serde_json::Error>) {
+        let payload = match payload {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[sidecar] failed to serialize reply: {e}");
+                return;
+            }
+        };
+        // `try_send`, never `send().await` — see the reader loop. It is also
+        // the only primitive `Drop` can use, so both paths share one route
+        // rather than diverging into "the tested one" and "the other one".
+        if let Err(e) = self.write_tx.try_send(encode(&payload)) {
+            eprintln!("[sidecar] dropped outbound reply: {e}");
+        }
+    }
+}
+
+impl Drop for Responder {
+    fn drop(&mut self) {
+        if let Some(id) = self.id.take() {
+            self.send_error(&id, INTERNAL_ERROR, "handler dropped without answering");
+        }
+    }
+}
 
 /// Fires once when the sidecar's child process exits (cleanly or otherwise).
 /// Used by the manager to trigger a restart.
@@ -157,6 +254,7 @@ impl SidecarClient {
         args: &[String],
         extra_env: &[(&str, OsString)],
         on_notification: NotificationHandler,
+        on_request: Option<RequestHandler>,
         on_exit: Option<ExitHandler>,
     ) -> Result<Self, SidecarError> {
         let mut cmd = Command::new(program);
@@ -202,6 +300,7 @@ impl SidecarClient {
             stdout,
             pending.clone(),
             on_notification,
+            on_request,
             write_tx.clone(),
         )));
 
@@ -272,9 +371,11 @@ impl SidecarClient {
         args: &[String],
         extra_env: &[(&str, OsString)],
         on_notification: NotificationHandler,
+        on_request: Option<RequestHandler>,
         on_exit: Option<ExitHandler>,
     ) -> Result<Self, SidecarError> {
-        let client = Self::spawn(program, args, extra_env, on_notification, on_exit).await?;
+        let client =
+            Self::spawn(program, args, extra_env, on_notification, on_request, on_exit).await?;
         let init: Value = client
             .request(
                 "initialize",
@@ -353,6 +454,7 @@ async fn reader_loop<R: AsyncRead + Unpin>(
     mut stdout: R,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
     on_notification: NotificationHandler,
+    on_request: Option<RequestHandler>,
     // Reply path for inbound requests. Owned rather than borrowed so this stays
     // a free async fn we can hand straight to `tokio::spawn`.
     write_tx: mpsc::Sender<Vec<u8>>,
@@ -397,24 +499,23 @@ async fn reader_loop<R: AsyncRead + Unpin>(
                 // first real handler lands this arm gains a lookup, and the
                 // refusal stays as the default for anything unknown.
                 (Some(id), Some(method)) => {
-                    let message = format!("method not found: {method}");
-                    let body = ErrorResponse {
-                        jsonrpc: "2.0",
-                        id: &id,
-                        error: RpcError { code: METHOD_NOT_FOUND, message: &message, data: None },
-                    };
-                    match serde_json::to_vec(&body) {
-                        // `try_send`, never `send().await`: this task is the
-                        // only drainer of the peer's stdout, so blocking here
-                        // on a full channel creates the condition that keeps it
-                        // full, and would stall `chat/event` for every run.
-                        // Dropping one refusal beats freezing the transport.
-                        Ok(payload) => {
-                            if let Err(e) = write_tx.try_send(encode(&payload)) {
-                                eprintln!("[sidecar] dropped reply to request {id}: {e}");
-                            }
-                        }
-                        Err(e) => eprintln!("[sidecar] failed to serialize reply: {e}"),
+                    // The responder carries THIS client's write channel, so the
+                    // reply cannot land on the wrong sidecar — that identity is
+                    // why the handler is built per client rather than shared.
+                    //
+                    // Called inline, and the handler contract is that it does
+                    // not block: this task is the only drainer of the peer's
+                    // stdout, so awaiting here would stall every inbound frame
+                    // including `chat/event` for every run. Handlers that need
+                    // to wait (the realistic case — the answer comes from the
+                    // frontend) move the responder into a spawned task.
+                    let responder = Responder::new(id, write_tx.clone());
+                    match &on_request {
+                        Some(handler) => handler(method, incoming.params.unwrap_or(Value::Null), responder),
+                        // Nothing serves inbound requests on this client. Refuse
+                        // rather than ignore: a peer told "no" recovers, a peer
+                        // ignored waits forever.
+                        None => responder.err(METHOD_NOT_FOUND, &format!("method not found: {method}")),
                     }
                 }
 
@@ -532,7 +633,7 @@ mod tests {
         let handler: NotificationHandler =
             Arc::new(move |m, p| sink.lock().unwrap().push((m, p)));
 
-        reader_loop(std::io::Cursor::new(wire), pending, handler, write_tx).await;
+        reader_loop(std::io::Cursor::new(wire), pending, handler, None, write_tx).await;
 
         let mut parser = FrameParser::new();
         while let Some(frame) = write_rx.recv().await {
@@ -728,6 +829,125 @@ mod tests {
             ["chat/event"],
             "the event stream must survive an unanswerable request",
         );
+    }
+
+    // --- request handlers -------------------------------------------------
+
+    /// Runs the loop with a request handler installed.
+    async fn dispatch_handled(
+        payloads: &[&str],
+        on_request: RequestHandler,
+    ) -> Vec<Value> {
+        let mut wire = Vec::new();
+        for p in payloads {
+            wire.extend_from_slice(&encode(p.as_bytes()));
+        }
+        let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(64);
+        let noop: NotificationHandler = Arc::new(|_, _| {});
+        reader_loop(
+            std::io::Cursor::new(wire),
+            Arc::new(Mutex::new(HashMap::new())),
+            noop,
+            Some(on_request),
+            write_tx,
+        )
+        .await;
+        // The handler may answer from a spawned task, so give it a turn before
+        // the channel is drained.
+        tokio::task::yield_now().await;
+        let mut parser = FrameParser::new();
+        while let Some(frame) = write_rx.recv().await {
+            parser.push(&frame);
+        }
+        let mut out = Vec::new();
+        while let Some(p) = parser.next_message() {
+            out.push(serde_json::from_slice::<Value>(&p).expect("valid JSON"));
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn a_handled_request_gets_the_handlers_answer() {
+        let handler: RequestHandler = Arc::new(|method, params, responder| {
+            responder.ok(serde_json::json!({ "saw": method, "echo": params }));
+        });
+        let out = dispatch_handled(
+            &[r#"{"jsonrpc":"2.0","id":7,"method":"host/ping","params":{"n":1}}"#],
+            handler,
+        )
+        .await;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["id"], 7);
+        assert_eq!(out[0]["result"]["saw"], "host/ping");
+        assert_eq!(out[0]["result"]["echo"]["n"], 1);
+    }
+
+    #[tokio::test]
+    async fn a_handler_can_answer_from_another_task() {
+        // The realistic shape: the answer comes from the frontend, minutes
+        // later. The responder must survive being moved off the reader.
+        let handler: RequestHandler = Arc::new(|_m, _p, responder| {
+            tokio::spawn(async move {
+                tokio::task::yield_now().await;
+                responder.ok(serde_json::json!("late"));
+            });
+        });
+        let out = dispatch_handled(&[r#"{"jsonrpc":"2.0","id":1,"method":"host/x"}"#], handler)
+            .await;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["result"], "late");
+    }
+
+    #[tokio::test]
+    async fn a_dropped_responder_still_answers() {
+        // The guarantee the whole type exists for. A handler that panics,
+        // early-returns, or simply forgets must not leave the peer waiting
+        // forever — that is the failure mode the three hand-rolled bridges
+        // each invented a timeout to survive. (The ACP Rust SDK's responder
+        // sends nothing on drop; this is deliberately stricter.)
+        let handler: RequestHandler = Arc::new(|_m, _p, _responder| { /* drops it */ });
+        let out = dispatch_handled(&[r#"{"jsonrpc":"2.0","id":"abc","method":"host/x"}"#], handler)
+            .await;
+        assert_eq!(out.len(), 1, "exactly one reply, even unanswered");
+        assert_eq!(out[0]["id"], serde_json::json!("abc"));
+        assert_eq!(out[0]["error"]["code"], INTERNAL_ERROR);
+    }
+
+    #[tokio::test]
+    async fn a_responder_answers_exactly_once() {
+        // `ok` consumes the responder, so a second send is unrepresentable —
+        // but Drop still runs afterwards and must not add a second frame.
+        let handler: RequestHandler = Arc::new(|_m, _p, responder| {
+            responder.ok(serde_json::json!("first"));
+        });
+        let out = dispatch_handled(&[r#"{"jsonrpc":"2.0","id":1,"method":"host/x"}"#], handler)
+            .await;
+        assert_eq!(out.len(), 1, "Drop must not double-send after ok()");
+        assert_eq!(out[0]["result"], "first");
+        assert!(out[0].get("error").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_null_result_is_serialized_not_omitted() {
+        // A response carrying neither result nor error is malformed, and the
+        // peer classifies on `result` being present. Easy to "tidy up" into a
+        // protocol violation with a skip_serializing_if.
+        let handler: RequestHandler = Arc::new(|_m, _p, responder| responder.ok(Value::Null));
+        let out = dispatch_handled(&[r#"{"jsonrpc":"2.0","id":1,"method":"host/x"}"#], handler)
+            .await;
+        assert_eq!(out[0].get("result"), Some(&Value::Null));
+    }
+
+    #[tokio::test]
+    async fn an_unhandled_method_still_gets_method_not_found() {
+        // With no handler installed at all, the refusal from the previous
+        // commit must still stand.
+        let (_, out) = dispatch_full(
+            &[r#"{"jsonrpc":"2.0","id":1,"method":"host/x"}"#],
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .await;
+        assert_eq!(out[0]["error"]["code"], METHOD_NOT_FOUND);
     }
 
     #[tokio::test]

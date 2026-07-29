@@ -116,7 +116,7 @@ async fn chat_sidecar_full_lifecycle() {
     let captured = Arc::new(Mutex::new(CapturedEvents::default()));
     let handler = make_handler(captured.clone());
     let args = [sidecar_script().to_string_lossy().to_string(), "--mode=chat".into()];
-    let client = SidecarClient::spawn(&node_path(), &args, &[], handler, None)
+    let client = SidecarClient::spawn(&node_path(), &args, &[], handler, None, None)
         .await
         .expect("spawn");
 
@@ -231,7 +231,7 @@ async fn title_sidecar_single_flight() {
     let captured = Arc::new(Mutex::new(CapturedEvents::default()));
     let handler = make_handler(captured.clone());
     let args = [sidecar_script().to_string_lossy().to_string(), "--mode=title".into()];
-    let client = SidecarClient::spawn(&node_path(), &args, &[], handler, None)
+    let client = SidecarClient::spawn(&node_path(), &args, &[], handler, None, None)
         .await
         .expect("spawn");
 

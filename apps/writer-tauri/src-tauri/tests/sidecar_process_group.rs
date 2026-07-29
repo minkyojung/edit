@@ -71,6 +71,7 @@ async fn spawn_fixture(
         &args,
         &[],
         noop_notifications(),
+        None,
         on_exit,
     )
     .await

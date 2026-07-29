@@ -158,6 +158,7 @@ impl SidecarManager {
             &launcher.args_for("chat"),
             &launcher.env,
             handler.clone(),
+            None,
             Some(chat_exit),
         )
         .await?;
@@ -166,6 +167,7 @@ impl SidecarManager {
             &launcher.args_for("title"),
             &launcher.env,
             handler.clone(),
+            None,
             Some(title_exit),
         )
         .await?;
@@ -413,6 +415,7 @@ impl SidecarManager {
             &self.launcher.args_for(mode.as_str()),
             &self.launcher.env,
             self.notification_handler.clone(),
+            None,
             Some(exit_handler),
         )
         .await?;
