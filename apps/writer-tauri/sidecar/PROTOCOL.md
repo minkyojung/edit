@@ -70,6 +70,20 @@ We use the standard subset: requests, responses, and notifications.
 - **sidecar → Rust**: responses (matched by id) and notifications (`chat/event`,
   `chat/done`, `chat/error`).
 
+The sidecar **still must not send requests** — that contract is unchanged. What
+changed is what the host does when it receives one anyway: it answers
+`-32601 method not found` instead of silently discarding the frame. Tolerance,
+not permission. Until the sidecar has an id minter and a pending map, a request
+from it is a bug; the refusal exists so that bug is visible at both ends rather
+than presenting as a hang.
+
+A frame with neither `id` nor `method` cannot be addressed or dispatched. The
+host logs it. In practice this is the sidecar's `errorResponse(null, -32700)`
+for a frame it could not parse — which means one of our requests is about to go
+unanswered, so the log is the only warning that exists.
+
+Batches (a top-level JSON array) are unsupported in both directions.
+
 ---
 
 ## 3. Methods (Rust → sidecar)

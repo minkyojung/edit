@@ -24,6 +24,10 @@ use super::framing::{encode, FrameParser};
 /// wasn't re-run) and we refuse to run it rather than misbehave silently.
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// JSON-RPC 2.0 reserved code. Mirrors `METHOD_NOT_FOUND` in
+/// sidecar/src/jsonrpc.mjs, which already owns the constant on the far side.
+const METHOD_NOT_FOUND: i64 = -32601;
+
 #[derive(Debug, thiserror::Error)]
 pub enum SidecarError {
     #[error("sidecar exited unexpectedly")]
@@ -58,6 +62,27 @@ struct Notification<'a> {
     method: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     params: Option<&'a Value>,
+}
+
+/// Reply to an inbound request we can't serve. No success counterpart yet —
+/// nothing inbound is handled, so every inbound request is refused.
+#[derive(Serialize)]
+struct ErrorResponse<'a> {
+    jsonrpc: &'a str,
+    // Echoed byte-for-byte as the raw Value the peer sent. JSON-RPC ids may be
+    // strings as well as numbers, and answering `id: "abc"` with `id: -1` — the
+    // `as_i64().unwrap_or(-1)` shape used on the read path — is a reply to a
+    // request that doesn't exist, which is worse than the drop it replaces.
+    id: &'a Value,
+    error: RpcError<'a>,
+}
+
+#[derive(Serialize)]
+struct RpcError<'a> {
+    code: i64,
+    message: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<&'a Value>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -177,6 +202,7 @@ impl SidecarClient {
             stdout,
             pending.clone(),
             on_notification,
+            write_tx.clone(),
         )));
 
         // Wait task: owns the Child. An exit we didn't ask for fires the
@@ -327,6 +353,9 @@ async fn reader_loop<R: AsyncRead + Unpin>(
     mut stdout: R,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
     on_notification: NotificationHandler,
+    // Reply path for inbound requests. Owned rather than borrowed so this stays
+    // a free async fn we can hand straight to `tokio::spawn`.
+    write_tx: mpsc::Sender<Vec<u8>>,
 ) {
     let mut parser = FrameParser::new();
     let mut buf = vec![0u8; 8192];
@@ -348,31 +377,90 @@ async fn reader_loop<R: AsyncRead + Unpin>(
                 }
             };
 
-            // JSON-RPC 2.0: presence of `id` distinguishes a response from a
-            // notification. Don't gate on `result`/`error` — `result: null` is
-            // a valid (and common) success payload, and serde treats it as
-            // `None`, which would otherwise drop the response on the floor.
-            if let Some(id_value) = incoming.id.as_ref() {
-                let id = id_value.as_i64().unwrap_or(-1);
-                let outcome = if let Some(err) = incoming.error {
-                    Err(SidecarError::Rpc {
-                        code: err.code,
-                        message: err.message,
-                        data: err.data,
-                    })
-                } else {
-                    Ok(incoming.result.unwrap_or(Value::Null))
-                };
-                if let Some(tx) = pending.lock().await.remove(&id) {
-                    let _ = tx.send(outcome);
+            // JSON-RPC 2.0 classifies a frame by WHICH of `id` and `method` are
+            // present. Match the pair exhaustively rather than testing one and
+            // falling through to the other: testing `id` first and never
+            // consulting `method` routed inbound *requests* (which carry both)
+            // into the response path, where they matched no pending entry and
+            // vanished without a trace. Making every combination a named arm
+            // stops "which check runs first" from being load-bearing —
+            // rust-analyzer's `lsp-server` carries the mirror-image bug via
+            // untagged-enum variant order and recently hardened against it.
+            //
+            // Note `id: null` deserializes to `None`, not `Some(Value::Null)`,
+            // so a null-id frame lands in the method arms. That is the right
+            // answer (a null id is not addressable) but it is incidental —
+            // widening the field type would silently change it.
+            match (incoming.id, incoming.method) {
+                // Request. Nothing inbound is handled yet, so refuse it. A peer
+                // told "no" recovers; a peer ignored waits forever. When the
+                // first real handler lands this arm gains a lookup, and the
+                // refusal stays as the default for anything unknown.
+                (Some(id), Some(method)) => {
+                    let message = format!("method not found: {method}");
+                    let body = ErrorResponse {
+                        jsonrpc: "2.0",
+                        id: &id,
+                        error: RpcError { code: METHOD_NOT_FOUND, message: &message, data: None },
+                    };
+                    match serde_json::to_vec(&body) {
+                        // `try_send`, never `send().await`: this task is the
+                        // only drainer of the peer's stdout, so blocking here
+                        // on a full channel creates the condition that keeps it
+                        // full, and would stall `chat/event` for every run.
+                        // Dropping one refusal beats freezing the transport.
+                        Ok(payload) => {
+                            if let Err(e) = write_tx.try_send(encode(&payload)) {
+                                eprintln!("[sidecar] dropped reply to request {id}: {e}");
+                            }
+                        }
+                        Err(e) => eprintln!("[sidecar] failed to serialize reply: {e}"),
+                    }
                 }
-                continue;
-            }
 
-            // Notification (no id, has method)
-            if let Some(method) = incoming.method {
-                let params = incoming.params.unwrap_or(Value::Null);
-                on_notification(method, params);
+                // Response to one of our requests. Don't gate on
+                // `result`/`error` — `result: null` is a valid success payload
+                // that serde reads as `None`.
+                (Some(id), None) => {
+                    // We only ever mint integer ids, so a non-integer id can't
+                    // correlate to anything. Say so rather than coercing to -1
+                    // and pretending to look it up.
+                    let Some(key) = id.as_i64() else {
+                        eprintln!("[sidecar] response with non-integer id {id}; dropping");
+                        continue;
+                    };
+                    let outcome = if let Some(err) = incoming.error {
+                        Err(SidecarError::Rpc {
+                            code: err.code,
+                            message: err.message,
+                            data: err.data,
+                        })
+                    } else {
+                        Ok(incoming.result.unwrap_or(Value::Null))
+                    };
+                    if let Some(tx) = pending.lock().await.remove(&key) {
+                        let _ = tx.send(outcome);
+                    }
+                }
+
+                // Notification. Stays inline and therefore ordered: the
+                // frontend's streaming assembly depends on wire order.
+                (None, Some(method)) => {
+                    on_notification(method, incoming.params.unwrap_or(Value::Null));
+                }
+
+                // Neither: not addressable (no id to reply to) and not
+                // actionable (no method to dispatch). The sidecar produces this
+                // for `errorResponse(null, -32700, 'Parse error')` when it
+                // can't parse something we sent — which means a request of ours
+                // is about to hang until the child dies. It used to vanish with
+                // no output at all.
+                (None, None) => {
+                    eprintln!(
+                        "[sidecar] unaddressable frame (no id, no method): {}",
+                        String::from_utf8_lossy(&payload),
+                    );
+                }
             }
         }
     }
@@ -409,18 +497,53 @@ mod tests {
         payloads: &[&str],
         pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
     ) -> Vec<(String, Value)> {
+        dispatch_full(payloads, pending).await.0
+    }
+
+    /// As `dispatch`, but also returns every frame the loop wrote back out,
+    /// decoded through the real `FrameParser` — so a reply that forgot to be
+    /// framed fails here rather than confusing the peer at runtime.
+    ///
+    /// Capacity matches production (64). An unbounded channel would hide the
+    /// very backpressure behaviour the design turns on.
+    async fn dispatch_full(
+        payloads: &[&str],
+        pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
+    ) -> (Vec<(String, Value)>, Vec<Value>) {
+        let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(64);
+        dispatch_with(payloads, pending, write_tx, write_rx).await
+    }
+
+    /// The general form: the caller supplies the write channel, so a test can
+    /// pre-saturate it. `write_tx` is MOVED in — the helper must not retain a
+    /// sender, or the drain below never observes the channel close and hangs.
+    async fn dispatch_with(
+        payloads: &[&str],
+        pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
+        write_tx: mpsc::Sender<Vec<u8>>,
+        mut write_rx: mpsc::Receiver<Vec<u8>>,
+    ) -> (Vec<(String, Value)>, Vec<Value>) {
         let mut wire = Vec::new();
         for p in payloads {
-            wire.extend_from_slice(&super::super::framing::encode(p.as_bytes()));
+            wire.extend_from_slice(&encode(p.as_bytes()));
         }
         let seen: Arc<StdMutex<Vec<(String, Value)>>> = Arc::new(StdMutex::new(Vec::new()));
         let sink = seen.clone();
         let handler: NotificationHandler =
             Arc::new(move |m, p| sink.lock().unwrap().push((m, p)));
 
-        reader_loop(std::io::Cursor::new(wire), pending, handler).await;
-        let out = seen.lock().unwrap().clone();
-        out
+        reader_loop(std::io::Cursor::new(wire), pending, handler, write_tx).await;
+
+        let mut parser = FrameParser::new();
+        while let Some(frame) = write_rx.recv().await {
+            parser.push(&frame);
+        }
+        let mut out = Vec::new();
+        while let Some(p) = parser.next_message() {
+            out.push(serde_json::from_slice::<Value>(&p).expect("outbound frame is valid JSON"));
+        }
+        let notifications = seen.lock().unwrap().clone();
+        (notifications, out)
     }
 
     fn slot() -> (
@@ -491,6 +614,120 @@ mod tests {
         )
         .await;
         assert_eq!(seen.iter().map(|(m, _)| m.as_str()).collect::<Vec<_>>(), ["after"]);
+    }
+
+    // --- inbound requests -------------------------------------------------
+    //
+    // A frame carrying BOTH `id` and `method` is a request. Nothing inbound is
+    // handled yet, so the contract is that it is REFUSED, not ignored: a peer
+    // told "no" recovers, a peer ignored waits forever.
+
+    #[tokio::test]
+    async fn an_inbound_request_gets_method_not_found() {
+        let (seen, out) = dispatch_full(
+            &[r#"{"jsonrpc":"2.0","id":42,"method":"fs/readTextFile","params":{"p":"/x"}}"#],
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .await;
+        assert!(seen.is_empty(), "a request is not a notification");
+        assert_eq!(out.len(), 1, "exactly one framed reply");
+        assert_eq!(out[0]["jsonrpc"], "2.0");
+        assert_eq!(out[0]["id"], 42);
+        assert_eq!(out[0]["error"]["code"], METHOD_NOT_FOUND);
+        assert!(out[0].get("result").is_none(), "an error response carries no result");
+    }
+
+    #[tokio::test]
+    async fn a_string_id_round_trips_unmangled() {
+        // JSON-RPC ids may be strings. Coercing through i64 answers `id: -1`,
+        // i.e. replies to a request the peer never made.
+        let (_, out) = dispatch_full(
+            &[r#"{"jsonrpc":"2.0","id":"req-abc","method":"whatever"}"#],
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .await;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["id"], serde_json::json!("req-abc"));
+    }
+
+    #[tokio::test]
+    async fn a_request_is_not_mistaken_for_a_response() {
+        // The ordering pin. Testing `id` first and never consulting `method`
+        // routed requests into the response path, where they resolved (or
+        // silently missed) a pending entry. Here id 7 IS pending, so a
+        // misclassification is directly observable.
+        let (pending, rx, id) = slot();
+        let (_, out) = dispatch_full(
+            &[&format!(r#"{{"jsonrpc":"2.0","id":{id},"method":"anything"}}"#)],
+            pending,
+        )
+        .await;
+        assert_eq!(out.len(), 1, "the request must be answered");
+        assert_eq!(out[0]["error"]["code"], METHOD_NOT_FOUND);
+        // ...and must NOT have resolved the pending request. It falls to the
+        // EOF sweep instead.
+        assert!(matches!(rx.await.expect("resolved"), Err(SidecarError::Exited)));
+    }
+
+    #[tokio::test]
+    async fn a_notification_writes_nothing_back() {
+        // The inverse misroute. Replying to a notification is a protocol
+        // violation and would desync the peer's own id table.
+        let (seen, out) = dispatch_full(
+            &[r#"{"jsonrpc":"2.0","method":"chat/event","params":{"runId":"r1"}}"#],
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .await;
+        assert_eq!(seen.len(), 1);
+        assert!(out.is_empty(), "notifications are not answered");
+    }
+
+    #[tokio::test]
+    async fn an_id_less_error_response_is_not_misrouted() {
+        // The sidecar answers an unparseable frame with
+        // `errorResponse(null, -32700, 'Parse error')` (server.mjs:338). Serde
+        // reads JSON null into Option<Value> as None, so that frame has neither
+        // id nor method and fell through every branch with no log — meaning a
+        // frame we failed to encode correctly hung its caller until the child
+        // died. It is not addressable, but it must not be invisible.
+        let (pending, rx, _) = slot();
+        let (seen, out) = dispatch_full(
+            &[r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}"#],
+            pending,
+        )
+        .await;
+        assert!(seen.is_empty(), "not a notification");
+        assert!(out.is_empty(), "nothing to reply to — there is no id");
+        // It must not be mistaken for a reply to something we asked.
+        assert!(matches!(rx.await.expect("resolved"), Err(SidecarError::Exited)));
+    }
+
+    #[tokio::test]
+    async fn a_saturated_write_channel_does_not_stall_notifications() {
+        // `reader_loop` is the only drainer of the peer's stdout, and
+        // `writer_loop` the only drainer of this channel. Blocking the reader
+        // on a full channel creates the condition that keeps it full, so one
+        // unanswerable request would freeze streaming for every run. Under
+        // `send().await` this test hangs; under a non-blocking send it passes.
+        let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(64);
+        for _ in 0..64 {
+            write_tx.try_send(b"x".to_vec()).expect("fill to capacity");
+        }
+        let (seen, _) = dispatch_with(
+            &[
+                r#"{"jsonrpc":"2.0","id":1,"method":"unhandled"}"#,
+                r#"{"jsonrpc":"2.0","method":"chat/event","params":{"runId":"r1"}}"#,
+            ],
+            Arc::new(Mutex::new(HashMap::new())),
+            write_tx,
+            write_rx,
+        )
+        .await;
+        assert_eq!(
+            seen.iter().map(|(m, _)| m.as_str()).collect::<Vec<_>>(),
+            ["chat/event"],
+            "the event stream must survive an unanswerable request",
+        );
     }
 
     #[tokio::test]
