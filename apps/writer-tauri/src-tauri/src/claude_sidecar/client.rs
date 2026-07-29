@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::process::{ChildStdin, ChildStdout, Command};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::process::{ChildStdin, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
 
@@ -320,8 +320,11 @@ async fn writer_loop(mut stdin: ChildStdin, mut rx: mpsc::Receiver<Vec<u8>>) {
     let _ = stdin.shutdown().await;
 }
 
-async fn reader_loop(
-    mut stdout: ChildStdout,
+// Generic over the source rather than taking `ChildStdout`, so the dispatch
+// below can be driven from an in-memory pipe. It is the only classifier on this
+// side of the wire and it had no test of any kind.
+async fn reader_loop<R: AsyncRead + Unpin>(
+    mut stdout: R,
     pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
     on_notification: NotificationHandler,
 ) {
@@ -392,5 +395,110 @@ async fn drain_stderr(mut stderr: tokio::process::ChildStderr) {
             }
             Err(_) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    /// Frames `payloads` into an in-memory reader, runs the real dispatch over
+    /// it, and returns the notifications it delivered. The loop ends at EOF.
+    async fn dispatch(
+        payloads: &[&str],
+        pending: Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
+    ) -> Vec<(String, Value)> {
+        let mut wire = Vec::new();
+        for p in payloads {
+            wire.extend_from_slice(&super::super::framing::encode(p.as_bytes()));
+        }
+        let seen: Arc<StdMutex<Vec<(String, Value)>>> = Arc::new(StdMutex::new(Vec::new()));
+        let sink = seen.clone();
+        let handler: NotificationHandler =
+            Arc::new(move |m, p| sink.lock().unwrap().push((m, p)));
+
+        reader_loop(std::io::Cursor::new(wire), pending, handler).await;
+        let out = seen.lock().unwrap().clone();
+        out
+    }
+
+    fn slot() -> (
+        Arc<Mutex<HashMap<i64, oneshot::Sender<Result<Value, SidecarError>>>>>,
+        oneshot::Receiver<Result<Value, SidecarError>>,
+        i64,
+    ) {
+        let (tx, rx) = oneshot::channel();
+        let map = HashMap::from([(7i64, tx)]);
+        (Arc::new(Mutex::new(map)), rx, 7)
+    }
+
+    #[tokio::test]
+    async fn a_response_resolves_its_pending_request() {
+        let (pending, rx, id) = slot();
+        dispatch(&[&format!(r#"{{"jsonrpc":"2.0","id":{id},"result":{{"ok":true}}}}"#)], pending)
+            .await;
+        let got = rx.await.expect("resolved").expect("ok");
+        assert_eq!(got, serde_json::json!({"ok": true}));
+    }
+
+    #[tokio::test]
+    async fn a_null_result_still_resolves() {
+        // `result: null` is a valid success payload and serde reads it as None;
+        // gating on result/error rather than on `id` would drop it.
+        let (pending, rx, id) = slot();
+        dispatch(&[&format!(r#"{{"jsonrpc":"2.0","id":{id},"result":null}}"#)], pending).await;
+        assert_eq!(rx.await.expect("resolved").expect("ok"), Value::Null);
+    }
+
+    #[tokio::test]
+    async fn an_error_response_resolves_as_rpc_error() {
+        let (pending, rx, id) = slot();
+        dispatch(
+            &[&format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"error":{{"code":-32000,"message":"nope"}}}}"#
+            )],
+            pending,
+        )
+        .await;
+        match rx.await.expect("resolved") {
+            Err(SidecarError::Rpc { code, message, .. }) => {
+                assert_eq!(code, -32000);
+                assert_eq!(message, "nope");
+            }
+            other => panic!("expected Rpc, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_notification_reaches_the_handler() {
+        let seen = dispatch(
+            &[r#"{"jsonrpc":"2.0","method":"chat/event","params":{"runId":"r1"}}"#],
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .await;
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].0, "chat/event");
+        assert_eq!(seen[0].1, serde_json::json!({"runId": "r1"}));
+    }
+
+    #[tokio::test]
+    async fn a_malformed_frame_is_skipped_not_fatal() {
+        // One bad payload must not cost us the rest of the stream.
+        let seen = dispatch(
+            &[r#"{not json"#, r#"{"jsonrpc":"2.0","method":"after","params":null}"#],
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+        .await;
+        assert_eq!(seen.iter().map(|(m, _)| m.as_str()).collect::<Vec<_>>(), ["after"]);
+    }
+
+    #[tokio::test]
+    async fn eof_fails_every_still_pending_request() {
+        // The one guarantee the transport owes callers: nobody hangs when the
+        // peer goes away.
+        let (pending, rx, _) = slot();
+        dispatch(&[], pending).await;
+        assert!(matches!(rx.await.expect("resolved"), Err(SidecarError::Exited)));
     }
 }
