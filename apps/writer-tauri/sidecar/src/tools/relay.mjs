@@ -24,6 +24,38 @@ import { notification } from '../jsonrpc.mjs'
 //     locateLoose 'found' (the host would simply have placed it).
 // One check, against the document the edit is actually applied to.
 
+/** What to tell the model when the host declined an auto-applied write.
+ *
+ * Three tools share it so they cannot drift into describing the same refusal
+ * differently. Each reason names the next move, because "it didn't work" alone
+ * sends the model round the same loop:
+ *
+ *   unsupported-doc-type — a dead end. The note's type fixes this property
+ *     (a daily journal has no status; its location is derived, not chosen).
+ *     Retrying is the exact failure mode the "do not retry" line prevents.
+ *   no-such-note — recoverable. The model named somewhere that isn't a note,
+ *     so looking it up and calling again is the right response.
+ *
+ * @param verb what did not happen, e.g. 'the status was NOT changed'
+ * @param cannot why this doc type can never accept it
+ * @param retry what to do about a path that resolved to nothing
+ */
+export function refusalText(verb, cannot, path, reason) {
+  if (reason === 'unsupported-doc-type') {
+    return (
+      `(error: ${verb} — ${path} ${cannot}. Nothing changed and nothing can. ` +
+      `Tell the user, and do not retry.)`
+    )
+  }
+  if (reason === 'no-such-note') {
+    return `(error: no note exists at ${path}, so ${verb}. ${retryHint()})`
+  }
+  return `(error: ${verb}${reason ? ` — ${reason}` : ''}.)`
+}
+
+const retryHint = () =>
+  'Check the path — use Glob or query_notes to find the real one — then call this again.'
+
 /** How long a propose_* handler waits for the host's verdict before assuming
  * success. Local IPC to the host's own process, so this only elapses when the
  * host is wedged — and then failing OPEN is right: a lost ack must not wedge
@@ -286,7 +318,7 @@ export function buildProposeMultiEditTool(askVerdict) {
 // loses no content, so gating it behind an approval card only adds friction.
 // The host resolves the note by path and relocates it (docsStore.moveDocToFolder),
 // which rewrites its relPath and lets the flush machinery move the file on disk.
-export function buildMoveNoteTool(getRunId, emit) {
+export function buildMoveNoteTool(askHost) {
   return tool(
     'move_note',
     "Move a note OUT of the capture/inbox folder into the folder that best fits it — do this AFTER you've filed the note's durable knowledge into the wiki, so the capture folder stays a staging area and not a graveyard. `from_path` is the note's current vault-relative path (e.g. `inbox/some-note.md`); `to_folder` is the destination folder, vault-relative, no leading/trailing slash (e.g. `people`, `projects/acme`). The CLAUDE.md schema governs which folder fits. Applied IMMEDIATELY (not queued for review) and reversible, so only move when you're confident where it belongs; if unsure, leave it in place. Returns immediately — do not wait.",
@@ -295,20 +327,29 @@ export function buildMoveNoteTool(getRunId, emit) {
       to_folder: z.string(),
     },
     async (input) => {
-      emit(
-        notification('chat/move-note', {
-          runId: getRunId(),
+      // Round-trip. Only generic notes have a free-form location; a daily,
+      // writing, wiki or system page derives its path from its type and cannot
+      // be moved. The host declined those silently, so the model reported
+      // "Move applied" for a file that had not moved.
+      const said = (text) => ({ content: [{ type: 'text', text }] })
+      try {
+        const r = await askHost('host/moveNote', {
           fromPath: input.from_path,
           toFolder: input.to_folder,
-        }),
-      )
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Move applied: ${input.from_path} → ${input.to_folder}/`,
-          },
-        ],
+        })
+        if (r?.ok) return said(`Move applied: ${input.from_path} → ${input.to_folder}/`)
+        return said(
+          refusalText(
+            'the note was NOT moved',
+            'lives at a location derived from its type (daily, writing, wiki and system pages are not free-form)',
+            input.from_path,
+            r?.reason,
+          ),
+        )
+      } catch (e) {
+        return said(
+          `(error: the note was NOT moved — ${e?.message ?? 'the host did not answer'}.)`,
+        )
       }
     },
   )

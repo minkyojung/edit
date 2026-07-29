@@ -811,30 +811,23 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }),
       // move_note MCP tool: relocate a note out of the capture folder into its
       // resting place. Auto-applied (no review card) — a move is reversible and
-      // loses no content. Resolve the note by its (vault-relative) path and hand
-      // it to docsStore.moveDocToFolder, which rewrites relPath and lets the
-      // flush machinery move the file on disk.
-      listen<{ runId: string; fromPath: string; toFolder: string }>(
+      // loses no content. moveDocToFolder rewrites relPath and lets the flush
+      // machinery move the file on disk, and reports what it did.
+      //
+      // Resolves through pathToKnownSlug like the metadata tools, not through
+      // a relPath match. Only generic notes carry a relPath, so matching on it
+      // made every typed doc look like "no note at that path" — the store's own
+      // guard says the truer thing, that its location is derived from its type.
+      listen<{ runId: string; requestId: string; fromPath: string; toFolder: string }>(
         'claude:move-note',
         (e) => {
           if (e.payload.runId !== runId) return
-          const relFrom = toVaultRelative(e.payload.fromPath, getActiveVaultPath())
-          if (!relFrom) {
-            console.warn('[chat] move-note: unresolved path', e.payload.fromPath)
-            return
-          }
-          const doc = useDocsStore
-            .getState()
-            .knownDocs.find((d) => d.relPath === relFrom)
-          if (!doc) {
-            console.warn('[chat] move-note: no note at', relFrom)
-            return
-          }
           // Strip any leading/trailing slashes so 'people/' and '/people' both
           // land as the folder 'people'. '' would target the vault root.
           const folder = e.payload.toFolder.replace(/^\/+|\/+$/g, '')
-          const ok = useDocsStore.getState().moveDocToFolder(doc.slug, folder)
-          console.log('[chat] move-note', { from: relFrom, toFolder: folder, ok })
+          answerHost(e.payload.requestId, resolveAndSet(e.payload.fromPath, (slug) =>
+            useDocsStore.getState().moveDocToFolder(slug, folder),
+          ))
         },
       ),
       // set_note_status MCP tool → set a note's workflow status. Resolve via

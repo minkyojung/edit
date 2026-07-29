@@ -156,7 +156,7 @@ export interface EditSlice {
    * target), and lets the flush rename-on-change machinery move the file
    * on disk. No-op if already there; refuses non-note docs. Returns true
    * on success. */
-  moveDocToFolder: (slug: string, folderPath: string) => boolean
+  moveDocToFolder: (slug: string, folderPath: string) => MetadataOutcome
   /** Rename a folder: move the directory on disk (one atomic rename),
    * rewrite the relPath of every doc inside it, and update knownFolders
    * (parent + nested). `oldPath` is the folder's vault-relative path,
@@ -253,15 +253,17 @@ export const createEditSlice = (
 
   moveDocToFolder: (slug, folderPath) => {
     const idx = get().knownDocs.findIndex((d) => d.slug === slug)
-    if (idx < 0) return false
+    if (idx < 0) return { ok: false, reason: 'no-such-note' }
     const cur = get().knownDocs[idx]
     // Only generic notes carry a free-form relPath; daily / writing /
     // wiki / system docs have type-derived locations and don't move.
-    if (cur.type !== 'note' || !cur.relPath) return false
+    if (cur.type !== 'note' || !cur.relPath) {
+      return { ok: false, reason: 'unsupported-doc-type' }
+    }
     const base = cur.relPath.split('/').pop() ?? cur.relPath
     const stem = base.replace(/\.md$/, '')
     const prefix = folderPath ? `${folderPath}/` : ''
-    if (cur.relPath === `${prefix}${base}`) return true // already there
+    if (cur.relPath === `${prefix}${base}`) return { ok: true } // already there
     const newRelPath = uniqueRelPath(get().knownDocs, prefix, stem, slug)
     const list = [...get().knownDocs]
     list[idx] = { ...cur, relPath: newRelPath }
@@ -271,7 +273,7 @@ export const createEditSlice = (
     // renamed file). Fire it now so the move lands promptly.
     markSlugDirty(slug)
     void flushDirty()
-    return true
+    return { ok: true }
   },
 
   renameFolder: async (oldPath, newLeafName) => {

@@ -36,6 +36,7 @@ import {
   buildProposeSkillTool,
   buildProposeMultiEditTool,
   buildMoveNoteTool,
+  refusalText,
 } from './tools/relay.mjs'
 
 
@@ -122,27 +123,6 @@ async function sessionPersisted(sessionId) {
   }
 }
 
-/** What to tell the model when the host declined a metadata write. Shared by
- *  status and tags so the two never drift into saying different things about
- *  the same refusal. Each reason names the next move, because "it didn't work"
- *  alone sends the model round the same loop. */
-function refusalText(field, path, reason) {
-  if (reason === 'unsupported-doc-type') {
-    return (
-      `(error: ${path} is a doc type that carries no ${field} — a daily journal or a system ` +
-      `page. Nothing was changed and nothing can be. Tell the user this note cannot have a ` +
-      `${field}; do not retry.)`
-    )
-  }
-  if (reason === 'no-such-note') {
-    return (
-      `(error: no note exists at ${path}, so its ${field} was NOT changed. Check the path — ` +
-      `use Glob or query_notes to find the real one — then call this again.)`
-    )
-  }
-  return `(error: the ${field} was NOT changed${reason ? ` — ${reason}` : ''}.)`
-}
-
 export function buildSetNoteStatusTool(askHost) {
   return tool(
     'set_note_status',
@@ -160,7 +140,14 @@ export function buildSetNoteStatusTool(askHost) {
       try {
         const r = await askHost('host/setNoteStatus', { path: input.path, status: input.status })
         if (r?.ok) return said(`Status set: ${input.path} → ${input.status}`)
-        return said(refusalText('status', input.path, r?.reason))
+        return said(
+          refusalText(
+            'the status was NOT changed',
+            'is a doc type that carries no status — a daily journal or a system page',
+            input.path,
+            r?.reason,
+          ),
+        )
       } catch (e) {
         return said(`(error: the status was NOT set — ${e?.message ?? 'the host did not answer'}.)`)
       }
@@ -181,7 +168,14 @@ export function buildSetNoteTagsTool(askHost) {
       try {
         const r = await askHost('host/setNoteTags', { path: input.path, tags: input.tags })
         if (r?.ok) return said(`Tags set: ${input.path} → [${input.tags.join(', ')}]`)
-        return said(refusalText('tags', input.path, r?.reason))
+        return said(
+          refusalText(
+            'the tags were NOT changed',
+            'is a doc type that carries no tags — a daily journal or a system page',
+            input.path,
+            r?.reason,
+          ),
+        )
       } catch (e) {
         return said(`(error: the tags were NOT set — ${e?.message ?? 'the host did not answer'}.)`)
       }
@@ -1751,7 +1745,7 @@ export class Server {
           buildProposeMultiEditTool((p) => this.#askVerdict(getRunId(), p)),
         )
       } else if (name === 'move_note') {
-        relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
+        relayDefs.push(buildMoveNoteTool((m, p) => this.#askHost(getRunId(), m, p)))
       } else if (name === 'set_note_status') {
         relayDefs.push(buildSetNoteStatusTool((m, p) => this.#askHost(getRunId(), m, p)))
       } else if (name === 'set_note_tags') {

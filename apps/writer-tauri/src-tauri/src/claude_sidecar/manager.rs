@@ -549,6 +549,7 @@ fn route(method: &str) -> Option<(&'static str, Key)> {
         "host/permission" => ("claude:permission", Key::FromParam("decisionId")),
         "host/setNoteStatus" => ("claude:set-status", Key::Mint("requestId")),
         "host/setNoteTags" => ("claude:set-tags", Key::Mint("requestId")),
+        "host/moveNote" => ("claude:move-note", Key::Mint("requestId")),
         _ => return None,
     })
 }
@@ -953,6 +954,7 @@ mod tests {
             ("host/permission", "claude:permission", None),
             ("host/setNoteStatus", "claude:set-status", Some("requestId")),
             ("host/setNoteTags", "claude:set-tags", Some("requestId")),
+            ("host/moveNote", "claude:move-note", Some("requestId")),
         ] {
             let (got_event, key) = route(method).unwrap_or_else(|| panic!("{method} is unserved"));
             assert_eq!(got_event, event, "{method}");

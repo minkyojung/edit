@@ -31,6 +31,7 @@ beforeEach(() => {
   useDocsStore.setState({
     knownDocs: [
       doc('wiki/Alpha', 'wiki:custom-note', { status: 'not-started', tags: ['a'] }),
+      doc('inbox/Loose', 'note', { relPath: 'inbox/Loose.md' }),
       doc('daily/2026-07-29', 'daily'),
       doc('system/Index', 'system:index'),
     ],
@@ -88,6 +89,38 @@ describe('setDocTags reports what it did', () => {
     })
     expect(useDocsStore.getState().setDocTags('daily/2026-07-29', ['x'])).toMatchObject({
       reason: 'unsupported-doc-type',
+    })
+  })
+})
+
+describe('moveDocToFolder reports what it did', () => {
+  it('says so when the note actually moved', () => {
+    expect(useDocsStore.getState().moveDocToFolder('inbox/Loose', 'people')).toEqual({ ok: true })
+    const moved = useDocsStore.getState().knownDocs.find((d) => d.slug === 'inbox/Loose')
+    expect(moved?.relPath).toBe('people/Loose.md')
+  })
+
+  it('treats a note already in that folder as success', () => {
+    useDocsStore.getState().moveDocToFolder('inbox/Loose', 'people')
+    expect(useDocsStore.getState().moveDocToFolder('inbox/Loose', 'people')).toEqual({ ok: true })
+  })
+
+  it('names a doc whose location is derived from its type', () => {
+    // Only generic notes carry a free-form relPath. A wiki page's path comes
+    // from its type, so this is a dead end and the model must be told so
+    // rather than told the move applied.
+    expect(useDocsStore.getState().moveDocToFolder('wiki/Alpha', 'people')).toEqual({
+      ok: false,
+      reason: 'unsupported-doc-type',
+    })
+    expect(useDocsStore.getState().moveDocToFolder('daily/2026-07-29', 'people')).toMatchObject({
+      reason: 'unsupported-doc-type',
+    })
+  })
+
+  it('names a note it cannot find', () => {
+    expect(useDocsStore.getState().moveDocToFolder('nope', 'people')).toMatchObject({
+      reason: 'no-such-note',
     })
   })
 })

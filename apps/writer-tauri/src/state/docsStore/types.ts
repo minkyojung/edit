@@ -325,7 +325,7 @@ export interface DocsState {
    * filename, swaps the folder part of relPath (de-duped), and lets the
    * flush move the file on disk. No-op if already there; refuses
    * non-note docs. */
-  moveDocToFolder: (slug: string, folderPath: string) => boolean
+  moveDocToFolder: (slug: string, folderPath: string) => MetadataOutcome
   /** Rename a folder: move the directory on disk, rewrite the relPath of
    * every note inside, and update knownFolders. Refuses folders holding
    * type-derived docs (wiki/system). */

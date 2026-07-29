@@ -17,6 +17,7 @@
 // The product's own builders, not a restatement of them — the refusal text is
 // the thing under test, so a copy here would drift and stay green.
 import { buildSetNoteStatusTool, buildSetNoteTagsTool } from '../src/server.mjs'
+import { buildMoveNoteTool } from '../src/tools/relay.mjs'
 
 let failed = false
 const check = (label, cond, detail = '') => {
@@ -28,6 +29,7 @@ const check = (label, cond, detail = '') => {
 const toolsWith = (answer) => ({
   set_note_status: buildSetNoteStatusTool(answer),
   set_note_tags: buildSetNoteTagsTool(answer),
+  move_note: buildMoveNoteTool(answer),
 })
 
 const text = async (tool, input) => (await tool.handler(input)).content[0].text
@@ -70,6 +72,22 @@ console.log('\n── the host never answered ──')
   const s = await text(t.set_note_status, { path: 'wiki/A.md', status: 'done' })
   check('a released request reaches the model as a failure', /error/i.test(s), s)
   check('carrying the reason', s.includes('the run was cancelled'))
+}
+
+console.log('\n── move_note carries the same contract ──')
+{
+  const okT = toolsWith(async () => ({ ok: true }))
+  const m = await text(okT.move_note, { from_path: 'inbox/A.md', to_folder: 'people' })
+  check('a successful move still reads as success', /Move applied/.test(m), m)
+
+  const deadEnd = toolsWith(async () => ({ ok: false, reason: 'unsupported-doc-type' }))
+  const d = await text(deadEnd.move_note, { from_path: 'daily/2026-07-29.md', to_folder: 'x' })
+  check('a doc whose location is derived is a dead end', /do not retry/i.test(d), d)
+  check('and the model is NOT told the move applied', !/Move applied/.test(d))
+
+  const missing = toolsWith(async () => ({ ok: false, reason: 'no-such-note' }))
+  const g = await text(missing.move_note, { from_path: 'inbox/Ghost.md', to_folder: 'x' })
+  check('a missing note tells it to look and retry', /call this again/i.test(g), g)
 }
 
 console.log(failed ? '\nRESULT: FAIL' : '\nRESULT: PASS')
