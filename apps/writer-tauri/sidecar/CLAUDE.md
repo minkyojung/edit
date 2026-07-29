@@ -62,7 +62,7 @@ ordered by topic, not by whether it needs a token.)
 | `verify-edit-roundtrip` | `propose_edit` reports its outcome back to the model |
 | `verify-stale-retry` | whole-doc stale → model rebase loop |
 | `verify-query-notes` | `query_notes` tool and its data-carrying relay |
-| `verify-metadata-outcome` | set_note_status / set_note_tags report a refusal instead of claiming success — no SDK, no token |
+| `verify-metadata-outcome` | set_note_status / set_note_tags / move_note report a refusal instead of claiming success — no SDK, no token |
 | `verify-ask-when-forked` | AskUserQuestion only on a genuine fork |
 | `verify-uncertainty-disclosure` | the least-confident line on non-trivial edits |
 | `verify-reject-preference` | a rejected edit promoted to a preference |

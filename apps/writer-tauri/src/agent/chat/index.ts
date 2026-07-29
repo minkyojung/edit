@@ -107,15 +107,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       'propose_edit',
       'propose_write',
       'propose_skill',
-      // File-and-forget: when the agent organizes, it moves a note OUT of the
-      // capture folder into its resting place. Auto-applied (reversible), not
-      // queued — see the claude:move-note handler below.
+      // Auto-applied (reversible), not queued for review — but not
+      // fire-and-forget: each awaits the host's verdict and reports a refusal
+      // to the model. The host declines a path it cannot resolve, and declines
+      // a doc type that cannot carry the property (a daily journal has no
+      // status; a wiki page's folder is derived from its type). These used to
+      // return "Status set" / "Move applied" regardless, so the user was told
+      // about writes that never happened.
       'move_note',
-      // Fire-and-forget: set a note's workflow status on request. Auto-applied
-      // (reversible), not queued — see the claude:set-status handler below.
       'set_note_status',
-      // Fire-and-forget: set a note's tags on request. Auto-applied
-      // (reversible), not queued — see the claude:set-tags handler below.
       'set_note_tags',
       // Request/response: filter the catalog by status/tags and return
       // references (path + title + status + tags) — see the claude:query-notes

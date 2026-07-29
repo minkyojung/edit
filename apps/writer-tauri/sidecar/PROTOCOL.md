@@ -314,6 +314,33 @@ besides an answer is the turn being cancelled, which the sidecar carries into
 the transport as an abort signal so the pending slot is abandoned rather than
 left waiting on a reply nobody will send.
 
+### `host/setNoteStatus`, `host/setNoteTags`, `host/moveNote`
+
+Apply a metadata write or a move immediately (no review card) and report
+whether it landed. Back `set_note_status` / `set_note_tags` / `move_note`.
+
+**params**: `{ runId, requestId, path | fromPath, ... }`
+`requestId` is minted by the host and written into the outgoing event — these
+carry no id of their own, unlike `pendingId` / `decisionId`.
+
+**result**: `{ ok: true }` or `{ ok: false, reason }`, where `reason` is
+`unsupported-doc-type` or `no-such-note`.
+
+The two reasons stay distinct because the model's next move differs. A doc type
+that cannot carry the property is a dead end — a daily journal has no status, a
+wiki page's folder is derived from its type — and the tool tells the model not
+to retry. A missing note means the path was wrong, which is recoverable.
+
+An already-correct value is `ok`. The request is satisfied; the only thing that
+did not happen is a write.
+
+These returned an unconditional success string until protocol 2, so the model
+reported writes the host had silently declined.
+
+`propose_skill` deliberately stays a notification (`chat/skill-pending`). Its
+host handler stages unconditionally, so "proposed for user review" is true when
+it is said — there is no verdict to wait for.
+
 ---
 
 ## 4. Notifications (sidecar → Rust)
@@ -581,4 +608,4 @@ Two independent version signals travel in `initialize`:
 | version | change |
 |---|---|
 | 1 | initial contract |
-| 2 | Every question the sidecar asks the host became a real request (§3b). `chat/query-notes`+`chat/query-result` → `host/queryNotes`; `chat/edit-pending`+`chat/edit-ack` → `host/editPending`; `chat/permission`+`chat/decision` → `host/permission`. A stale sidecar on either side of this leaves those three features broken while everything else appears to work, which is exactly the failure the equality assert converts into a startup error. |
+| 2 | Every question the sidecar asks the host became a real request (§3b). `chat/query-notes`+`chat/query-result` → `host/queryNotes`; `chat/edit-pending`+`chat/edit-ack` → `host/editPending`; `chat/permission`+`chat/decision` → `host/permission`; `chat/set-status` / `chat/set-tags` / `chat/move-note` → `host/setNoteStatus` / `host/setNoteTags` / `host/moveNote`, which now return a verdict instead of nothing. A stale sidecar on either side of this leaves those three features broken while everything else appears to work, which is exactly the failure the equality assert converts into a startup error. |
