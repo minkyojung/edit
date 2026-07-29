@@ -151,7 +151,7 @@ pub struct Responder {
 }
 
 impl Responder {
-    fn new(id: Value, write_tx: mpsc::Sender<Vec<u8>>) -> Self {
+    pub(crate) fn new(id: Value, write_tx: mpsc::Sender<Vec<u8>>) -> Self {
         Self { id: Some(id), write_tx }
     }
 
