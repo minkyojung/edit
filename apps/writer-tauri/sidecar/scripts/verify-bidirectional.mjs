@@ -132,6 +132,40 @@ console.log('\n── T6: a response to an id we never asked about is ignored �
   check('no reply, no throw', out.length === 0, `emitted ${out.length}`)
 }
 
+console.log('\n── T7: an abandoned caller abandons its slot too ──')
+{
+  // A permission gate waits on a human. When the turn is cancelled the caller
+  // stops caring, and racing the promise from outside would reject the caller
+  // while leaving the slot behind to live until settleAll. Long sessions
+  // cancel gates repeatedly; the slots must not pile up.
+  const { server } = makeServer()
+  const ac = new AbortController()
+  const pending = server.peer.request('host/gate', {}, { signal: ac.signal })
+  check('the slot exists while waiting', server.peer.pendingCount === 1)
+  ac.abort(new Error('turn cancelled'))
+  let err = null
+  try { await pending } catch (e) { err = e }
+  check('the caller is released with the abort reason', err?.message === 'turn cancelled')
+  check('and the slot is gone, not merely orphaned', server.peer.pendingCount === 0)
+
+  // An answered request must let go of the signal. Promise settlement is
+  // idempotent, so a leftover listener changes no result — which is exactly
+  // why asserting on the result proves nothing here. One turn controller
+  // serves every gate in a turn, so listeners that are never removed
+  // accumulate on it for the length of the turn. Count them.
+  let added = 0
+  const spy = {
+    aborted: false,
+    reason: null,
+    addEventListener: () => { added += 1 },
+    removeEventListener: () => { added -= 1 },
+  }
+  const answered = server.peer.request('host/gate', {}, { signal: spy })
+  check('the request subscribed to the signal', added === 1)
+  server.peer.settle({ id: 2, result: { ok: true } })
+  check('an answered request unsubscribes', (await answered)?.ok === true && added === 0, `added=${added}`)
+}
+
 const failed = results.filter((r) => !r.ok)
 console.log(`\n${failed.length === 0 ? '✅ all' : `❌ ${failed.length} of`} ${results.length} checks`)
 process.exit(failed.length === 0 ? 0 : 1)

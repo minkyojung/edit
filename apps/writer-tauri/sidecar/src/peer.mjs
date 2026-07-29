@@ -36,18 +36,35 @@ export class Peer {
    *  deadline at the transport layer, because the transport cannot know what a
    *  given question means. Its one obligation is `settleAll` — nobody waits on
    *  a connection that is gone. Deadlines belong to the caller that knows
-   *  whether waiting five seconds or five minutes is correct. */
-  request(method, params) {
+   *  whether waiting five seconds or five minutes is correct.
+   *
+   *  `opts.signal` is how a caller says it has stopped caring — a cancelled
+   *  turn, say. It abandons the slot as well as rejecting, because racing the
+   *  promise externally would leave the slot behind and it would live until
+   *  `settleAll`. A permission gate waits on a human, so those slots are the
+   *  ones most likely to be abandoned and least likely to be answered. */
+  request(method, params, { signal } = {}) {
     const id = this.#nextId++
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) return reject(signal.reason)
+      const onAbort = () => {
+        this.#pending.delete(id)
+        reject(signal.reason)
+      }
+      const settle = (fn) => (v) => {
+        signal?.removeEventListener('abort', onAbort)
+        fn(v)
+      }
       // Register BEFORE emitting. The host can answer synchronously enough that
       // the reply is dispatched before `emit` returns, and a slot that isn't
       // there yet is a lost answer and a permanent hang.
-      this.#pending.set(id, { resolve, reject })
+      this.#pending.set(id, { resolve: settle(resolve), reject: settle(reject) })
+      signal?.addEventListener('abort', onAbort, { once: true })
       try {
         this.#emit(request(id, method, params))
       } catch (err) {
         this.#pending.delete(id)
+        signal?.removeEventListener('abort', onAbort)
         reject(err)
       }
     })

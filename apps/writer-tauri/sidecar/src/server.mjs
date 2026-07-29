@@ -318,9 +318,6 @@ export class Server {
     // owning thread on the persistent path. Written when a turn is dispatched,
     // deleted when it settles.
     this.runToThread = new Map()
-    // decisionId -> { resolve, reject } for in-flight canUseTool gates
-    // (plan approval / clarifying questions) awaiting a host decision.
-    this.pendingDecisions = new Map()
     this.shuttingDown = false
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
@@ -368,8 +365,6 @@ export class Server {
           return this.#handleCloseThread(params)
         case 'chat/stop-task':
           return this.#handleStopTask(params)
-        case 'chat/decision':
-          return this.#handleDecision(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -1765,42 +1760,20 @@ export class Server {
     )
   }
 
-  // Park a canUseTool gate: emit a `chat/permission` notification carrying the
-  // tool + input, and return a Promise that resolves when the host sends the
-  // matching `chat/decision`. Rejected if the run is cancelled while waiting
-  // (the controller.abort listener), so a pending gate never leaks.
+  // Park a canUseTool gate on the host: the user has to answer it, so this is
+  // the one request with no deadline of any kind — five seconds and five
+  // minutes are both ordinary. What unparks it besides an answer is the turn
+  // controller, which the abort signal carries into the transport so the slot
+  // is abandoned rather than merely rejected.
+  //
+  // `decisionId` is what the frontend's permission card is keyed by and what
+  // it quotes back, so the host parks under it instead of minting a second id.
   #requestDecision(runId, toolName, input, controller) {
-    return new Promise((resolve, reject) => {
-      const decisionId = globalThis.crypto.randomUUID()
-      const onAbort = () => {
-        this.pendingDecisions.delete(decisionId)
-        reject(new DOMException('cancelled while awaiting user decision', 'AbortError'))
-      }
-      this.pendingDecisions.set(decisionId, {
-        resolve: (d) => {
-          controller.signal.removeEventListener('abort', onAbort)
-          resolve(d)
-        },
-        reject: (e) => {
-          controller.signal.removeEventListener('abort', onAbort)
-          reject(e)
-        },
-      })
-      controller.signal.addEventListener('abort', onAbort, { once: true })
-      this.emit(notification('chat/permission', { runId, decisionId, toolName, input }))
-    })
-  }
-
-  // Host's answer to a parked gate. Resolves the matching pending decision so
-  // canUseTool returns and the SDK continues. Unknown / already-settled ids
-  // are ignored.
-  #handleDecision(params) {
-    const decisionId = params?.decisionId
-    if (typeof decisionId !== 'string') return
-    const pending = this.pendingDecisions.get(decisionId)
-    if (!pending) return
-    this.pendingDecisions.delete(decisionId)
-    pending.resolve(params?.decision ?? {})
+    return this.peer.request(
+      'host/permission',
+      { runId, decisionId: globalThis.crypto.randomUUID(), toolName, input },
+      { signal: controller.signal },
+    )
   }
 
   // Ask the host to stage a proposal and report back whether it took. The

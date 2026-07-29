@@ -220,27 +220,6 @@ The active chat terminates with a `chat/error` notification carrying
 
 ---
 
-### `chat/decision` (notification, no response)
-
-Answers a parked `canUseTool` gate — `AskUserQuestion` (any permission mode)
-or `ExitPlanMode` (plan mode only). Resolves the matching pending decision so
-the SDK's `canUseTool` callback returns and the turn continues. Unknown or
-already-settled `decisionId`s are ignored.
-
-**params**:
-```json
-{ "runId": "client-uuid", "decisionId": "sidecar-minted-uuid", "decision": {"...": "shape below"} }
-```
-
-`decision`'s shape depends on which tool requested it:
-- `AskUserQuestion` → `{ "answers": { "q1": "..." }, "response"?: "free-form reply" }`
-- `ExitPlanMode` → `{ "type": "approve" }` or `{ "type": "reject", "message": "..." }`
-
-Only fires for `permissionMode: "plan"` or `"default"` — never for
-`"bypassPermissions"`, which short-circuits `canUseTool` entirely.
-
----
-
 ### `shutdown`
 
 Gracefully shut down. The sidecar finishes **all** in-flight chats with a
@@ -264,7 +243,7 @@ the frontend's own command comes back — see `claude_sidecar::pending_frontend`
 
 Consequences worth stating, because both are load-bearing:
 
-- **Answers may take arbitrarily long.** The `chat/permission` case waits on a
+- **Answers may take arbitrarily long.** The `host/permission` case waits on a
   human. The sidecar sets no transport deadline; a caller that needs one adds
   it itself.
 - **An answer is guaranteed, including on the sad paths.** If the run is
@@ -308,6 +287,32 @@ proposed the same edit again and the user got two cards for one edit.
 silence, because silence means a wedged host and a lost ack must not wedge the
 turn too. An explicit error response does not get that benefit — the host sends
 one when it releases a request, and a released request genuinely did not queue.
+
+### `host/permission`
+
+Park a `canUseTool` gate — `AskUserQuestion` (any permission mode) or
+`ExitPlanMode` (plan mode only) — until the user answers. Never fires for
+`bypassPermissions` on anything but `AskUserQuestion`, which the SDK does not
+short-circuit.
+
+**params**: `{ runId, decisionId, toolName, input }`
+`decisionId` keys the frontend's permission card and is quoted back, so the
+host parks under it.
+
+**result**: the decision, shaped by which tool asked:
+- `AskUserQuestion` → `{ answers: { "<question text>": "<option label>" }, response?: "free-form" }`
+- `ExitPlanMode` → `{ type: "approve" }` or `{ type: "reject", message }`
+
+Answers are keyed by the question TEXT, and nested under `decision` at the
+Tauri command boundary (`QuestionPanel.tsx`). Sent flat, the turn resumes and
+the model reports the question went unanswered — which reads exactly like a
+product bug and is not one.
+
+**This is the request with no deadline at either end.** A human is answering;
+five seconds and five minutes are both ordinary. The only thing that unparks it
+besides an answer is the turn being cancelled, which the sidecar carries into
+the transport as an abort signal so the pending slot is abandoned rather than
+left waiting on a reply nobody will send.
 
 ---
 
@@ -401,19 +406,6 @@ marks into the editor, etc.).
 ```
 
 The shape of `input` is whatever the relay tool's schema accepts.
-
----
-
-### `chat/permission`
-
-Sent when the sidecar's `canUseTool` gate parks on `AskUserQuestion` or (in
-plan mode) `ExitPlanMode`, waiting for the user's decision. Answered by
-`chat/decision` (Section 3), matched via `decisionId`.
-
-**params**:
-```json
-{ "runId": "client-uuid", "decisionId": "sidecar-minted-uuid", "toolName": "AskUserQuestion", "input": {"...": "the tool's own input"} }
-```
 
 ---
 
@@ -589,4 +581,4 @@ Two independent version signals travel in `initialize`:
 | version | change |
 |---|---|
 | 1 | initial contract |
-| 2 | `query_notes` moved from the `chat/query-notes` + `chat/query-result` notification pair to the `host/queryNotes` request (§3b). A stale sidecar on either side of this leaves the tool broken while everything else appears to work, which is exactly the failure the equality assert exists to convert into a startup error. |
+| 2 | Every question the sidecar asks the host became a real request (§3b). `chat/query-notes`+`chat/query-result` → `host/queryNotes`; `chat/edit-pending`+`chat/edit-ack` → `host/editPending`; `chat/permission`+`chat/decision` → `host/permission`. A stale sidecar on either side of this leaves those three features broken while everything else appears to work, which is exactly the failure the equality assert converts into a startup error. |

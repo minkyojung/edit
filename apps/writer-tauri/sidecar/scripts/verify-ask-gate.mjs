@@ -5,8 +5,8 @@
 // Four steps, and step 2 is the one that matters:
 //
 //   1. the model calls AskUserQuestion
-//   2. the canUseTool gate PARKS the turn and emits chat/permission
-//   3. a chat/decision releases it
+//   2. the canUseTool gate PARKS the turn on a `host/permission` request
+//   3. the host's response to that request releases it
 //   4. the chosen answer actually reaches the model
 //
 // If step 2 silently fails the model asks a question nobody is shown and answers
@@ -57,13 +57,18 @@ const PROMPT =
   'fiction or non-fiction.'
 
 function makeServer() {
-  const ev = { done: [], err: [], perm: [], text: '' }
+  const ev = { done: [], err: [], perm: [], unanswered: [], text: '' }
   const server = new Server({
     mode: 'chat',
     emit: (m) => {
       if (m.method === 'chat/done') ev.done.push(m.params)
       else if (m.method === 'chat/error') ev.err.push(m.params)
-      else if (m.method === 'chat/permission') ev.perm.push(m.params)
+      else if (m.method === 'host/permission') ev.perm.push({ ...m.params, _id: m.id })
+      // Any OTHER request the sidecar asks and we do not answer. Without this
+      // the harness reads a renamed method as "the model never called
+      // AskUserQuestion" and puns a broken contract into a green run — which
+      // is exactly what it did when host/permission replaced chat/permission.
+      else if (m.id !== undefined && m.method) ev.unanswered.push(m.method)
       else if (m.method === 'chat/event' && m.params?.event?.type === 'assistant') {
         for (const b of m.params.event.message?.content ?? []) {
           if (b.type === 'text') ev.text += b.text
@@ -72,9 +77,11 @@ function makeServer() {
     },
   })
   const send = (method, params, id) => server.handle({ jsonrpc: '2.0', id, method, params })
+  // Play HOST: answer a request the sidecar asked us. The id must be echoed.
+  const respond = (id, result) => server.handle({ jsonrpc: '2.0', id, result })
   send('initialize', {}, 1)
   send('setToken', { token }, 2)
-  return { server, send, ev }
+  return { server, send, respond, ev }
 }
 const waitFor = async (pred, ms = 180000) => {
   const t0 = Date.now()
@@ -86,7 +93,7 @@ const waitFor = async (pred, ms = 180000) => {
 }
 /** One ask→answer round-trip on an existing thread. Returns false when the
  * model simply didn't ask (nothing to conclude), true when the full loop ran. */
-async function askRound(send, ev, threadId, prompt, label) {
+async function askRound(send, respond, ev, threadId, prompt, label) {
   const runId = randomUUID()
   const permBefore = ev.perm.length
   const doneBefore = ev.done.length
@@ -98,6 +105,11 @@ async function askRound(send, ev, threadId, prompt, label) {
   }, 10)
   await waitFor(() => ev.perm.length > permBefore || ev.done.length > doneBefore || ev.err.length > 0)
   if (ev.perm.length === permBefore) {
+    if (ev.unanswered.length) {
+      bad(`${label}: the sidecar asked something this harness does not answer`,
+          [...new Set(ev.unanswered)].join(', '))
+      return false
+    }
     punt(`${label}: the model never called AskUserQuestion, so the gate was not exercised`)
     return false
   }
@@ -120,9 +132,7 @@ async function askRound(send, ev, threadId, prompt, label) {
   // `decision`, answers keyed by the question TEXT. Sent flat, the turn resumes
   // and the model reports the question went unanswered — which reads exactly
   // like a product bug and isn't one.
-  send('chat/decision', {
-    runId, decisionId: p.decisionId, decision: { answers: { [q?.question ?? 'q']: answer } },
-  }, 11)
+  respond(p._id, { answers: { [q?.question ?? 'q']: answer } })
   const finished = await waitFor(() => ev.done.length > doneBefore || ev.err.length > 0)
   finished && ev.done.length > doneBefore
     ? ok(`${label}: the decision released the turn`)
@@ -152,9 +162,9 @@ try {
   // the user-visible half.)
   {
     console.log("\n  --- A. 'default': the gate holds the turn, twice ---")
-    const { send, ev } = makeServer()
+    const { send, respond, ev } = makeServer()
     const threadId = randomUUID()
-    const first = await askRound(send, ev, threadId,
+    const first = await askRound(send, respond, ev, threadId,
       'Write me a short piece. Use AskUserQuestion first to ask whether it should be fiction or non-fiction.',
       'round 1')
     if (first) {
@@ -163,7 +173,7 @@ try {
         ? bad('round 1: the model says the question went unanswered')
         : ok('round 1: the model proceeded on the answer it was given')
 
-      await askRound(send, ev, threadId,
+      await askRound(send, respond, ev, threadId,
         'Now write another short piece. Use AskUserQuestion again to ask whether it should be funny or serious.',
         'round 2')
     }
@@ -172,7 +182,7 @@ try {
   // ── B. bypassPermissions — measured, and NOT what the warning implies ────
   {
     console.log("\n  --- B. 'bypassPermissions': AskUserQuestion still gates ---")
-    const { send, ev } = makeServer()
+    const { send, respond, ev } = makeServer()
     start((p) => send('chat', p, 20), ev, 'bypassPermissions')
     await waitFor(() => ev.done.length > 0 || ev.err.length > 0 || ev.perm.length > 0)
     if (ev.perm.length > 0) {
@@ -197,7 +207,7 @@ try {
   // arms above cover.
   {
     console.log('\n  --- C. plan mode after starting in edit mode ---')
-    const { send, ev } = makeServer()
+    const { send, respond, ev } = makeServer()
     const threadId = randomUUID()
     const target = join(vault, 'plan-target.txt')
     writeFileSync(target, 'ORIGINAL\n')

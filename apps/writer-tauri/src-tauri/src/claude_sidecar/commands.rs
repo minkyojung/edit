@@ -322,23 +322,22 @@ pub async fn claude_chat_cancel(app: AppHandle, args: ChatCancelArgs) -> Result<
 #[tauri::command]
 pub async fn claude_chat_decision(app: AppHandle, args: ChatDecisionArgs) -> Result<(), String> {
     let manager = get_manager(&app)?;
-    let chat = manager.chat_client().await;
-    chat.notify(
-        "chat/decision",
-        Some(json!({
-            "runId": args.run_id,
-            "decisionId": args.decision_id,
-            "decision": args.decision,
-        })),
-    )
-    .await
-    .map_err(|e| e.to_string())
+    // The decision IS the answer to the sidecar's parked `host/permission`
+    // request — the SDK's canUseTool callback is blocked on it.
+    let answered = manager.pending_frontend().answer(&args.decision_id, args.decision).await;
+    if !answered {
+        // The gate is gone: the turn was cancelled while the card was up, or
+        // the sidecar restarted. The card outliving its gate is the reason
+        // this reports rather than succeeding silently.
+        return Err(format!("gate {} is no longer waiting for a decision", args.decision_id));
+    }
+    Ok(())
 }
 
 /// Confirms (or denies) that a propose_edit/write/multi_edit proposal was
 /// actually queued into pendingChangesStore, once agent/chat/index.ts's
-/// edit-pending handling settles. Resolves the sidecar's PostToolUse hook
-/// wait (see server.mjs `#handleEditAck`), which otherwise fails open after
+/// edit-pending handling settles. Answers the sidecar's parked
+/// `host/editPending` request, whose caller otherwise fails open after
 /// its own timeout. Notification only — no response expected.
 #[tauri::command]
 pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Result<(), String> {

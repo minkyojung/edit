@@ -2,10 +2,10 @@
 // the model should ASK (lean toward asking) on a genuine fork whose answer
 // changes the output and can't be inferred — but NOT ask for a dictated,
 // trivial change. Prompt-only rule; the plumbing already exists (canUseTool
-// parks AskUserQuestion under permissionMode 'default' and emits chat/permission).
+// parks AskUserQuestion under permissionMode 'default' by asking host/permission).
 //
 // This drives a live sidecar in 'default' mode (so canUseTool fires) and
-// watches for a chat/permission notification with toolName 'AskUserQuestion'.
+// watches for a host/permission request with toolName 'AskUserQuestion'.
 //
 //   CASE=fork (default) — "translate into THE OTHER language" but the profile
 //                         says the user works across 3 languages → ambiguous
@@ -91,7 +91,7 @@ const bad = (l, e) => {
 let asked = null // the AskUserQuestion input when the model asks
 let assistantText = ''
 notifListeners.push((msg) => {
-  if (msg.method === 'chat/permission' && msg.params?.toolName === 'AskUserQuestion') {
+  if (msg.method === 'host/permission' && msg.params?.toolName === 'AskUserQuestion') {
     asked = msg.params.input
   }
   if (msg.method === 'chat/event' && msg.params?.event?.type === 'assistant') {
@@ -107,8 +107,15 @@ function runChat(runId) {
       if (msg.params?.runId && msg.params.runId !== runId) return
       // The turn PARKS on AskUserQuestion (no chat/done until answered), so
       // resolve as soon as we see the ask; otherwise resolve on done/error.
-      if (msg.method === 'chat/permission' && msg.params?.toolName === 'AskUserQuestion') {
+      if (msg.method === 'host/permission' && msg.params?.toolName === 'AskUserQuestion') {
+        // Deliberately never answered — this checks WHETHER the model asks,
+        // not what happens next. The parked gate dies with the child.
         resolve({ kind: 'asked' })
+      } else if (msg.id !== undefined && msg.method) {
+        // A request we don't recognise. Without this the turn parks waiting for
+        // an answer we will never send, and the harness reads "the model never
+        // asked" — a renamed method would look like a product regression.
+        resolve({ kind: 'unhandled-request', method: msg.method })
       } else if (msg.method === 'chat/done') resolve({ kind: 'done' })
       else if (msg.method === 'chat/error') resolve({ kind: 'error', code: msg.params.code })
     })
@@ -140,6 +147,8 @@ try {
   // INTERNAL. verify-stale-retry hit this and fixed itself; the note never spread.
   const r = await runChat(globalThis.crypto.randomUUID())
   if (r.kind === 'error') bad('chat errored', JSON.stringify(r))
+  if (r.kind === 'unhandled-request')
+    bad('the sidecar asked something this harness does not answer', r.method)
 
   if (asked) {
     const qs = asked.questions ?? []

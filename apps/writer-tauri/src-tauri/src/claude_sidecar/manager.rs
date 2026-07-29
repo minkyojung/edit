@@ -544,6 +544,13 @@ fn build_request_handler(app: AppHandle, pending: Arc<PendingFrontend>) -> Reque
                     return;
                 }
             },
+            "host/permission" => match params.get("decisionId").and_then(Value::as_str) {
+                Some(id) => ("claude:permission", Some(id.to_owned())),
+                None => {
+                    responder.err(INVALID_PARAMS, "host/permission requires a decisionId");
+                    return;
+                }
+            },
             _ => {
                 responder.err(METHOD_NOT_FOUND, &format!("method not found: {method}"));
                 return;
