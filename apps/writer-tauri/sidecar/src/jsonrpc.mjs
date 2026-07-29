@@ -72,6 +72,13 @@ export function notification(method, params) {
   return { jsonrpc: '2.0', method, params }
 }
 
+// A question for the host. Ids are minted by `Peer` (peer.mjs) and live in
+// their own namespace from the host's — each side correlates responses against
+// the ids it minted, so the two counters can overlap without ambiguity.
+export function request(id, method, params) {
+  return { jsonrpc: '2.0', id, method, params }
+}
+
 // Standard JSON-RPC error codes
 export const PARSE_ERROR = -32700
 export const INVALID_REQUEST = -32600

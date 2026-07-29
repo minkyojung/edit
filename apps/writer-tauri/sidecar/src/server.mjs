@@ -16,6 +16,7 @@ import {
   NOT_INITIALIZED,
   NO_TOKEN,
 } from './jsonrpc.mjs'
+import { Peer } from './peer.mjs'
 import { readSkillMeta } from './frontmatter.mjs'
 import {
   rateLimitPayload,
@@ -300,6 +301,11 @@ export class Server {
     }
     this.mode = mode
     this.emit = emit
+    // Lets the sidecar ASK the host something and await the answer, instead of
+    // faking a round-trip with a pair of notifications and a bespoke
+    // correlation map (see peer.mjs). Nothing calls it yet — the three existing
+    // bridges migrate onto it one at a time.
+    this.peer = new Peer(emit)
     this.initialized = false
     this.token = null
     // threadId -> ThreadRec. Every chat runs here: one streaming-input query()
@@ -345,6 +351,18 @@ export class Server {
 
     const { method, params, id } = message
     const isRequest = id !== undefined
+
+    // Classify on WHICH of `id` and `method` are present, mirroring the host
+    // (client.rs). A response carries an id and no method; switching on
+    // `method` alone dropped it into `default:`, where `isRequest` is true
+    // because a response has an id — so the sidecar answered the host's reply
+    // with "Method not found: undefined". Route it to whoever asked.
+    if (id !== undefined && method === undefined) {
+      // `settle` returns false for an id we never minted. Nothing to do and
+      // nothing to answer: a response is not addressable.
+      this.peer.settle(message)
+      return
+    }
 
     try {
       switch (method) {
@@ -2030,6 +2048,11 @@ export class Server {
     // and aborts the thread controller) so their `claude` children are reaped
     // too. Sessions persist to disk, so nothing is lost.
     for (const [, rec] of this.activeThreads) this.#teardownThread(rec, 'shutdown')
+    // Release anything waiting on the host. The transport's one obligation:
+    // a question asked over a connection that is going away must fail, not
+    // hang. Without this the caller's only escape is a timeout it invented
+    // itself, which is exactly how three bridges ended up with three policies.
+    this.peer.settleAll(new Error('sidecar is shutting down'))
     // Give in-flight chats a moment to flush their CANCELLED notifications and
     // let the SDK reap the CLI child before we exit.
     setTimeout(() => process.exit(0), 250)
