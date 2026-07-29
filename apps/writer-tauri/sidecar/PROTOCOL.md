@@ -105,7 +105,7 @@ Handshake. Must be the first request after spawn. The sidecar is in an "uninitia
 **result**:
 ```json
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "sidecarVersion": "0.1.0",
   "sdkVersion": "0.2.121",
   "node": "v20.11.0"
@@ -241,26 +241,6 @@ Only fires for `permissionMode: "plan"` or `"default"` — never for
 
 ---
 
-### `chat/edit-ack` (notification, no response)
-
-Confirms (or denies) that a `propose_edit`/`propose_write`/`propose_multi_edit`
-call was actually queued into the host's pending-changes store. The sidecar's
-`PostToolUse` hook (see `chat/edit-pending` below) awaits this before letting
-the model treat the proposal as settled.
-
-**params**:
-```json
-{ "pendingId": "uuid from the tool's own success text", "ok": true, "reason": null }
-```
-
-**Fail-open contract**: if this is never sent (or arrives after the hook's own
-~4-5s internal timeout), the hook treats the proposal as `ok: true` rather
-than blocking or erroring — a missing ack is NOT itself surfaced as a failure
-to the model. Only an explicit `ok: false` rewrites the tool's already-returned
-"queued" text into a visible error.
-
----
-
 ### `shutdown`
 
 Gracefully shut down. The sidecar finishes **all** in-flight chats with a
@@ -302,6 +282,32 @@ cancelled run can release it.
 
 **result**: `{ results: [{ path, title, status, tags }], nextCursor }`
 `results` is always an array; the host's command boundary rejects anything else.
+
+### `host/editPending`
+
+Stage a `propose_edit` / `propose_write` / `propose_multi_edit` proposal and
+report whether it took. Backs all three propose_* tools.
+
+**params**: `{ runId, pendingId, toolName: "Edit" | "Write" | "MultiEdit", input }`
+`pendingId` is the review card's identity, minted by the sidecar. The host
+parks the request under it rather than minting a second token, because the
+frontend already carries it end-to-end.
+
+**result**: `{ ok, reason, applied }`
+`ok: false` means nothing was queued and the file is unchanged; `reason` is
+shown to the model so it can rewrite. `applied: true` means auto-accept mode
+wrote it straight to disk and there is no review card.
+
+**The result IS the tool's result.** The handler blocks on it and returns text
+chosen by the verdict — there is no optimistic "queued" for a later signal to
+correct. That correction used to be a `PostToolUse` hook, which landed ~2/3 of
+the time; a refusal that missed left the model seeing an unchanged file, so it
+proposed the same edit again and the user got two cards for one edit.
+
+**Silence and refusal are different.** The caller fails OPEN after 15s of
+silence, because silence means a wedged host and a lost ack must not wedge the
+turn too. An explicit error response does not get that benefit — the host sends
+one when it releases a request, and a released request genuinely did not queue.
 
 ---
 
@@ -407,23 +413,6 @@ plan mode) `ExitPlanMode`, waiting for the user's decision. Answered by
 **params**:
 ```json
 { "runId": "client-uuid", "decisionId": "sidecar-minted-uuid", "toolName": "AskUserQuestion", "input": {"...": "the tool's own input"} }
-```
-
----
-
-### `chat/edit-pending`
-
-Sent when the model calls `propose_edit`/`propose_write`/`propose_multi_edit`.
-The tool itself returns a "queued for review" success string to the model
-immediately (non-blocking) — this notification is the host's cue to actually
-map the proposal into its pending-changes store. Once the host has decided
-whether it landed, it answers with `chat/edit-ack` (Section 3), which the
-sidecar's `PostToolUse` hook uses to confirm — or, on failure, rewrite — what
-the model was told.
-
-**params**:
-```json
-{ "runId": "client-uuid", "pendingId": "sidecar-minted-uuid", "toolName": "Edit" | "Write" | "MultiEdit", "input": {"...": "the tool's own input"} }
 ```
 
 ---

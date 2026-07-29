@@ -531,28 +531,49 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
 /// either — this runs on the reader task that drains the sidecar's stdout.
 fn build_request_handler(app: AppHandle, pending: Arc<PendingFrontend>) -> RequestHandler {
     Arc::new(move |method, params, responder| {
-        if method != "host/queryNotes" {
-            responder.err(METHOD_NOT_FOUND, &format!("method not found: {method}"));
-            return;
-        }
+        // `key` is what the frontend will quote back. `query_notes` has no
+        // natural id so the host mints one; a proposal already travels under
+        // its `pendingId`, which is the review card's identity and is already
+        // threaded through the frontend's queueing path.
+        let (event, key) = match method.as_str() {
+            "host/queryNotes" => ("claude:query-notes", None),
+            "host/editPending" => match params.get("pendingId").and_then(Value::as_str) {
+                Some(id) => ("claude:edit-pending", Some(id.to_owned())),
+                None => {
+                    responder.err(INVALID_PARAMS, "host/editPending requires a pendingId");
+                    return;
+                }
+            },
+            _ => {
+                responder.err(METHOD_NOT_FOUND, &format!("method not found: {method}"));
+                return;
+            }
+        };
         // Parked under the runId so a cancelled run releases it. Without one we
         // could park it but never know when to give up, so refuse instead.
         let Some(run_id) = params.get("runId").and_then(Value::as_str).map(str::to_owned) else {
-            responder.err(INVALID_PARAMS, "host/queryNotes requires a runId");
+            responder.err(INVALID_PARAMS, &format!("{method} requires a runId"));
             return;
         };
         let (app, pending) = (app.clone(), pending.clone());
         tauri::async_runtime::spawn(async move {
             // Park before emitting, never after: the frontend replies by
-            // quoting the token, so the token has to exist before it can be
-            // sent. The window where a slot is parked but unannounced is
-            // closed by releasing it if the emit fails.
-            let token = pending.park(run_id, responder).await;
+            // quoting the key, so the slot has to exist before the event that
+            // carries it goes out. The window where a slot is parked but
+            // unannounced is closed by releasing it if the emit fails.
+            let key = key.unwrap_or_else(|| pending.mint());
+            if !pending.park(run_id, &key, responder).await {
+                return; // park answered the loser itself
+            }
             let mut payload = params;
-            payload["queryId"] = json!(token);
-            if let Err(e) = app.emit("claude:query-notes", payload) {
-                eprintln!("[sidecar manager] emit claude:query-notes failed: {e}");
-                pending.release(token).await;
+            // Only queryNotes needs this written in; editPending's key is
+            // already `pendingId` in the payload the sidecar sent.
+            if event == "claude:query-notes" {
+                payload["queryId"] = json!(key);
+            }
+            if let Err(e) = app.emit(event, payload) {
+                eprintln!("[sidecar manager] emit {event} failed: {e}");
+                pending.release(&key).await;
             }
         });
     })

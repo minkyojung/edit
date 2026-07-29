@@ -143,12 +143,12 @@ pub struct ChatDecisionArgs {
 pub struct ChatEditAckArgs {
     pub pending_id: String,
     /// Whether the host actually queued this propose_edit/write/multi_edit
-    /// call into pendingChangesStore. The sidecar's PostToolUse hook awaits
-    /// this before letting the model treat the proposal as settled — false
-    /// (or a timeout) rewrites the tool's already-returned "queued" text
-    /// into a visible error the model can react to.
+    /// call into pendingChangesStore. This IS the tool call's result: the
+    /// handler is blocked on it and returns text chosen by this verdict, so
+    /// false reaches the model as a refusal rather than as a correction to
+    /// something it was already told.
     pub ok: bool,
-    /// Optional short reason surfaced in that rewritten error text.
+    /// Optional short reason surfaced in that refusal.
     #[serde(default)]
     pub reason: Option<String>,
     /// True when auto-accept mode actually wrote the change to disk (not merely
@@ -343,26 +343,27 @@ pub async fn claude_chat_decision(app: AppHandle, args: ChatDecisionArgs) -> Res
 #[tauri::command]
 pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Result<(), String> {
     let manager = get_manager(&app)?;
-    let chat = manager.chat_client().await;
-    chat.notify(
-        "chat/edit-ack",
-        Some(json!({
-            "pendingId": args.pending_id,
-            "ok": args.ok,
-            "reason": args.reason,
-            "applied": args.applied,
-        })),
-    )
-    .await
-    .map_err(|e| e.to_string())
+    let answered = manager
+        .pending_frontend()
+        .answer(
+            &args.pending_id,
+            json!({ "ok": args.ok, "reason": args.reason, "applied": args.applied }),
+        )
+        .await;
+    if !answered {
+        // Already released — the run was cancelled or the sidecar restarted.
+        // The tool call has been told so; this ack is just late.
+        return Err(format!("proposal {} is no longer waiting for a verdict", args.pending_id));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatQueryResultArgs {
-    /// The token the host minted when it parked the request, echoed back
-    /// verbatim. Not the sidecar's JSON-RPC id — see `PendingFrontend`.
-    pub query_id: i64,
+    /// The key the host parked the request under, echoed back verbatim.
+    /// Not the sidecar's JSON-RPC id — see `PendingFrontend`.
+    pub query_id: String,
     /// The filtered note references. Each entry is opaque to Rust and
     /// forwarded verbatim, but the array itself is pinned: the tool does
     /// `results.length`, and the sidecar used to normalise a non-array away
@@ -389,7 +390,7 @@ pub async fn claude_chat_query_result(
     let answered = manager
         .pending_frontend()
         .answer(
-            args.query_id,
+            &args.query_id,
             json!({ "results": args.results, "nextCursor": args.next_cursor }),
         )
         .await;

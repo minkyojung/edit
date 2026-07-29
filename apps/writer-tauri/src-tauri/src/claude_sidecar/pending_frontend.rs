@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use serde_json::Value;
 use tokio::sync::Mutex;
 
-use super::client::Responder;
+use super::client::{Responder, INVALID_PARAMS};
 
 struct Slot {
     run_id: String,
@@ -29,13 +29,17 @@ struct Slot {
 }
 
 /// Obligations owed to the sidecar that only the frontend can discharge.
+///
+/// Keyed by whatever the frontend already echoes back. Some requests carry a
+/// domain id that is unique and round-trips anyway — `propose_edit`'s
+/// `pendingId` is the review card's own identity, threaded through the
+/// frontend's per-path queueing before any ack is sent. Minting a second token
+/// beside it would mean teaching that path to carry both. Requests with no
+/// such id call `mint`.
 #[derive(Default)]
 pub struct PendingFrontend {
-    // A host-minted token, not the sidecar's JSON-RPC id. The frontend echoes
-    // it back verbatim, and it must stay meaningful across a sidecar restart —
-    // the sidecar's id counter restarts from zero and would collide.
     next: AtomicI64,
-    slots: Mutex<HashMap<i64, Slot>>,
+    slots: Mutex<HashMap<String, Slot>>,
 }
 
 impl PendingFrontend {
@@ -43,18 +47,35 @@ impl PendingFrontend {
         Self::default()
     }
 
-    /// Parks `responder` and returns the token the frontend must echo back.
-    pub async fn park(&self, run_id: impl Into<String>, responder: Responder) -> i64 {
-        let token = self.next.fetch_add(1, Ordering::Relaxed);
-        self.slots.lock().await.insert(token, Slot { run_id: run_id.into(), responder });
-        token
+    /// A key for a request that has no natural one. Namespaced so it cannot
+    /// collide with a caller-supplied id.
+    pub fn mint(&self) -> String {
+        format!("host-{}", self.next.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Parks `responder` under `key`. A key already in use is refused rather
+    /// than overwritten — overwriting would strand the older request forever,
+    /// and its caller is a tool call waiting on a verdict.
+    ///
+    /// The refusal is answered here rather than handed back, so the message
+    /// says what happened. Letting the responder fall out of scope would also
+    /// answer, but with "handler dropped without answering", which describes a
+    /// different bug.
+    pub async fn park(&self, run_id: impl Into<String>, key: &str, responder: Responder) -> bool {
+        let mut slots = self.slots.lock().await;
+        if slots.contains_key(key) {
+            responder.err(INVALID_PARAMS, "a request with this id is already pending");
+            return false;
+        }
+        slots.insert(key.to_owned(), Slot { run_id: run_id.into(), responder });
+        true
     }
 
     /// Discharges the obligation. `false` if the token is unknown — already
     /// answered, or released when its run ended. Not an error: the frontend
     /// answering a request the host has given up on is a race, not a bug.
-    pub async fn answer(&self, token: i64, result: Value) -> bool {
-        match self.slots.lock().await.remove(&token) {
+    pub async fn answer(&self, key: &str, result: Value) -> bool {
+        match self.slots.lock().await.remove(key) {
             Some(slot) => {
                 slot.responder.ok(result);
                 true
@@ -66,8 +87,8 @@ impl PendingFrontend {
     /// Releases one slot without answering it successfully. For the caller
     /// that parked it and then could not reach the frontend at all — the
     /// obligation is real either way, so give it back rather than leak it.
-    pub async fn release(&self, token: i64) -> bool {
-        self.slots.lock().await.remove(&token).is_some()
+    pub async fn release(&self, key: &str) -> bool {
+        self.slots.lock().await.remove(key).is_some()
     }
 
     /// Releases every obligation belonging to a finished or cancelled run.
@@ -79,13 +100,13 @@ impl PendingFrontend {
     /// and no elapsed time makes an answer more likely.
     pub async fn release_run(&self, run_id: &str) -> usize {
         let mut slots = self.slots.lock().await;
-        let doomed: Vec<i64> = slots
+        let doomed: Vec<String> = slots
             .iter()
             .filter(|(_, s)| s.run_id == run_id)
-            .map(|(t, _)| *t)
+            .map(|(k, _)| k.clone())
             .collect();
-        for token in &doomed {
-            slots.remove(token);
+        for key in &doomed {
+            slots.remove(key);
         }
         doomed.len()
     }
@@ -131,8 +152,9 @@ mod tests {
         let pending = PendingFrontend::new();
         let (r, mut rx) = responder(11);
 
-        let token = pending.park("run-a", r).await;
-        assert!(pending.answer(token, json!({ "results": [] })).await);
+        let key = pending.mint();
+        assert!(pending.park("run-a", &key, r).await);
+        assert!(pending.answer(&key, json!({ "results": [] })).await);
 
         let got = replies(&mut rx);
         assert_eq!(got.len(), 1, "exactly one reply");
@@ -145,9 +167,10 @@ mod tests {
         let pending = PendingFrontend::new();
         let (r, mut rx) = responder(11);
 
-        let token = pending.park("run-a", r).await;
-        assert!(pending.answer(token, json!(1)).await);
-        assert!(!pending.answer(token, json!(2)).await, "the slot is gone");
+        let key = pending.mint();
+        assert!(pending.park("run-a", &key, r).await);
+        assert!(pending.answer(&key, json!(1)).await);
+        assert!(!pending.answer(&key, json!(2)).await, "the slot is gone");
 
         // The single frame is guaranteed by `Responder::ok` consuming `self`,
         // not by the map — removing the slot is what makes the second call
@@ -158,14 +181,14 @@ mod tests {
     #[tokio::test]
     async fn an_unknown_token_is_refused_not_fatal() {
         let pending = PendingFrontend::new();
-        assert!(!pending.answer(404, json!(null)).await);
+        assert!(!pending.answer("nobody", json!(null)).await);
     }
 
     #[tokio::test]
     async fn a_finished_run_fails_its_obligation_instead_of_parking_it_forever() {
         let pending = PendingFrontend::new();
         let (r, mut rx) = responder(11);
-        pending.park("run-a", r).await;
+        assert!(pending.park("run-a", &pending.mint(), r).await);
 
         assert_eq!(pending.release_run("run-a").await, 1);
 
@@ -179,14 +202,15 @@ mod tests {
         let pending = PendingFrontend::new();
         let (doomed, mut doomed_rx) = responder(11);
         let (spared, mut spared_rx) = responder(22);
-        pending.park("run-a", doomed).await;
-        let spared_token = pending.park("run-b", spared).await;
+        assert!(pending.park("run-a", &pending.mint(), doomed).await);
+        let spared_key = pending.mint();
+        assert!(pending.park("run-b", &spared_key, spared).await);
 
         assert_eq!(pending.release_run("run-a").await, 1);
         assert_eq!(replies(&mut doomed_rx).len(), 1);
         assert!(replies(&mut spared_rx).is_empty(), "run-b is still waiting");
 
-        assert!(pending.answer(spared_token, json!("late but fine")).await);
+        assert!(pending.answer(&spared_key, json!("late but fine")).await);
         assert_eq!(replies(&mut spared_rx)[0]["result"], json!("late but fine"));
     }
 
@@ -194,11 +218,12 @@ mod tests {
     async fn a_released_slot_is_answered_not_leaked() {
         let pending = PendingFrontend::new();
         let (r, mut rx) = responder(11);
-        let token = pending.park("run-a", r).await;
+        let key = pending.mint();
+        assert!(pending.park("run-a", &key, r).await);
 
-        assert!(pending.release(token).await);
+        assert!(pending.release(&key).await);
         assert_eq!(replies(&mut rx)[0]["error"]["code"], json!(-32603));
-        assert!(!pending.release(token).await, "the slot is gone");
+        assert!(!pending.release(&key).await, "the slot is gone");
     }
 
     #[tokio::test]
@@ -206,8 +231,8 @@ mod tests {
         let pending = PendingFrontend::new();
         let (a, mut rx_a) = responder(11);
         let (b, mut rx_b) = responder(22);
-        pending.park("run-a", a).await;
-        pending.park("run-b", b).await;
+        assert!(pending.park("run-a", &pending.mint(), a).await);
+        assert!(pending.park("run-b", &pending.mint(), b).await);
 
         assert_eq!(pending.release_all().await, 2, "runs are not filtered here");
         assert_eq!(replies(&mut rx_a)[0]["error"]["code"], json!(-32603));
@@ -216,12 +241,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tokens_are_not_reused_while_a_slot_is_live() {
+    async fn minted_keys_are_not_reused() {
         let pending = PendingFrontend::new();
-        let (a, _rx_a) = responder(11);
-        let (b, _rx_b) = responder(22);
-        let first = pending.park("run-a", a).await;
-        let second = pending.park("run-a", b).await;
-        assert_ne!(first, second, "a reused token would answer the wrong request");
+        assert_ne!(pending.mint(), pending.mint(), "a reused key answers the wrong request");
+    }
+
+    #[tokio::test]
+    async fn a_duplicate_key_is_refused_rather_than_stranding_the_first() {
+        let pending = PendingFrontend::new();
+        let (first, mut first_rx) = responder(11);
+        let (second, mut second_rx) = responder(22);
+
+        assert!(pending.park("run-a", "same-id", first).await);
+        assert!(!pending.park("run-a", "same-id", second).await, "the key is taken");
+        // The loser is told why, not left to the drop guard's generic message.
+        assert_eq!(replies(&mut second_rx)[0]["error"]["code"], json!(-32602));
+
+        assert!(pending.answer("same-id", json!("intact")).await, "the first is still parked");
+        assert_eq!(replies(&mut first_rx)[0]["result"], json!("intact"));
     }
 }

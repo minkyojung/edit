@@ -3,7 +3,8 @@
 // and return success immediately. The host owns the editor/UI and does the real
 // work (queue for review, or apply immediately for move/viz). Extracted from
 // server.mjs; every factory takes its host deps as parameters (getRunId, emit,
-// registerAck) — no coupling to the Server instance.
+// askVerdict) — no coupling to the Server instance. The propose_* factories
+// take askVerdict alone: the runId is the asker's business, not the tool's.
 
 import { isAbsolute, relative, normalize, resolve as resolvePath } from 'node:path'
 import { tool } from '@anthropic-ai/claude-agent-sdk'
@@ -29,16 +30,29 @@ import { notification } from '../jsonrpc.mjs'
  * the turn too. */
 const ACK_TIMEOUT_MS = 15000
 
-/** Block on the host's verdict for a proposal, then release the slot.
- * Shared by all three propose_* tools so the fail-open policy is one fact. */
-async function awaitVerdict(promise, cleanup) {
+/** Ask the host to stage a proposal and block on its verdict.
+ * Shared by all three propose_* tools so the fail-open policy is one fact.
+ *
+ * The deadline lives here, not in the transport, because only this layer knows
+ * what waiting means: 15s of silence from a local process is a wedged host, and
+ * for a proposal the safe read of "wedged" is that it probably queued. The
+ * transport deliberately has no deadline of its own (see peer.mjs), and a
+ * request answered with an ERROR is a different thing from silence — the host
+ * answers -32603 when it gives up on a run, and that must reach the model as a
+ * refusal rather than be smoothed into a fail-open success. */
+async function awaitVerdict(ask) {
+  let timer
   try {
     return await Promise.race([
-      promise,
-      new Promise((r) => setTimeout(() => r({ ok: true, reason: null, applied: false }), ACK_TIMEOUT_MS)),
+      ask,
+      new Promise((r) => {
+        timer = setTimeout(() => r({ ok: true, reason: null, applied: false }), ACK_TIMEOUT_MS)
+      }),
     ])
+  } catch (err) {
+    return { ok: false, reason: err?.message ?? 'the host did not stage this proposal', applied: false }
   } finally {
-    cleanup()
+    clearTimeout(timer)
   }
 }
 
@@ -102,7 +116,7 @@ function stagedEditResult(verdict, pendingId, kind) {
 // new_string"). The model has prior experience with those names — the
 // `propose_` prefix is the only visible difference, and the matching
 // input shape keeps the tool-call ergonomics unchanged.
-export function buildProposeEditTool(getRunId, emit, registerAck) {
+export function buildProposeEditTool(askVerdict) {
   return tool(
     'propose_edit',
     'PREFERRED tool for changing an existing file. Propose a surgical edit: provide the absolute file_path, the exact old_string to replace (copy it VERBATIM from the file — Read it first if unsure), and the new_string. old_string MUST identify exactly ONE place in the file — if the text appears more than once, include enough surrounding lines to make it unique, otherwise the edit is rejected as ambiguous (the host never guesses which occurrence you meant). Works like the built-in Edit tool with ONE difference that matters: the change is STAGED for the user to review, and the file on disk stays unchanged until they accept it. So after a successful call, do NOT re-read the file to check your edit landed — it will still show the old text, and that is the expected state, not a failure. Returns immediately — do not wait for the user. `reason`: a short one-line note recorded in the VERSION HISTORY (the commit log) for this edit — say what changed and why in plain terms. It is NOT shown in your chat reply; it is the audit trail so the user can later see why a change was made. Keep it specific ("Fixed the typo in the intro", "Added the 2026 pricing row"), not generic.',
@@ -114,24 +128,16 @@ export function buildProposeEditTool(getRunId, emit, registerAck) {
     },
     async (input) => {
       const pendingId = globalThis.crypto.randomUUID()
-      const { promise, cleanup } = registerAck(pendingId)
-      emit(
-        notification('chat/edit-pending', {
-          runId: getRunId(),
-          pendingId,
-          toolName: 'Edit',
-          input,
-        }),
-      )
       // Round-trip on the host's verdict rather than returning an optimistic
       // "queued" — see stagedEditResult for why the optimistic form produced
       // duplicate review cards.
-      return stagedEditResult(await awaitVerdict(promise, cleanup), pendingId, 'Edit')
+      const verdict = await awaitVerdict(askVerdict({ pendingId, toolName: 'Edit', input }))
+      return stagedEditResult(verdict, pendingId, 'Edit')
     },
   )
 }
 
-export function buildProposeWriteTool(getRunId, emit, registerAck) {
+export function buildProposeWriteTool(askVerdict) {
   return tool(
     'propose_write',
     'Create a BRAND-NEW file, or replace an existing file\'s ENTIRE content when the user explicitly asks for a full rewrite. Send `content` = the complete desired file content. For any partial change to an existing file — a single line, a value, appending a bullet — do NOT use this; use propose_edit instead so the change applies surgically in place. Returns immediately — do not wait for the user. `reason`: a short one-line note recorded in the VERSION HISTORY (the commit log) for this write — say what the file is / why you created or rewrote it, in plain terms. It is NOT shown in your chat reply; it is the audit trail. Keep it specific, not generic.',
@@ -142,15 +148,6 @@ export function buildProposeWriteTool(getRunId, emit, registerAck) {
     },
     async (input) => {
       const pendingId = globalThis.crypto.randomUUID()
-      const { promise, cleanup } = registerAck(pendingId)
-      emit(
-        notification('chat/edit-pending', {
-          runId: getRunId(),
-          pendingId,
-          toolName: 'Write',
-          input,
-        }),
-      )
       // Round-trip: block on the host's apply verdict and return it DIRECTLY.
       // A whole-doc write can be refused — the file changed under the model
       // (compare-and-swap), or the edit didn't map — and the model must SEE
@@ -158,7 +155,7 @@ export function buildProposeWriteTool(getRunId, emit, registerAck) {
       // propose_edit path, this does NOT return an optimistic "queued": that
       // would let a stale overwrite look successful. Fail open if the host
       // never answers, so a lost ack can't wedge the turn.
-      const verdict = await awaitVerdict(promise, cleanup)
+      const verdict = await awaitVerdict(askVerdict({ pendingId, toolName: 'Write', input }))
       if (verdict && verdict.ok === false) {
         return {
           content: [
@@ -262,7 +259,7 @@ export function buildProposeSkillTool(getRunId, emit, existingSkills = []) {
   )
 }
 
-export function buildProposeMultiEditTool(getRunId, emit, registerAck) {
+export function buildProposeMultiEditTool(askVerdict) {
   return tool(
     'propose_multi_edit',
     'Propose multiple edits to a single file in one transaction. The host queues this proposal for user review and applies it on approval. Use the same way as the built-in MultiEdit tool: provide the file_path and an array of edits, each with old_string and new_string. Each old_string MUST identify exactly ONE place in the file — when the same text appears more than once (e.g. two identical lines you want changed differently), include enough surrounding lines in each old_string to make it unique, otherwise that edit is rejected as ambiguous (the host never guesses which occurrence you meant). Returns immediately — do not wait for the user.',
@@ -277,16 +274,8 @@ export function buildProposeMultiEditTool(getRunId, emit, registerAck) {
     },
     async (input) => {
       const pendingId = globalThis.crypto.randomUUID()
-      const { promise, cleanup } = registerAck(pendingId)
-      emit(
-        notification('chat/edit-pending', {
-          runId: getRunId(),
-          pendingId,
-          toolName: 'MultiEdit',
-          input,
-        }),
-      )
-      return stagedEditResult(await awaitVerdict(promise, cleanup), pendingId, 'MultiEdit')
+      const verdict = await awaitVerdict(askVerdict({ pendingId, toolName: 'MultiEdit', input }))
+      return stagedEditResult(verdict, pendingId, 'MultiEdit')
     },
   )
 }

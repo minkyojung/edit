@@ -155,16 +155,18 @@ section('① Part B — real git undo through env only (external git-dir + workt
 // ── ② Part C: applied signal flips the tool result the model reads ───────────
 section('② Part C — auto-accept "applied" flips the tool result text')
 {
-  const noop = () => {}
-  const getRunId = () => 'run-verify'
-  // registerAck returns { promise, cleanup }; the handler awaits `promise` (the
-  // host's verdict). We resolve it immediately with the ack the host would send.
-  const ackWith = (value) => () => ({ promise: Promise.resolve(value), cleanup: noop })
+  // askVerdict(proposal) -> Promise<verdict>: the tool handler awaits it and
+  // returns text chosen by what comes back. We answer with the verdict the
+  // host would have sent.
+  const ackWith = (value) => () => Promise.resolve(value)
+  // A host that gives up — the run was cancelled, or the sidecar restarted —
+  // answers with a JSON-RPC error, which peer.request turns into a rejection.
+  const ackRejects = (message) => () => Promise.reject(new Error(message))
 
   // propose_write round-trips its own ack and branches on it directly.
-  const wApplied = buildProposeWriteTool(getRunId, noop, ackWith({ ok: true, applied: true }))
-  const wQueued = buildProposeWriteTool(getRunId, noop, ackWith({ ok: true, applied: false }))
-  const wFailed = buildProposeWriteTool(getRunId, noop, ackWith({ ok: false, reason: 'stale' }))
+  const wApplied = buildProposeWriteTool(ackWith({ ok: true, applied: true }))
+  const wQueued = buildProposeWriteTool(ackWith({ ok: true, applied: false }))
+  const wFailed = buildProposeWriteTool(ackWith({ ok: false, reason: 'stale' }))
 
   const input = { file_path: 'Note.md', content: 'hello' }
   const tApplied = (await wApplied.handler(input)).content[0].text
@@ -183,7 +185,7 @@ section('② Part C — auto-accept "applied" flips the tool result text')
   // and the handler returns the verdict directly; assert all three branches.
   const edit = { file_path: 'Note.md', old_string: 'a', new_string: 'b' }
   const editText = async (ack) =>
-    (await buildProposeEditTool(getRunId, noop, ack).handler(edit)).content[0].text
+    (await buildProposeEditTool(ack).handler(edit)).content[0].text
 
   check(
     'propose_edit applied=true → "Applied immediately"',
@@ -196,6 +198,17 @@ section('② Part C — auto-accept "applied" flips the tool result text')
   check(
     'propose_edit ok=false → "NOT queued" carrying the reason',
     /NOT queued[\s\S]*stale/.test(await editText(ackWith({ ok: false, reason: 'stale' }))),
+  )
+
+  // A host that ANSWERS with an error is not a host that stayed SILENT. The
+  // 15s fail-open exists for silence — a wedged host, where "it probably
+  // queued" is the safe read. An explicit refusal has no such excuse, and
+  // smoothing it into fail-open would tell the model a card exists when the
+  // host has just released the request. Only expressible now that the host
+  // can answer at all: the old notification bridge had no error channel.
+  check(
+    'a host that gives up reaches the model as a refusal, not fail-open',
+    /NOT queued[\s\S]*run was cancelled/.test(await editText(ackRejects('the run was cancelled'))),
   )
 }
 

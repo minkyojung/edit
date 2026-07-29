@@ -321,13 +321,6 @@ export class Server {
     // decisionId -> { resolve, reject } for in-flight canUseTool gates
     // (plan approval / clarifying questions) awaiting a host decision.
     this.pendingDecisions = new Map()
-    // pendingId -> resolve(ok: boolean) for a propose_edit/write/multi_edit
-    // proposal awaiting the host's confirmation that it was actually queued
-    // into pendingChangesStore. Registered when the tool emits `chat/edit-
-    // pending`; resolved by `chat/edit-ack`. AWAITED by the tool handler itself,
-    // which returns the verdict as its own result — so only that one tool call
-    // blocks, never the agent loop's progress on other files.
-    this.pendingAcks = new Map()
     this.shuttingDown = false
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
@@ -377,8 +370,6 @@ export class Server {
           return this.#handleStopTask(params)
         case 'chat/decision':
           return this.#handleDecision(params)
-        case 'chat/edit-ack':
-          return this.#handleEditAck(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -1735,17 +1726,15 @@ export class Server {
     for (const name of enabledRelay) {
       if (name === 'propose_edit') {
         relayDefs.push(
-          buildProposeEditTool(getRunId, this.emit, (id) => this.#registerAckSlot(id)),
+          buildProposeEditTool((p) => this.#askVerdict(getRunId(), p)),
         )
       } else if (name === 'propose_write') {
-        relayDefs.push(buildProposeWriteTool(getRunId, this.emit, (id) => this.#registerAckSlot(id)))
+        relayDefs.push(buildProposeWriteTool((p) => this.#askVerdict(getRunId(), p)))
       } else if (name === 'propose_skill') {
         relayDefs.push(buildProposeSkillTool(getRunId, this.emit, existingSkills))
       } else if (name === 'propose_multi_edit') {
         relayDefs.push(
-          buildProposeMultiEditTool(getRunId, this.emit, (id) =>
-            this.#registerAckSlot(id),
-          ),
+          buildProposeMultiEditTool((p) => this.#askVerdict(getRunId(), p)),
         )
       } else if (name === 'move_note') {
         relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
@@ -1814,35 +1803,16 @@ export class Server {
     pending.resolve(params?.decision ?? {})
   }
 
-  // Open a slot for a propose_* tool call's host-ack, keyed by the pendingId it
-  // is about to emit in its `chat/edit-pending` notification. Every caller
-  // registers BEFORE emitting: the host round-trip is fast enough that an ack
-  // can land before the emit call returns, and a slot opened afterwards would
-  // miss it and fail open on a genuine refusal.
-  #registerAckSlot(pendingId) {
-    let resolve
-    const promise = new Promise((r) => {
-      resolve = r
-    })
-    this.pendingAcks.set(pendingId, { promise, resolve })
-    // Callers await `promise` and then call `cleanup`; they hold the promise
-    // ref, so deleting the map entry can't lose its value.
-    return { promise, cleanup: () => this.pendingAcks.delete(pendingId) }
-  }
-
-  // Host's answer to "did this propose_* proposal actually get queued?"
-  // (agent/chat/index.ts sends this once its edit-pending handling settles).
-  // Resolves the waiting tool handler. Unknown / already-settled / already-
-  // timed-out pendingIds are ignored — each handler races its own fail-open
-  // timeout, so a late or duplicate ack is a harmless no-op.
-  #handleEditAck(params) {
-    const pendingId = params?.pendingId
-    if (typeof pendingId !== 'string') return
-    const pending = this.pendingAcks.get(pendingId)
-    if (!pending) return
-    // Resolve but DON'T delete — the awaiting handler's `cleanup` is the sole
-    // deleter, after it has read the settled value.
-    pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null, applied: !!params?.applied })
+  // Ask the host to stage a proposal and report back whether it took. The
+  // pendingId is the review card's identity, not a correlation token — the
+  // transport correlates by JSON-RPC id, and the host parks the request under
+  // the pendingId so a cancelled run releases it.
+  //
+  // Registering-before-emitting used to be load-bearing here, because the ack
+  // was a separate notification that could land before the slot existed. A
+  // request has no such window: the id exists before the frame does.
+  #askVerdict(runId, proposal) {
+    return this.peer.request('host/editPending', { runId, ...proposal })
   }
 
   #handleCancel(params) {

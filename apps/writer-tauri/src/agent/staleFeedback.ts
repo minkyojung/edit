@@ -1,8 +1,8 @@
 // The tool-result message handed back to the model when a whole-doc write is
 // refused as stale (Layer A of the stale-overwrite fix). It rides the existing
-// edit-ack `reason` channel, which the sidecar's PostToolUse hook already turns
-// into a model-visible "(error: …)" retry signal — so no new relay channel is
-// needed. The message must give the model enough to rebase WITHOUT a separate
+// verdict's `reason` channel, which the propose_write tool handler already
+// returns to the model as its own "(error: …)" result — so no new relay channel
+// is needed. The message must give the model enough to rebase WITHOUT a separate
 // re-read (which the model can't do for a body only held in the editor): the
 // changed lines plus the current body inline.
 
