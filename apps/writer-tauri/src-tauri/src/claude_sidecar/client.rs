@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -95,17 +95,31 @@ pub struct SidecarClient {
     // its `claude` CLI grandchild — as a backstop when graceful shutdown is
     // too slow or the sidecar hangs. None only if the OS didn't report a pid.
     pid: Option<u32>,
+    // Set once the process group is either deliberately killed or reaped by
+    // the wait task, whichever happens first. Guards two things at once:
+    //
+    //   - the exit handler, so a teardown we asked for is never reported to
+    //     the manager as a crash (which would have it respawn what we just
+    //     killed, and count that against the crash-loop budget);
+    //   - `hard_kill`, so we never signal a pgid whose leader has already
+    //     been reaped and whose pid the OS may have handed to someone else.
+    disarmed: Arc<AtomicBool>,
     // All spawned tasks (writer, reader, stderr drain, child wait). Aborted
-    // on drop so the wait task lets go of Child, which fires kill_on_drop
-    // and tears the subprocess down.
+    // on drop, which lets the wait task release Child.
     tasks: Vec<JoinHandle<()>>,
 }
 
 impl Drop for SidecarClient {
     fn drop(&mut self) {
+        // Order matters: abort first so the wait task cannot observe the kill
+        // and report it as a crash, then take the group down.
         for task in &self.tasks {
             task.abort();
         }
+        // `kill_on_drop` alone reaps only the direct child, leaving the
+        // `claude` CLI grandchild orphaned — one per restart, and the dev
+        // watcher restarts on every sidecar source edit.
+        self.hard_kill();
     }
 }
 
@@ -165,21 +179,28 @@ impl SidecarClient {
             on_notification,
         )));
 
-        // Wait task: owns the Child. When the process exits the callback
-        // fires (manager uses this to restart). When this task is aborted
-        // via Drop, Child drops here and kill_on_drop tears the subprocess
-        // down.
+        // Wait task: owns the Child. An exit we didn't ask for fires the
+        // callback, which is how the manager learns to restart. One we did
+        // ask for is swallowed — see `disarmed`.
         let pending_for_exit = pending.clone();
+        let disarmed = Arc::new(AtomicBool::new(false));
+        let disarmed_for_exit = disarmed.clone();
         tasks.push(tokio::spawn(async move {
             let _ = child.wait().await;
-            // Fail every still-pending request so callers don't hang.
+            // Fail every still-pending request so callers don't hang. This
+            // happens regardless of why the process went away.
             let mut guard = pending_for_exit.lock().await;
             for (_, tx) in guard.drain() {
                 let _ = tx.send(Err(SidecarError::Exited));
             }
             drop(guard);
-            if let Some(handler) = on_exit {
-                handler();
+            // The pid is reaped now, so a later `hard_kill` must not signal it.
+            // If the flag was already set the exit was ours, not a crash — stay
+            // quiet rather than have the manager restart a sidecar we retired.
+            if !disarmed_for_exit.swap(true, Ordering::SeqCst) {
+                if let Some(handler) = on_exit {
+                    handler();
+                }
             }
         }));
 
@@ -188,17 +209,27 @@ impl SidecarClient {
             pending,
             write_tx,
             pid,
+            disarmed,
             tasks,
         })
     }
 
     /// SIGKILL the sidecar's entire process group (the Node process and its
-    /// `claude` CLI grandchild). Used as the app-quit backstop: after we've
-    /// asked the sidecar to leave gracefully and waited a bounded grace, this
-    /// guarantees nothing survives — even a hung sidecar or a CLI child the
-    /// graceful path didn't reap in time. Idempotent: killing an
-    /// already-exited group is a harmless ESRCH no-op.
+    /// `claude` CLI grandchild). Used on drop and as the app-quit backstop:
+    /// after we've asked the sidecar to leave gracefully and waited a bounded
+    /// grace, this guarantees nothing survives — even a hung sidecar or a CLI
+    /// child the graceful path didn't reap in time.
+    ///
+    /// Idempotent, and deliberately silent: the resulting exit is never
+    /// reported through the exit handler, so callers can retire a client
+    /// without the manager mistaking it for a crash and restarting it.
     pub fn hard_kill(&self) {
+        // Already killed, or already reaped by the wait task — in the latter
+        // case the pid may since have been recycled, so signalling it would be
+        // worse than a no-op.
+        if self.disarmed.swap(true, Ordering::SeqCst) {
+            return;
+        }
         #[cfg(unix)]
         if let Some(pid) = self.pid {
             // Negative pid targets the whole process group (see setpgid(2)).
