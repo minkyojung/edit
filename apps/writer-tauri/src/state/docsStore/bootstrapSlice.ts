@@ -18,7 +18,6 @@
  */
 
 import { scanVault } from '@/lib/scanVault'
-import { listVaultTreeRecursive } from '@/lib/vault'
 import { getActiveSlugFromHash, buildViewUrl } from '@/lib/viewUrl'
 import { pathToKnownSlug } from '@/lib/docPaths'
 import { readLastView } from '@/lib/lastView'
@@ -100,19 +99,13 @@ export const createBootstrapSlice = (
       // Empty result when no vault is selected (degraded mode —
       // boot still proceeds so the user can see the app and pick
       // a vault from the picker that BootGate auto-triggered).
-      const scanned = await scanVault()
-      set({ knownDocs: scanned })
-
-      // Folder inventory (incl. empty folders) + non-markdown attachments
-      // (pdf/png/txt/…) so the sidebar tree can show empty folders and
-      // read-only file rows alongside notes. One walk yields both.
-      // Best-effort — failure just means they won't appear until next boot.
-      try {
-        const { dirs, files } = await listVaultTreeRecursive()
-        set({ knownFolders: dirs, knownFiles: files })
-      } catch (err) {
-        console.warn('[boot] tree scan failed', err)
-      }
+      //
+      // The same traversal also yields the folder inventory (incl. empty
+      // folders) and the non-markdown attachments (pdf/png/txt/…) the sidebar
+      // tree needs, so the tree is not walked a second time. A subtree that
+      // can't be read is warned about and skipped inside the walk.
+      const { docs: scanned, dirs, files } = await scanVault()
+      set({ knownDocs: scanned, knownFolders: dirs, knownFiles: files })
 
       // Resolve the persisted tab strip (stored as PATHS, since the slug is
       // an ephemeral per-boot handle) back to this boot's fresh slugs against

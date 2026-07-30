@@ -44,4 +44,12 @@ describe('classifyAsset', () => {
   it('uses the last dot for multi-dot names', () => {
     expect(classifyAsset('my.backup.png')).toBe('image')
   })
+
+  // An AI-authored HTML artifact is its own kind, not `text` and not `other`:
+  // the viewer renders it in a sandboxed iframe, while `text` would dump the
+  // source into a <pre> and `other` would refuse to preview it at all.
+  it('classifies html artifacts as their own kind', () => {
+    expect(classifyAsset('writing/weekly-status.html')).toBe('html')
+    expect(classifyAsset('a.HTM')).toBe('html')
+  })
 })

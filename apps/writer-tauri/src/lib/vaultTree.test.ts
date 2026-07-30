@@ -150,7 +150,7 @@ function buildDisk(lockedThrows: boolean) {
  *  placement function — `scanVault` returns KnownDocs, and only some types
  *  carry `relPath`. */
 async function notePaths(): Promise<string[]> {
-  const docs = await scanVault()
+  const { docs } = await scanVault()
   const bySlug = new Map(docs.map((d) => [d.slug, d]))
   return docs
     .map((d) => pathForDoc(d, (s) => bySlug.get(s)))
@@ -212,6 +212,38 @@ describe('the vault tree walk (characterization — must survive the merge uncha
     buildDisk(true)
     const { dirs, files } = await listVaultTreeRecursive()
     expect(dirs).toContain('locked')
+    expect(files).toEqual(['wiki/photo.png'])
+  })
+})
+
+describe('one traversal at boot', () => {
+  // The note walk had no try/catch around readDir while the tree walk did, and
+  // `BootGate` calls `bootstrap()` un-awaited — so one unreadable directory
+  // anywhere in the vault became an unhandled rejection, `bootstrapping` never
+  // flipped, and the app sat on its loading spinner forever. A vault is a
+  // folder of the user's own files; an unreadable one in it is a possible
+  // state, not a corrupt invariant.
+  it('an unreadable directory costs its subtree, not the whole boot', async () => {
+    buildDisk(true)
+    const { docs } = await scanVault()
+    const bySlug = new Map(docs.map((d) => [d.slug, d]))
+    const paths = docs.map((d) => pathForDoc(d, (s) => bySlug.get(s))).sort()
+    expect(paths).toEqual([
+      '_system/index.md',
+      'daily/2026-01-01.md',
+      'wiki/Note.md',
+      'wiki/link-note.md',
+      'wiki/sub/Nested.md',
+    ])
+  })
+
+  // Seven reachable directories. Two walks visited each of them twice; the
+  // count is what fails the moment a second walk is reintroduced.
+  it('visits each directory once, and yields all three sets', async () => {
+    const { docs, dirs, files } = await scanVault()
+    expect(disk.readDir).toHaveBeenCalledTimes(7)
+    expect(docs.length).toBe(6) // every note; `locked/` is readable in this fixture
+    expect(dirs).toEqual(['_system', 'daily', 'empty', 'locked', 'wiki', 'wiki/sub'])
     expect(files).toEqual(['wiki/photo.png'])
   })
 })

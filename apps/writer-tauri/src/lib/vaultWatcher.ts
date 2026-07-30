@@ -49,6 +49,7 @@ import { splitFrontmatter } from './frontmatter'
 import { isDirty } from './docFileSync'
 import { buildKnownDocForExternalPath } from './scanVault'
 import { useExternalConflictStore } from '@/state/externalConflictStore'
+import { bumpArtifactRevision } from '@/state/artifactRevisionStore'
 import { useGitStore } from '@/state/gitStore'
 import { notify } from './notify'
 
@@ -83,6 +84,55 @@ function scheduleFolderRefresh(): void {
       )
       .catch((err) => console.warn('[watch] tree refresh failed', err))
   }, 400)
+}
+
+/** How long to wait for an artifact's writer to finish before telling the view
+ * to re-render. A `Write` is truncate-then-write, not an atomic rename, and
+ * macOS emits several data events across one of them — bumping on the first
+ * would render a half-written file. Trailing, per path, so a burst collapses to
+ * one bump. Same 400ms as the folder refresh above; both are "wait for the
+ * filesystem to settle", not a latency budget. */
+const ARTIFACT_SETTLE_MS = 400
+const artifactBumpTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/** Tell the artifact view that this file changed, once the writes stop.
+ *
+ * `noteActivity` fires with the bump rather than separately because artifacts
+ * have no review card — git is the only way back from one the user doesn't want,
+ * and a commit only happens if something marked the path dirty. `git_commit`
+ * already does `git add -A`, so nothing else is needed to get the file INTO the
+ * commit; this is only what makes a commit happen at all.
+ *
+ * No echo suppression here, unlike the `.md` path: nothing in the app writes
+ * artifacts through the vault helpers, so there is no belief to compare against,
+ * and `isDiskContentKnown` would read the whole file — the one thing the asset
+ * protocol lets us avoid. A spurious bump would only remount, which is harmless;
+ * revisit if the host ever starts writing artifacts itself. */
+function scheduleArtifactBump(rel: string): void {
+  const pending = artifactBumpTimers.get(rel)
+  if (pending) clearTimeout(pending)
+  artifactBumpTimers.set(
+    rel,
+    setTimeout(() => {
+      artifactBumpTimers.delete(rel)
+      bumpArtifactRevision(rel)
+      useGitStore.getState().noteActivity(rel)
+    }, ARTIFACT_SETTLE_MS),
+  )
+}
+
+/** An artifact that just went away must NOT be re-rendered: the frame would
+ * reload a missing file, and an `<iframe>` reports nothing for a 404, so the
+ * user would get a blank pane instead of the last good render or a fallback.
+ * Cancelling a pending bump matters too — a modify followed by a delete would
+ * otherwise still fire it. The deletion is recorded for git either way. */
+function handleArtifactRemoved(rel: string): void {
+  const pending = artifactBumpTimers.get(rel)
+  if (pending) {
+    clearTimeout(pending)
+    artifactBumpTimers.delete(rel)
+  }
+  useGitStore.getState().noteActivity(rel)
 }
 
 /** Start watching the active vault. Returns a disposer; calling it
@@ -124,6 +174,21 @@ export async function startVaultWatcher(): Promise<() => void> {
 
       const rawPaths = Array.isArray(event.paths) ? event.paths : []
       const relPaths = rawPaths.map((p) => toVaultRelative(p, vaultPath))
+
+      // Rendered HTML artifacts, handled entirely beside the `.md` router below
+      // and never through it: everything downstream of `isWatchableBodyFile`
+      // assumes a slug-bearing note (reload, rename correlation, conflict
+      // marking), and an artifact has no slug, no catalog entry and no editor
+      // buffer. Widening that predicate instead of branching here is the way to
+      // break the note path.
+      const artifacts = relPaths.filter(isWatchableArtifactFile)
+      if (artifacts.length > 0) {
+        const removed = isRemoveEvent(event)
+        for (const rel of artifacts) {
+          if (removed) handleArtifactRemoved(rel)
+          else scheduleArtifactBump(rel)
+        }
+      }
 
       // Keep only paths that are interesting body files (`.md` inside
       // `wiki/`, `daily/`, or `_system/`). Everything else is either:
@@ -182,6 +247,11 @@ export function stopVaultWatcher(): void {
     activeUnwatch()
     activeUnwatch = null
   }
+  // Pending artifact bumps are keyed by vault-RELATIVE path, so one left
+  // in flight across a vault switch would fire against the new vault and
+  // remount whatever happens to sit at the same relative path.
+  for (const timer of artifactBumpTimers.values()) clearTimeout(timer)
+  artifactBumpTimers.clear()
 }
 
 /** Convert an absolute path emitted by the watcher into a vault-
@@ -236,6 +306,15 @@ function isCreateOrRemoveEvent(event: { type: unknown }): boolean {
     | undefined
   if (!type) return false
   return ('create' in type && !!type.create) || ('remove' in type && !!type.remove)
+}
+
+/** True for remove fsevents only. `isCreateOrRemoveEvent` above deliberately
+ * lumps the two together for the folder refresh, which wants both; the artifact
+ * branch has to tell them apart because a removal must not trigger a re-render.
+ */
+function isRemoveEvent(event: { type: unknown }): boolean {
+  const type = event.type as { remove?: unknown } | undefined
+  return !!type && 'remove' in type && !!type.remove
 }
 
 /** Pure routing decisions extracted from the watcher handlers so they
@@ -611,6 +690,17 @@ function handleExternalRemove(rel: string): void {
  *   - anything inside a dot-dir (`.git/`, `.obsidian/`) — noise. */
 function isWatchableBodyFile(rel: string): boolean {
   if (!rel.endsWith('.md')) return false
+  return !rel.split('/').some((seg) => seg.startsWith('.'))
+}
+
+/** True for vault-relative paths that are rendered HTML artifacts. Same
+ * dot-segment exclusion as `isWatchableBodyFile` — a `.html` inside `.git/` or
+ * `.octave/` is app or tool noise, not something the user is looking at.
+ *
+ * Exported so the test calls this predicate instead of restating the extension
+ * rule; a copy in the test is how the two drift. */
+export function isWatchableArtifactFile(rel: string): boolean {
+  if (!/\.html?$/i.test(rel)) return false
   return !rel.split('/').some((seg) => seg.startsWith('.'))
 }
 

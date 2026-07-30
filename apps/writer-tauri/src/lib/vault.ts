@@ -440,19 +440,27 @@ export async function listVaultDir(relPath: string): Promise<string[]> {
     .map((e) => e.name)
 }
 
-/** One recursive pass over the vault collecting BOTH inventories the
- * sidebar needs: every non-hidden subdirectory (`dirs`, so empty folders
- * still surface — the tree is otherwise built only from file paths) and
- * every non-markdown attachment file (`files`, the pdf/png/txt/… rows).
- * Notes (`.md`), dot-dirs/files, and app sidecars are excluded from
- * `files` by `isAttachmentFile`; `.`-prefixed dirs are skipped entirely
- * while `_`-prefixed ones are returned (the tree filters them). Single
- * traversal — both call sites (boot scan, watcher refresh) want both, so
- * walking the tree twice would double the readDir cost. */
+/** One recursive pass over the vault collecting all three inventories the app
+ * builds from the folder tree: every non-hidden subdirectory (`dirs`, so empty
+ * folders still surface — the tree is otherwise built only from file paths),
+ * every note (`notes`, the `.md` files scanVault turns into the catalog), and
+ * every non-markdown attachment (`files`, the pdf/png/txt/… rows).
+ * `.`-prefixed dirs are skipped entirely; `_`-prefixed ones are returned (the
+ * tree filters them).
+ *
+ * `notes` used to be a SECOND full traversal — scanVault kept its own private
+ * copy of this walk — so boot paid every `readDir` twice. Collecting it here
+ * costs the watcher nothing, because reading a note's contents happens in
+ * scanVault, outside the walk; `scheduleFolderRefresh` just ignores the field.
+ *
+ * A `readDir` that fails costs its subtree and nothing more. That used to be
+ * true only here: scanVault's copy let the error out, and `BootGate` calls
+ * `bootstrap()` un-awaited, so a single unreadable directory anywhere in the
+ * vault left the app on its loading spinner forever. */
 export async function listVaultTreeRecursive(
   subRel = '',
-): Promise<{ dirs: string[]; files: string[] }> {
-  const empty = { dirs: [] as string[], files: [] as string[] }
+): Promise<{ dirs: string[]; files: string[]; notes: string[] }> {
+  const empty = { dirs: [] as string[], files: [] as string[], notes: [] as string[] }
   const root = getActiveVaultPath()
   if (!root) return empty
   if (subRel !== '' && !(await exists(await resolveVaultPath(subRel)))) return empty
@@ -460,11 +468,13 @@ export async function listVaultTreeRecursive(
   let entries: Awaited<ReturnType<typeof readDir>>
   try {
     entries = await readDir(absPath)
-  } catch {
+  } catch (err) {
+    console.warn('[vault] readDir failed, skipping subtree', { subRel, err })
     return empty
   }
   const dirs: string[] = []
   const files: string[] = []
+  const notes: string[] = []
   for (const entry of entries) {
     if (entry.name.startsWith('.')) continue
     const childRel = subRel === '' ? entry.name : `${subRel}/${entry.name}`
@@ -473,11 +483,23 @@ export async function listVaultTreeRecursive(
       const sub = await listVaultTreeRecursive(childRel)
       dirs.push(...sub.dirs)
       files.push(...sub.files)
+      notes.push(...sub.notes)
+      // The two branches below gate differently ON PURPOSE, and the difference
+      // is only visible for symlinks: Rust's read_dir does not follow links, so
+      // a symlink has `isFile === false`. A symlinked note is therefore
+      // catalogued and a symlinked attachment is not. That predates the merge
+      // and is preserved as-is — putting one `entry.isFile` around both, the
+      // obvious way to fold these together, silently drops symlinked notes
+      // (a real vault pattern: a shared folder linked into the vault).
+      // The attachment side is arguably the latent bug; changing it would move
+      // what the sidebar renders, so it is flagged, not fixed here.
+    } else if (entry.name.endsWith('.md')) {
+      notes.push(childRel)
     } else if (entry.isFile && isAttachmentFile(childRel)) {
       files.push(childRel)
     }
   }
-  return { dirs, files }
+  return { dirs, files, notes }
 }
 
 /** Does the given vault-relative path exist (file OR directory)? */

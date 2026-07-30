@@ -17,7 +17,7 @@ export function isAttachmentFile(rel: string): boolean {
   return true
 }
 
-export type AssetKind = 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'other'
+export type AssetKind = 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'html' | 'other'
 
 /** Extension → how the viewer should render it. Lowercased, extension-only
  * (the webview decides codec support; unknowns degrade to `other` → the
@@ -35,6 +35,10 @@ const EXT_KIND: Record<string, AssetKind> = {
   // text / code
   txt: 'text', text: 'text', csv: 'text', tsv: 'text', log: 'text', json: 'text',
   yaml: 'text', yml: 'text', xml: 'text', toml: 'text', ini: 'text', markdown: 'text',
+  // Rendered, not shown as source: an HTML file here is an artifact the agent
+  // wrote to be looked at. Its own kind rather than `text` so the viewer can
+  // give it a sandboxed frame — see FileViewer's html branch.
+  html: 'html', htm: 'html',
 }
 
 /** Classify a filename by extension for the file viewer. */
