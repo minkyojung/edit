@@ -617,6 +617,27 @@ export class Server {
   // between a turn settling and the generator re-parking is still picked up,
   // because the generator re-checks the queue on each loop. Strict
   // serialization + FIFO: one turn generates at a time, in arrival order.
+  /** Answer a turn that will never run. Its runId is already in `runToThread`
+   *  and the frontend has no timeout on the other side, so silence here is a
+   *  permanent spinner.
+   *
+   *  Two callers, because a turn can be orphaned from either end: dispatched
+   *  onto a thread that died in the accept→dispatch gap, or still sitting in
+   *  `turnQueue` when the thread is torn down. They emit the same thing on
+   *  purpose — the frontend cannot tell the cases apart and should do the same
+   *  thing (re-send on a fresh thread), so `retryable` is true. */
+  #strandTurn(rec, item) {
+    this.runToThread.delete(item.runId)
+    this.#emitChatError(
+      item.runId,
+      'INTERNAL',
+      'thread closed before the turn started',
+      true,
+      undefined,
+      rec.threadId,
+    )
+  }
+
   #dispatchTurn(rec, item) {
     // The thread can be torn down between a turn's accept and its dispatch —
     // the #applyThreadControls().then(#dispatchTurn) path awaits control
@@ -625,15 +646,7 @@ export class Server {
     // with no terminal → frontend wedge. Surface a retryable error instead so
     // the frontend re-sends (spinning up a fresh thread).
     if (rec.dead) {
-      this.runToThread.delete(item.runId)
-      this.#emitChatError(
-        item.runId,
-        'INTERNAL',
-        'thread closed before the turn started',
-        true,
-        undefined,
-        rec.threadId,
-      )
+      this.#strandTurn(rec, item)
       return
     }
     rec.turnQueue.push(item)
@@ -1672,6 +1685,9 @@ export class Server {
     )
     rec.dead = true
     rec.closeRequested = true
+    // Everything still queued dies with the loop. `dead` is already set, so
+    // nothing new can join the queue behind us while we drain it.
+    while (rec.turnQueue.length > 0) this.#strandTurn(rec, rec.turnQueue.shift())
     if (rec.nextTurnResolve) {
       const r = rec.nextTurnResolve
       rec.nextTurnResolve = null

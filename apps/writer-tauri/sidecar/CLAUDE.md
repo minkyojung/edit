@@ -45,7 +45,7 @@ ordered by topic, not by whether it needs a token.)
 
 | script | covers |
 |---|---|
-| `verify-lifecycle` | thread lifecycle, LRU eviction, busy/reap predicate, the prompt generator never finishing — fake SDK, no token |
+| `verify-lifecycle` | thread lifecycle, LRU eviction, busy/reap predicate, the prompt generator never finishing, orphaned queued turns — fake SDK, no token. **Needs `node --experimental-test-module-mocks`** (`mock.module` is still flagged); without it the run dies at import with `mock.module is not a function` |
 | `verify-bidirectional` | the sidecar as a JSON-RPC *caller*: minting a request, correlating the host's response, settling everyone when the connection goes — no SDK, no token |
 | `verify-session-id` | a thread id the CLI would reject still runs (the boundary normalises it) |
 | `verify-turn-queue` | a turn sent mid-answer is accepted and runs after, not concurrently |

@@ -376,8 +376,65 @@ async function t10() {
   check('closing the thread does end the generator', f.inputEnded === true)
 }
 
+// ── T11: a turn queued behind a live one must not be stranded by teardown ──
+// #dispatchTurn already refuses to queue onto a dead thread, and its comment
+// names the failure exactly: "its runId is already in runToThread ... with no
+// terminal → frontend wedge". #teardownThread had the same hazard from the
+// other side — it kills the thread WITH turns still in rec.turnQueue and never
+// answers them. Reachable two ways: chat/close-thread while a turn is queued
+// (archiveThread does abort-then-close in one tick), and the cancel path's
+// PERSIST_INTERRUPT_GRACE_MS escalation to teardown('cancel_wedged').
+async function t11() {
+  console.log('\n[T11] closing a thread answers the turns still queued behind the live one')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
+  // Turn 1 goes live and STAYS live — we never push its `result`.
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  // Turn 2 lands while turn 1 is active, so it sits in rec.turnQueue.
+  send('chat', { runId: r2, threadId: tid, persistentQuery: true, prompt: 'b' }, nid())
+  await sleep(30)
+  send('chat/close-thread', { threadId: tid })
+  await sleep(80)
+  const answered = ev.err.some((e) => e.runId === r2) || ev.done.some((d) => d.runId === r2)
+  check('the queued turn is answered, not silently dropped', answered,
+    `errs=[${ev.err.map((e) => e.code).join(',')}] dones=${ev.done.length}`)
+  // Retryable, so the frontend re-sends on a fresh thread rather than showing a
+  // dead end — the same verdict #dispatchTurn gives its own dead-thread case.
+  const t = ev.err.find((e) => e.runId === r2)
+  check('and told it may retry', t?.retryable === true, `retryable=${t?.retryable}`)
+}
+
+// ── T12: the cancel path's grace-window escalation, same question ──────
+// #cancelPersistentTurn interrupts, then after PERSIST_INTERRUPT_GRACE_MS
+// escalates to teardown('cancel_wedged') if the turn is still live. The fake
+// query's interrupt() does nothing, so this is the wedged path exactly.
+async function t12() {
+  console.log('\n[T12] a wedged cancel escalates to teardown — the queued turn still gets answered')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  send('chat', { runId: r2, threadId: tid, persistentQuery: true, prompt: 'b' }, nid())
+  await sleep(30)
+  send('chat/cancel', { runId: r1 })
+  // Past the 5s grace, so the escalation to teardown has definitely run.
+  await waitFor(() => ev.err.some((e) => e.runId === r2) || ev.done.some((d) => d.runId === r2), 8000)
+  check('the queued turn is answered after a wedged cancel',
+    ev.err.some((e) => e.runId === r2) || ev.done.some((d) => d.runId === r2),
+    `errs=[${ev.err.map((e) => `${e.runId === r2 ? 'r2:' : 'r1:'}${e.code}`).join(',')}] dones=${ev.done.length}`)
+  // The cancelled turn itself is answered — that path already worked; what was
+  // missing is everything behind it.
+  check('and the cancelled turn still reports CANCELLED',
+    ev.err.some((e) => e.runId === r1 && e.code === 'CANCELLED'))
+}
+
 try {
-  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12()
 } finally {
   process.stderr.write = origWrite
 }
