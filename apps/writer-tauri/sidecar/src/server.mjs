@@ -1247,6 +1247,23 @@ export class Server {
         if (isBg && !rec.bgTurnRunId && this.#isContentEvent(event)) {
           rec.bgTurnRunId = globalThis.crypto.randomUUID()
         }
+        // (3) Subagent token deltas are redundant. `forwardSubagentText` also
+        // delivers each subagent message WHOLE as a `type:'assistant'` event
+        // with the same parent_tool_use_id, and that is what the frontend builds
+        // the subagent lane from — so it drops these on arrival
+        // (streamParser.ts:183) after they have crossed the pipe, a full
+        // serde_json::Value tree, one app.emit per window, and zod. Drop them
+        // here instead. Only `stream_event`: the whole-message events with a
+        // parent id are the lane's only supplier and must pass.
+        //
+        // Placed AFTER the bgTurnRunId mint above, not before. Filtering earlier
+        // would NOT break background-turn detection — the whole-message
+        // `assistant` event is a content event too and mints on its own. The
+        // narrower, real difference: a `chat/task` event arriving between the
+        // dropped delta and the next surviving content event reads bgTurnRunId
+        // (:1593), and would carry null instead of the synthetic id. T16b pins it.
+        if (event?.type === 'stream_event' && event.parent_tool_use_id != null) continue
+
         const runId = rec.turnActive ? rec.currentRunId : rec.bgTurnRunId
         this.emit(
           notification('chat/event', {

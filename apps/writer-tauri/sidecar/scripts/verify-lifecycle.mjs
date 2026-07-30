@@ -99,13 +99,14 @@ process.stderr.write = (s, ...a) => {
 }
 
 function makeServer() {
-  const ev = { done: [], err: [], task: [], bgDone: [] }
+  const ev = { done: [], err: [], task: [], bgDone: [], event: [] }
   const server = new Server({
     mode: 'chat',
     emit: (m) => {
       if (m.method === 'chat/done') (m.params.background ? ev.bgDone : ev.done).push(m.params)
       else if (m.method === 'chat/error') ev.err.push(m.params)
       else if (m.method === 'chat/task') ev.task.push(m.params)
+      else if (m.method === 'chat/event') ev.event.push(m.params)
     },
   })
   const send = (method, params, id) => server.handle({ jsonrpc: '2.0', id, method, params })
@@ -502,8 +503,99 @@ async function t14() {
   send('chat/close-thread', { threadId: tid }); await sleep(50)
 }
 
+// ── T15: subagent token deltas must not ride the firehose ──────────────
+// With forwardSubagentText on, each subagent message ALSO arrives whole as a
+// `type:'assistant'` event carrying parent_tool_use_id, and that is what builds
+// the subagent lane (streamParser.ts:421-452). The per-token stream_events with
+// a parent id are therefore redundant — streamParser.ts:183 drops them, but only
+// after they crossed the pipe, a full serde_json::Value tree, one app.emit per
+// window, and zod. Filter at the source.
+//
+// The trap this also pins: #isContentEvent counts stream_event when minting
+// bgTurnRunId, so a filter placed BEFORE that check would break
+// background-turn detection.
+async function t15() {
+  console.log('\n[T15] subagent stream_events are dropped at the source, main-thread ones are not')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  const before = ev.event.length
+
+  fake.pushEvent({ type: 'stream_event', parent_tool_use_id: 'toolu_sub', event: { delta: 'x' } })
+  await sleep(30)
+  check('a subagent stream_event is not forwarded', ev.event.length === before,
+    `events=${ev.event.length - before}`)
+
+  fake.pushEvent({ type: 'stream_event', parent_tool_use_id: null, event: { delta: 'y' } })
+  await waitFor(() => ev.event.length > before)
+  check("the main thread's own stream_event still is", ev.event.length === before + 1)
+
+  // The subagent LANE's supplier must survive — this is the event the frontend
+  // actually builds subagent rows from.
+  fake.pushEvent({ type: 'assistant', parent_tool_use_id: 'toolu_sub', message: { content: [] } })
+  await waitFor(() => ev.event.length > before + 1)
+  check('an assistant event with a parent id still is', ev.event.length === before + 2)
+
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
+// ── T16: the filter must not break background-turn detection ───────────
+// bgTurnRunId is minted by #isContentEvent, which counts stream_event. A
+// main-thread stream_event arriving BETWEEN turns must still mint it.
+async function t16() {
+  console.log('\n[T16] a between-turns stream_event still opens a background turn')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await runTurn(fake, r1, ev)
+  // Turn settled → turnActive false. A content event now is an autonomous
+  // background-completion turn.
+  fake.pushEvent({ type: 'stream_event', parent_tool_use_id: null, event: { delta: 'z' } })
+  await waitFor(() => ev.event.some((e) => e.background === true))
+  const bg = ev.event.find((e) => e.background === true)
+  check('it is tagged background with a synthetic runId',
+    !!bg && typeof bg.runId === 'string' && bg.runId !== r1, `runId=${bg?.runId}`)
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
+// ── T16b: the filter's placement, pinned by the one observable difference ──
+// A SUBAGENT stream_event between turns is dropped, but it still passes through
+// #isContentEvent first and mints bgTurnRunId. That matters because chat/task
+// reads bgTurnRunId (server.mjs:1593) — so a task event arriving in the window
+// before any surviving content event carries the synthetic runId rather than
+// null. Filtering before the mint would make it null.
+//
+// This replaces a claim I made and could not support: I first wrote that
+// filtering early would "break background-turn detection". It would not — the
+// whole-message `assistant` event is a content event too and mints on its own.
+// The real difference is narrower, and this is it.
+async function t16b() {
+  console.log('\n[T16b] a dropped subagent event still mints the background runId for chat/task')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await runTurn(fake, r1, ev)
+  // Between turns. This is filtered out of chat/event, but not out of the mint.
+  fake.pushEvent({ type: 'stream_event', parent_tool_use_id: 'toolu_sub', event: { delta: 'x' } })
+  await sleep(30)
+  const taskBefore = ev.task.length
+  fake.pushEvent({ type: 'system', subtype: 'task_progress', task_id: 't1', description: 'd' })
+  await waitFor(() => ev.task.length > taskBefore)
+  const t = ev.task[ev.task.length - 1]
+  check('the task event carries the synthetic runId, not null',
+    typeof t?.runId === 'string' && t.runId !== r1, `runId=${t?.runId}`)
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12(); await t13(); await t14()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12(); await t13(); await t14(); await t15(); await t16(); await t16b()
 } finally {
   process.stderr.write = origWrite
 }
