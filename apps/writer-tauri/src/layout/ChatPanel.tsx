@@ -20,7 +20,7 @@ import { useClaudeAuth } from '@/hooks/useClaudeAuth'
 import { useConnectDialog } from '@/stores/connectDialog'
 import { type UseThreadsResult } from '@/hooks/useThreads'
 import { useThreadTurns } from '@/hooks/useThreadTurns'
-import { generateThreadTitle } from '@/agent/generateThreadTitle'
+import { fallbackTitle, generateThreadTitle } from '@/agent/generateThreadTitle'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useTurnState, type QueuedTurn } from '@/stores/turnState'
 import { useContextUsageStore } from '@/state/contextUsageStore'
@@ -645,6 +645,23 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     if (sendInFlightRef.current.has(threadId)) return
     sendInFlightRef.current.add(threadId)
     try {
+      // Still-untitled thread → name it from this message. Gated on the title
+      // being empty rather than on "is this the first turn": that is the same
+      // thing for a fresh chat, and unlike the turn count it also covers a
+      // thread whose first attempt never landed (app quit mid-flight), and it
+      // sits ABOVE the slash-command branch, which used to return before the
+      // title block and so left every /command-opened chat untitled for good.
+      //
+      // Fire-and-forget, but never silent: a failed generation falls back to a
+      // slice of the message. Something is always better than "New chat", and
+      // the fallback also closes the retry question — the title stops being
+      // empty, so this doesn't re-fire on every later turn.
+      if (threads.threads.find((t) => t.id === threadId)?.title.trim() === '') {
+        void generateThreadTitle(text).then((title) =>
+          threads.renameThread(threadId, title ?? fallbackTitle(text)),
+        )
+      }
+
       // Slash command? Vault commands run natively — the SDK expands the
       // plugin command from `_system/agent/commands/`.
       const slash = parseSlashInvocation(text)
@@ -695,19 +712,8 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
           : undefined,
       }
 
-      // First user message in an untitled thread → kick off background title
-      // generation. Fire-and-forget; the slug-style fallback stays in place
-      // until (and unless) Haiku returns something.
+      // Captured BEFORE the turn is appended — it drives scroll anchoring below.
       const isFirstTurn = turnsHook.turns.length === 0
-      if (isFirstTurn && activeId) {
-        const thread = threads.threads.find((t) => t.id === activeId)
-        if (thread && thread.title.trim().length === 0) {
-          const idAtSend = activeId
-          void generateThreadTitle(text).then((title) => {
-            if (title) threads.renameThread(idAtSend, title)
-          })
-        }
-      }
 
       // Detach the one-shot prop-backed chips now that they're committed to the
       // turn (draft chips were already cleared by the composer's submit).

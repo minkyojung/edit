@@ -162,12 +162,14 @@ pub struct ChatEditAckArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// A title request carries only the message to name. The prompt and the
+/// one-shot tool constraints belong to the sidecar's title mode
+/// (`TITLE_SYSTEM_PROMPT`) — passing a systemPrompt from here was half a policy,
+/// and the half that did not work on its own.
 pub struct TitleArgs {
     pub run_id: String,
     pub model: String,
     pub prompt: String,
-    #[serde(default)]
-    pub system_prompt: Option<String>,
 }
 
 /// What a Tauri command failed with, as structure rather than prose.
@@ -488,14 +490,11 @@ pub async fn claude_title(app: AppHandle, args: TitleArgs) -> Result<Value, Comm
         .await
         ?;
 
-    let mut params = json!({
+    let params = json!({
         "runId": args.run_id,
         "model": args.model,
         "prompt": args.prompt,
     });
-    if let Some(sp) = args.system_prompt {
-        params["systemPrompt"] = Value::String(sp);
-    }
 
     let title = manager.title_client().await;
     Ok(title.request("chat", Some(params)).await?)

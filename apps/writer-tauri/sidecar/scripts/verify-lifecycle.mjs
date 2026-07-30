@@ -16,11 +16,11 @@ const SIDECAR = '..'
 // order. Each exposes: pushEvent(e), endOutput(), messages[] (pulled inputs),
 // calls[] (control-request names).
 const fakes = []
-function makeFakeQuery(prompt) {
+function makeFakeQuery(prompt, options) {
   const outQ = []
   let outResolve = null
   let outEnded = false
-  const rec = { messages: [], calls: [], inputEnded: false, pushEvent, endOutput }
+  const rec = { messages: [], calls: [], inputEnded: false, options, pushEvent, endOutput }
   function pushEvent(e) {
     if (outResolve) { const r = outResolve; outResolve = null; r({ value: e, done: false }) }
     else outQ.push(e)
@@ -71,14 +71,19 @@ function makeFakeQuery(prompt) {
 
 mock.module('@anthropic-ai/claude-agent-sdk', {
   namedExports: {
-    query: ({ prompt }) => makeFakeQuery(prompt),
+    query: ({ prompt, options }) => makeFakeQuery(prompt, options),
     tool: (name, description, schema, handler) => ({ name, description, schema, handler }),
     createSdkMcpServer: (cfg) => ({ ...cfg }),
     getSessionInfo: async () => undefined, // missing session → create path
   },
 })
 
-const { Server, threadBusy, MAX_LIVE_THREADS: MAX } = await import(`${SIDECAR}/src/server.mjs`)
+const {
+  Server,
+  threadBusy,
+  MAX_LIVE_THREADS: MAX,
+  MAX_LIVE_TITLES: MAX_TITLES,
+} = await import(`${SIDECAR}/src/server.mjs`)
 
 // ── Harness ──────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -259,10 +264,18 @@ async function t7() {
 
 // ── T8: title mode routes onto the thread engine (B2) — a title chat (no
 // threadId, no persistentQuery, exactly what generateThreadTitle sends) runs
-// as a closeAfterResult one-shot on the engine, not the legacy path, and stays
-// single-flight. ──
+// as a closeAfterResult one-shot on the engine, not the legacy path, and is
+// capped at MAX_LIVE_TITLES rather than refused outright.
+//
+// This used to assert single-flight (a second concurrent title must NOT spawn a
+// thread). That was the product's behaviour and it was the bug: teardown lags
+// `chat/done` by seconds against the real SDK, so the cap of 1 refused the next
+// new chat for that whole window and nothing retried. The window is invisible
+// here — the fake query ends its output the moment input ends — which is why
+// this check kept passing; `verify-thread-title` drives a real sidecar and is
+// what actually covers it.
 async function t8() {
-  console.log('\n[T8] title mode → thread engine, closeAfterResult one-shot, single-flight')
+  console.log('\n[T8] title mode → thread engine, closeAfterResult one-shot, capped not single-flight')
   fakes.length = 0; teardownLog.length = 0
   const ev = { done: [], err: [] }
   const server = new Server({
@@ -285,13 +298,41 @@ async function t8() {
     server.activeThreads.size === 1,
     `threads=${server.activeThreads.size}`,
   )
-  // Single-flight: a second title while one is live must not spawn a 2nd thread.
-  send('chat', { runId: randomUUID(), prompt: 'other' }, nid())
-  check('title stays single-flight (activeThreads guard)', server.activeThreads.size === 1, `threads=${server.activeThreads.size}`)
+  // The title mode supplies its own prompt + one-shot constraints, so the
+  // caller sending only a message still gets them. Read off the built options:
+  // an empty tools array is the SDK's "no built-in tools", NOT "unspecified".
+  const opts = fake.options ?? {}
+  check('title mode supplied its own system prompt', typeof opts.systemPrompt === 'string' && opts.systemPrompt.length > 0)
+  check('title runs tool-less', Array.isArray(opts.tools) && opts.tools.length === 0, `tools=${JSON.stringify(opts.tools)}`)
+  check('title runs single-turn', opts.maxTurns === 1, `maxTurns=${opts.maxTurns}`)
+
+  // Capped, not single-flight: concurrent titles up to MAX_LIVE_TITLES are
+  // accepted (the previous new chat's thread has not drained yet), and only the
+  // one past the cap is refused.
+  const extras = []
+  for (let i = 1; i < MAX_TITLES; i++) {
+    const r = randomUUID()
+    extras.push(r)
+    send('chat', { runId: r, prompt: `other ${i}` }, nid())
+  }
+  const fakes2 = []
+  for (let i = 1; i < MAX_TITLES; i++) fakes2.push(await awaitFake(i + 1))
+  check(
+    `titles run concurrently up to the cap (${MAX_TITLES})`,
+    server.activeThreads.size === MAX_TITLES,
+    `threads=${server.activeThreads.size}`,
+  )
+  errs.length = 0
+  send('chat', { runId: randomUUID(), prompt: 'one too many' }, nid())
+  check('one past the cap is refused, not spawned', server.activeThreads.size === MAX_TITLES && errs.length === 1,
+    `threads=${server.activeThreads.size} errs=${errs.length}`)
+  check('and the refusal is a retryable BUSY', errs[0]?.error?.code === BUSY_CODE, JSON.stringify(errs[0]?.error))
+
   await runTurn(fake, r1, ev)
+  for (let i = 0; i < extras.length; i++) await runTurn(fakes2[i], extras[i], ev)
   await waitFor(() => server.activeThreads.size === 0)
-  check('title thread torn down after its single result', server.activeThreads.size === 0)
-  check('one chat/done, no error', ev.done.length === 1 && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
+  check('every title thread torn down after its single result', server.activeThreads.size === 0, `threads=${server.activeThreads.size}`)
+  check(`${MAX_TITLES} chat/done, no error`, ev.done.length === MAX_TITLES && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
 }
 
 // ── T9: background work decides whether a thread may be reaped/evicted ────

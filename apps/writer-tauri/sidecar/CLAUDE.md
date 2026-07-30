@@ -68,6 +68,7 @@ ordered by topic, not by whether it needs a token.)
 | `verify-reject-preference` | a rejected edit promoted to a preference |
 | `verify-profile-ondemand` | profile Background loaded on demand |
 | `verify-profile-title` | the title sidecar's one-shot transport |
+| `verify-thread-title` | what a title has to BE: one line in intent form, short enough that the caller's 30-char cap never fires, and two new chats started back-to-back both get one |
 
 ## SDK assumptions
 

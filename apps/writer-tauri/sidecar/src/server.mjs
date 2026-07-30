@@ -258,6 +258,54 @@ const PLAN_MODE_INSTRUCTIONS = [
   'and do not paste the full file content.',
 ].join('\n')
 
+// ── Title mode ────────────────────────────────────────────────────────────
+// A `--mode=title` sidecar has exactly one job: name a conversation from its
+// first user message. That job is defined HERE rather than by the caller, for
+// two reasons.
+//
+// It used to be defined nowhere. `claude_title` sent a systemPrompt and nothing
+// else, so the request was indistinguishable from a chat: `#applySkillsAndRelay`
+// gave it the full `claude_code` tool preset, and with no maxTurns under
+// bypassPermissions the model read its first message as work to do and ANSWERED
+// it — measured at 11 lines, whose first line the caller then set as the tab
+// title. Constraining the toolset is what makes the instruction land; the prompt
+// alone did not.
+//
+// And a policy the caller states is a policy the harness must hand-copy to test.
+// Owning it here lets `verify-thread-title` send a bare prompt and assert on the
+// real thing.
+
+/** What a title has to be. Names the user's intent as an action, because a tab
+ *  reading "회의록 정리하기" tells you what the conversation is for while a topic
+ *  noun ("회의록") does not. Length is bounded below the caller's 30-char cap
+ *  (TITLE_MAX_CHARS): a title that needs truncating is one the model got wrong. */
+const TITLE_SYSTEM_PROMPT = [
+  "Turn the user's first message into a chat title. Do NOT answer the message.",
+  '',
+  'Format:',
+  '- One line. A noun phrase naming what the user wants to DO — the intent, not',
+  '  the speech act ("ask", "tell me", "can you").',
+  '- Korean → end with "~하기" (e.g. "회의록 정리하기", "세금 신고 방법 알아보기").',
+  '- English → start with a gerund (e.g. "Refactoring auth module").',
+  '- Aim for 12 characters. Never exceed 20 characters (Korean) or 4 words (English).',
+  '- No quotes, no trailing punctuation, no "Title:" prefix, no greeting, no question.',
+  '- Same language as the message.',
+].join('\n')
+
+/** Title-mode defaults, layered UNDER the caller's params so an explicit value
+ *  still wins (`verify-profile-title` drives this transport with its own
+ *  systemPrompt). `builtinTools: []` is the SDK's documented "disable all
+ *  built-in tools" — the maximally restricted state, and the term that actually
+ *  fixed the shape. `maxTurns: 1` stops a tool-less model from looping. */
+function titleModeDefaults(params) {
+  return {
+    systemPrompt: TITLE_SYSTEM_PROMPT,
+    builtinTools: [],
+    maxTurns: 1,
+    ...params,
+  }
+}
+
 // Allow-prefix for the plan-mode Write gate: in plan mode the built-in Write is
 // permitted only for paths under this dir, so the vault stays read-only while
 // planning. (It is NOT the SDK's plansDirectory — that's a `Settings` member we
@@ -524,8 +572,8 @@ export class Server {
       this.emit(errorResponse(id, INVALID_PARAMS, `runId already active: ${runId}`))
       return
     }
-    if (this.mode === 'title' && this.activeThreads.size > 0) {
-      this.emit(errorResponse(id, BUSY, 'title sidecar is single-flight'))
+    if (this.mode === 'title' && this.activeThreads.size >= MAX_LIVE_TITLES) {
+      this.emit(errorResponse(id, BUSY, `title sidecar is at capacity (${MAX_LIVE_TITLES})`))
       return
     }
     if (this.shuttingDown) {
@@ -543,7 +591,11 @@ export class Server {
     // runId (runToThread) and emits the `accepted` response.
     const teardown = this.#usePersistentQuery(params) ? 'persist' : 'closeAfterResult'
     const threadId = params.threadId ?? params.sessionId ?? params.resume ?? runId
-    return this.#handleChatPersistent(id, { ...params, threadId, teardown })
+    // Title mode carries its own prompt + one-shot tool constraints (see
+    // TITLE_SYSTEM_PROMPT). Applied here, at the mode boundary, so every title
+    // request gets them regardless of what the caller remembered to send.
+    const withMode = this.mode === 'title' ? titleModeDefaults(params) : params
+    return this.#handleChatPersistent(id, { ...withMode, threadId, teardown })
   }
 
   // Whether this chat keeps a long-lived (persistent) thread. True only for a
@@ -2133,6 +2185,20 @@ const IDLE_TTL_MS = 300_000
  * evicted silently and resumes from disk, so moving between chats never hits
  * it). */
 export const MAX_LIVE_THREADS = 5
+
+/** How many title runs may be in flight on the title sidecar at once.
+ *
+ * This was 1 ("single-flight"), which read as a safe conservative choice and was
+ * not: `closeAfterResult` teardown does not complete when `chat/done` is emitted
+ * — the SDK's output stream stays open until the CLI child actually exits, a
+ * measured 4-6s later — so the registry a size-1 cap is checked against stays
+ * occupied for seconds after the title is already on screen. Any second new chat
+ * inside that window was refused BUSY, and the caller does not retry, so that
+ * conversation stayed untitled for good.
+ *
+ * Three is bounded by the same memory argument as MAX_LIVE_THREADS, and cheaper
+ * than it in practice: a title run is tool-less, single-turn, and gone in ~6s. */
+export const MAX_LIVE_TITLES = 3
 
 // Persistent path: max wall-clock gap between events WITHIN an active turn
 // before we treat the turn as network-wedged and hard-close the thread (it
