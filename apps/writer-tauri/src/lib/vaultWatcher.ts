@@ -117,6 +117,10 @@ function scheduleArtifactBump(rel: string): void {
       artifactBumpTimers.delete(rel)
       bumpArtifactRevision(rel)
       useGitStore.getState().noteActivity(rel)
+      // Same reason the `.md` router logs its external changes: the only way to
+      // tell "the writes settled and one re-render fired" from "a burst fired
+      // several" is to see it.
+      console.log('[watch] artifact settled', rel)
     }, ARTIFACT_SETTLE_MS),
   )
 }
