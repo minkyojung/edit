@@ -463,7 +463,12 @@ export async function listVaultTreeRecursive(
   const empty = { dirs: [] as string[], files: [] as string[], notes: [] as string[] }
   const root = getActiveVaultPath()
   if (!root) return empty
-  if (subRel !== '' && !(await exists(await resolveVaultPath(subRel)))) return empty
+  // No pre-existence check: every non-root `subRel` came from a `readDir`
+  // entry with `isDirectory: true` moments ago, so `exists` can only say yes —
+  // and in the one case it couldn't (the directory vanished in between),
+  // `readDir` throws and the catch below returns the same empty result. It
+  // cost two IPC round trips per directory to duplicate an outcome we already
+  // had.
   const absPath = subRel === '' ? root : await resolveVaultPath(subRel)
   let entries: Awaited<ReturnType<typeof readDir>>
   try {

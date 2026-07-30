@@ -237,6 +237,16 @@ describe('one traversal at boot', () => {
     ])
   })
 
+  // Every non-root `subRel` was produced by a `readDir` entry with
+  // `isDirectory: true` moments earlier, so asking `exists` about it can only
+  // say yes — and when it can't (the directory vanished in between), `readDir`
+  // throwing is now caught and yields the same empty result. Two IPC round
+  // trips per directory, buying an outcome that was already covered.
+  it('does not ask whether a directory it just listed exists', async () => {
+    await scanVault()
+    expect(disk.exists).not.toHaveBeenCalled()
+  })
+
   // Seven reachable directories. Two walks visited each of them twice; the
   // count is what fails the moment a second walk is reintroduced.
   it('visits each directory once, and yields all three sets', async () => {
