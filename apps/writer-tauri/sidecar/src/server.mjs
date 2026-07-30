@@ -587,10 +587,20 @@ export class Server {
       // the whole query), then dispatches the turn. setModel/setPermissionMode
       // don't touch running background tasks, so no background guard is needed;
       // only skip while a turn is mid-flight (settings apply between turns).
-      if (this.#turnControlsChanged(existing, params) && !existing.turnActive) {
-        this.emit(response(id, { runId, accepted: true, threadId }))
-        this.#applyThreadControls(existing, params).then(() => this.#dispatchTurn(existing, item))
-        return
+      if (this.#turnControlsChanged(existing, params)) {
+        if (existing.turnActive) {
+          // Mid-answer: the control requests must not be issued now (they apply
+          // between turns), but dropping them is how a plan-mode turn ended up
+          // writing — permissionMode IS plan mode's teeth. Stash and let
+          // #settleTurn apply it before it releases the parked turn. Last write
+          // wins, matching the "settings apply between turns" rule: two turns
+          // queued behind this one both reconcile at the same boundary.
+          existing.pendingControls = params
+        } else {
+          this.emit(response(id, { runId, accepted: true, threadId }))
+          this.#applyThreadControls(existing, params).then(() => this.#dispatchTurn(existing, item))
+          return
+        }
       }
       // Reuse the live query — push this turn into its input queue.
       this.#dispatchTurn(existing, item)
@@ -907,6 +917,11 @@ export class Server {
       turnQueue: [],
       nextTurnResolve: null,
       closeRequested: false,
+      // A turn's live controls (model / permissionMode / fastMode / effort) that
+      // arrived while another turn was generating. Control requests only apply
+      // between turns, so #settleTurn drains this at the boundary rather than
+      // #handleChatPersistent dropping it.
+      pendingControls: null,
       // current turn (reset each turn in #threadInput)
       currentRunId: null,
       // the live turn's dispatch item — kept so an AUTH restart can replay it.
@@ -1403,6 +1418,25 @@ export class Server {
     const runId = rec.currentRunId
     rec.turnActive = false
     rec.lastTurnEndedAt = Date.now()
+
+    // A turn that arrived mid-answer could not reconcile its live controls then
+    // (#handleChatPersistent stashes instead of dropping). This is the boundary
+    // it was waiting for: apply before either branch below releases
+    // turnSettleResolve, which is what lets the generator pull the next turn.
+    //
+    // Cleared for memory, not for correctness — a re-apply would already be a
+    // no-op because #applyThreadControls diffs against optionsSeed and rewrites
+    // it (:791). But `params` is a whole chat request, systemPrompt included, so
+    // a thread record must not hold one until the next mid-turn change.
+    if (rec.pendingControls) {
+      const pending = rec.pendingControls
+      rec.pendingControls = null
+      try {
+        await this.#applyThreadControls(rec, pending)
+      } catch (e) {
+        logErrorContext('applyPendingControls', runId, e, { mode: this.mode, threadId: rec.threadId })
+      }
+    }
 
     // The interrupt() path can land a clean `result` here AND abort the stream
     // (loop catch). Whichever runs first emits the single terminal; the other

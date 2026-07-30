@@ -466,8 +466,44 @@ async function t13() {
   send('chat/close-thread', { threadId: tid }); await sleep(50)
 }
 
+// ── T14: a live control changed while a turn is active must not be dropped ──
+// #handleChatPersistent reconciles model/permissionMode/fastMode/effort only
+// `&& !existing.turnActive` (server.mjs:590), so a turn that arrives mid-answer
+// runs on the thread's OLD controls, silently. Stop → switch to plan → send is
+// the reachable path, and plan mode's teeth ARE permissionMode — so the turn
+// the user made read-only can still write.
+//
+// Note the asymmetry this pins: #warnFrozenParamChange runs unconditionally so
+// a FROZEN param never changes in silence. The live-control case had no signal
+// at all.
+async function t14() {
+  console.log('\n[T14] a model change sent mid-turn reaches the query when the turn settles')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, model: 'claude-sonnet-5', prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  // Turn 2 changes the model while turn 1 is still generating.
+  send('chat', { runId: r2, threadId: tid, persistentQuery: true, model: 'claude-opus-4-8', prompt: 'b' }, nid())
+  await sleep(30)
+  check('nothing is applied while the turn is still live',
+    !fake.calls.includes('setModel'), `calls=[${fake.calls.join(',')}]`)
+  // Settle turn 1; the queued turn is about to run.
+  fake.pushEvent({ type: 'result', subtype: 'success', stop_reason: 'end_turn', usage: {}, total_cost_usd: 0 })
+  await waitFor(() => fake.messages.length >= 2, 5000)
+  check('the change is applied before the next turn runs',
+    fake.calls.includes('setModel'), `calls=[${fake.calls.join(',')}]`)
+  // And it must not be applied twice — the reconcile is consumed, not sticky.
+  fake.pushEvent({ type: 'result', subtype: 'success', stop_reason: 'end_turn', usage: {}, total_cost_usd: 0 })
+  await waitFor(() => ev.done.some((d) => d.runId === r2), 5000)
+  check('applied exactly once', fake.calls.filter((c) => c === 'setModel').length === 1,
+    `calls=[${fake.calls.join(',')}]`)
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12(); await t13()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12(); await t13(); await t14()
 } finally {
   process.stderr.write = origWrite
 }
