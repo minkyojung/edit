@@ -727,6 +727,22 @@ Tauri 커맨드는 공유 async 런타임에서 돈다(`tauri/src/ipc/mod.rs:329
 `git.rs`의 실제 git 호출은 전부 `tokio::process`(`git.rs:25`). `reqwest::blocking` 없음.
 **패턴을 알고 있는데 일관되게 적용만 안 됐다.**
 
+> **정정 (측정, 2026-07-30).** 표의 "**매 부팅**" 두 줄은 실제 비용이 추정치와
+> 다르다. `git.rs`의 `boot_cost::measure_git_init_fast_path`(실제 볼트 + 실제
+> app-data, `--ignored`)로 부팅이 타는 경로 그대로를 열 번 재면
+> **첫 회 1.19ms, 이후 0.03ms**다. `write_vault_git_pointer`의 `read_to_string`
+> 조기 반환과 `appdata`의 `create_dir_all`/`canonicalize`가 전부 합쳐 30마이크로초다.
+> "~1ms 매 부팅"은 30배 과대평가였고, 부팅에서 고칠 것은 없다.
+>
+> 남는 건 표의 첫 줄 하나 — `copy_dir_recursive`. 다만 이건 `relocate_git_dir`의
+> **조기 반환 세 개 뒤**에 있다(`.git` 없음 / `.git`이 우리 포인터 파일 / 외부
+> git-dir이 이미 있음). 즉 볼트당 평생 한 번, 그것도 볼트와 app-data가 다른
+> 볼륨일 때만 도는 마이그레이션이다. 그리고 3-14와 달리 이건 **UI 스레드가 아니라**
+> tokio 워커 하나를 점유하는 것이다(Tauri는 `TokioRuntime::new()` = 멀티스레드).
+> 사용자가 어차피 기다리는 최초 1회 마이그레이션에서 워커 하나를 쓰는 것이므로,
+> 측정된 이득이 없다. **3-13은 결함이 아니다.** git 커맨드 열 개를
+> `spawn_blocking`으로 옮기는 건 근거 없는 리팩터라 하지 않는다.
+
 ### 3-14. 동기 커맨드가 메인 스레드에서 실파일 작업을 한다 · P2
 
 `async`가 아닌 `#[tauri::command]`는 `ExecutionContext::Blocking`이 기본이라
@@ -738,6 +754,16 @@ IPC 핸들러 스레드 = 메인 스레드에서 인라인 실행된다.
 
 - **`os_trash.rs:23` `move_to_trash`** — `-[NSFileManager trashItemAtURL:]`을 **UI 스레드에서**.
   큰 노트 폴더를 버리면 창이 언다. `async` + `spawn_blocking`이어야 한다
+
+> **정정 (측정, 2026-07-30 · `f8e4a8f6b`에서 수정됨).** 진단(동기 커맨드 = 메인
+> 스레드)은 맞다 — `tauri-macros/src/command/wrapper.rs`가 `asyncness` 없는 fn에
+> kind `"sync"`를 고른다. 하지만 **"큰 노트 폴더를 버리면 언다"는 틀렸다.**
+> `os_trash.rs`의 `#[ignore]` 벤치로 재면 정상 상태의 한 번은 **0.3ms**라,
+> 문서 여덟 개를 보관해도 5ms — 안 보인다.
+> 진짜 비용은 프로세스의 **첫 호출**이다: 세 번 돌려 271·293·316ms, Cocoa 콜드
+> 초기화. 즉 파일 개수 문제가 아니라, 세션에서 **처음** 뭔가를 지울 때 창이
+> 0.3초 멈추는 문제였다. 호출 순서대로 찍어야 이 둘이 갈린다(중앙값만 보면
+> "빠르다", 최댓값만 보면 "가끔 느리다"로 읽힌다).
 - `reveal.rs:10`, `sound.rs:19` — 메인 스레드에서 블로킹 `std::process::Command::spawn()` (~1–5ms)
 - 나머지는 진짜 싼 락 읽기이거나 AppKit이라 메인 스레드여야 한다
 

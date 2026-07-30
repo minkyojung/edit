@@ -911,3 +911,46 @@ fn parse_signed_range(part: &str, sign: char) -> Option<u32> {
     let start_str = body.split(',').next()?;
     start_str.parse::<u32>().ok()
 }
+
+#[cfg(test)]
+mod boot_cost {
+    /// What `git_init` actually costs on the path the app takes at every boot.
+    ///
+    /// The audit calls this "blocks on every boot" and lists the unbounded
+    /// `copy_dir_recursive` first. But boot hits the fast path — `relocate_git_dir`
+    /// early-returns, `external.exists()` is true, and we write the gitdir pointer
+    /// and return. This times exactly that against the real vault and the real
+    /// app-data dir, so the claim becomes a number instead of a reading of the code.
+    ///
+    /// Ignored by default: it needs this machine's vault. Run with
+    /// `cargo test --lib boot_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn measure_git_init_fast_path() {
+        let home = std::env::var("HOME").unwrap();
+        let vault = format!("{home}/Writer");
+        let appdata =
+            std::path::PathBuf::from(&home).join("Library/Application Support/com.minkyojung.octave");
+        assert!(
+            std::path::Path::new(&vault).is_dir() && appdata.is_dir(),
+            "needs this machine's real vault + app-data"
+        );
+        crate::appdata::init(appdata);
+
+        let mut times = Vec::new();
+        for _ in 0..10 {
+            let v = vault.clone();
+            let t0 = std::time::Instant::now();
+            tauri::async_runtime::block_on(super::git_init(v)).unwrap();
+            times.push(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        println!(
+            "git_init fast path, in call order (ms): {}",
+            times
+                .iter()
+                .map(|t| format!("{t:.2}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+}
