@@ -609,6 +609,20 @@ export class Server {
     }
 
     // First turn on this thread — build the query, then dispatch into it.
+    // Refuse BEFORE accepting: once `accepted` is out, the frontend is waiting
+    // for a terminal on this runId and an error response can no longer reach it.
+    if (!this.#maybeEvictLRU()) {
+      this.runToThread.delete(runId)
+      this.emit(
+        errorResponse(
+          id,
+          BUSY,
+          `${MAX_LIVE_THREADS} conversations are already working. ` +
+            'Wait for one to finish, or stop one, then try again.',
+        ),
+      )
+      return
+    }
     this.emit(response(id, { runId, accepted: true, threadId }))
     this.#ensureThread(threadId, params)
       .then((rec) => this.#dispatchTurn(rec, item))
@@ -897,8 +911,6 @@ export class Server {
   // by the gate. Session lifecycle: resume when the thread was reaped or the
   // app restarted (session on disk), else create.
   async #ensureThread(threadId, params) {
-    // Bound live subprocesses: evict an LRU idle, background-free thread first.
-    this.#maybeEvictLRU()
     const controller = new AbortController()
     const rec = {
       threadId,
@@ -1673,11 +1685,20 @@ export class Server {
     }, IDLE_TTL_MS)
   }
 
-  // Enforce MAX_LIVE_THREADS by evicting the least-recently-used idle,
-  // background-free thread. A thread mid-turn or with background work is never
-  // evicted. Evicted threads resume from disk on their next turn.
+  /** Make room for one more thread, and say whether there is any.
+   *
+   *  Evicts the least-recently-used idle, background-free thread; a thread
+   *  mid-turn, with a queued turn, or holding background work is never the
+   *  victim, and evicted threads resume from disk on their next turn — so under
+   *  ordinary use (moving between chats) this is invisible.
+   *
+   *  Returns false only when EVERY live thread is busy, which is the one case
+   *  that cannot be absorbed silently. It used to return anyway and the caller
+   *  built one more subprocess; each is a `claude` CLI process measured at
+   *  ~436MB resident, so "advisory" meant unbounded memory while the user was
+   *  actively working. */
   #maybeEvictLRU() {
-    if (this.activeThreads.size < MAX_LIVE_THREADS) return
+    if (this.activeThreads.size < MAX_LIVE_THREADS) return true
     let victim = null
     for (const [, rec] of this.activeThreads) {
       // Never evict a busy thread — mid-turn, a queued-but-not-yet-started turn,
@@ -1686,7 +1707,16 @@ export class Server {
       if (rec.dead || this.#threadBusy(rec)) continue
       if (!victim || rec.lastTurnEndedAt < victim.lastTurnEndedAt) victim = rec
     }
-    if (victim) this.#teardownThread(victim, 'lru_evict')
+    if (!victim) {
+      // Observability: the refusal below is user-visible, so its cause should
+      // never have to be guessed at from a support report.
+      process.stderr.write(
+        `[sidecar] thread cap reached: ${this.activeThreads.size}/${MAX_LIVE_THREADS} all busy\n`,
+      )
+      return false
+    }
+    this.#teardownThread(victim, 'lru_evict')
+    return true
   }
 
   // Per-thread idle watchdog. Guards ONLY an in-progress turn: an idle-but-alive
@@ -2093,7 +2123,16 @@ const IDLE_TTL_MS = 300_000
 // Each live thread = one subprocess. Cap concurrent live threads; on overflow
 // the LRU idle, background-free thread is evicted (it resumes from disk on its
 // next turn). A thread that's mid-turn or has background work is never evicted.
-export const MAX_LIVE_THREADS = 6
+/** How many chat threads may hold a live `claude` CLI subprocess at once.
+ *
+ * Not arbitrary any more: one measured at ~436MB resident, so six is well over
+ * a gigabyte of a laptop's memory held by conversations the user is not looking
+ * at. Five is a product decision, not a derived number — what makes it safe to
+ * pick is that exceeding it is now refused rather than ignored, and that the
+ * refusal can only fire when all five are genuinely busy (an idle thread is
+ * evicted silently and resumes from disk, so moving between chats never hits
+ * it). */
+export const MAX_LIVE_THREADS = 5
 
 // Persistent path: max wall-clock gap between events WITHIN an active turn
 // before we treat the turn as network-wedged and hard-close the thread (it

@@ -7,6 +7,8 @@
 import { mock } from 'node:test'
 import { randomUUID } from 'node:crypto'
 
+const BUSY_CODE = -32001
+
 const SIDECAR = '..'
 
 // ── Fake query registry ──────────────────────────────────────────────
@@ -76,7 +78,7 @@ mock.module('@anthropic-ai/claude-agent-sdk', {
   },
 })
 
-const { Server, threadBusy } = await import(`${SIDECAR}/src/server.mjs`)
+const { Server, threadBusy, MAX_LIVE_THREADS: MAX } = await import(`${SIDECAR}/src/server.mjs`)
 
 // ── Harness ──────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -85,6 +87,7 @@ async function waitFor(pred, ms = 3000) {
   while (Date.now() - t0 < ms) { if (pred()) return true; await sleep(10) }
   return false
 }
+const errs = []
 const results = []
 const check = (name, ok, detail = '') => {
   results.push({ name, ok }); console.log(`${ok ? '  ✅' : '  ❌'} ${name}${detail ? ' — ' + detail : ''}`)
@@ -103,6 +106,8 @@ function makeServer() {
   const server = new Server({
     mode: 'chat',
     emit: (m) => {
+      // JSON-RPC error RESPONSES (a refused request), distinct from chat/error.
+      if (m.error && m.id !== undefined) errs.push(m)
       if (m.method === 'chat/done') (m.params.background ? ev.bgDone : ev.done).push(m.params)
       else if (m.method === 'chat/error') ev.err.push(m.params)
       else if (m.method === 'chat/task') ev.task.push(m.params)
@@ -191,7 +196,6 @@ async function t5() {
   console.log('\n[T5] A1: #threadBusy protects a busy thread under LRU pressure')
   fakes.length = 0
   const { server, send, ev } = makeServer()
-  const MAX = 6
   const idle = []
   for (let i = 0; i < MAX - 1; i++) {
     const tid = randomUUID(), r = randomUUID()
@@ -264,6 +268,8 @@ async function t8() {
   const server = new Server({
     mode: 'title',
     emit: (m) => {
+      // JSON-RPC error RESPONSES (a refused request), distinct from chat/error.
+      if (m.error && m.id !== undefined) errs.push(m)
       if (m.method === 'chat/done') ev.done.push(m.params)
       else if (m.method === 'chat/error') ev.err.push(m.params)
     },
@@ -594,8 +600,48 @@ async function t16b() {
   send('chat/close-thread', { threadId: tid }); await sleep(50)
 }
 
+// ── T17: the thread cap is a real bound, not an advisory one ───────────
+// #maybeEvictLRU only ever evicts an IDLE, background-free thread. When every
+// live thread is busy it finds no victim, and #ensureThread used to build one
+// more anyway — each thread is a `claude` CLI subprocess, measured at ~436MB.
+//
+// The refusal is deliberately narrow, and that narrowness is what makes it
+// acceptable: switching between many chats leaves them idle, so eviction
+// silently makes room and the user never sees this. It fires only when MAX
+// threads are ALL generating or holding background work.
+async function t17() {
+  console.log('\n[T17] with every thread busy, one more is refused rather than spawned')
+  fakes.length = 0
+  const { server, send, ev } = makeServer()
+  const tids = []
+  // Fill to MAX with threads that never settle — all busy.
+  for (let i = 0; i < MAX; i++) {
+    const tid = randomUUID()
+    tids.push(tid)
+    send('chat', { runId: randomUUID(), threadId: tid, persistentQuery: true, prompt: 'x' }, nid())
+    const f = await awaitFake(i + 1)
+    await waitFor(() => f.messages.length >= 1)
+  }
+  check(`${MAX} live threads, all busy`, server.activeThreads.size === MAX,
+    `size=${server.activeThreads.size}`)
+
+  const overflowId = nid()
+  send('chat', { runId: randomUUID(), threadId: randomUUID(), persistentQuery: true, prompt: 'y' }, overflowId)
+  await sleep(80)
+  check('no extra subprocess was created', server.activeThreads.size === MAX,
+    `size=${server.activeThreads.size} fakes=${fakes.length}`)
+  const refusal = errs.find((e) => e.id === overflowId)
+  check('the caller is told, with a retryable BUSY', !!refusal && refusal.error?.code === BUSY_CODE,
+    `err=${JSON.stringify(refusal?.error ?? null)}`)
+  check('and the reason names what to do',
+    /busy|finish|stop/i.test(refusal?.error?.message ?? ''), refusal?.error?.message)
+
+  for (const tid of tids) send('chat/close-thread', { threadId: tid })
+  await sleep(80)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12(); await t13(); await t14(); await t15(); await t16(); await t16b()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12(); await t13(); await t14(); await t15(); await t16(); await t16b(); await t17()
 } finally {
   process.stderr.write = origWrite
 }

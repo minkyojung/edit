@@ -140,3 +140,22 @@ describe('classifyRunError', () => {
     expect(out.rateLimitType).toBeUndefined()
   })
 })
+
+// End-to-end on the wording, because the two halves shipped separately and the
+// reason the cap is a hard cap at all is that the refusal tells the user what
+// to do. Sidecar → CommandError::Rpc → this. If it ever reads "Something went
+// wrong" again, the cap is bounding memory and nothing else.
+describe('the thread-cap refusal reaches the user intact', () => {
+  it('shows the sidecar wording rather than generic copy', () => {
+    const refusal = {
+      kind: 'rpc' as const,
+      code: -32001,
+      message:
+        '5 conversations are already working. Wait for one to finish, or stop one, then try again.',
+    }
+    expect(humanizeError(refusal)).toBe(refusal.message)
+    // No `^CODE:` prefix, so the card offers plain Retry — which is exactly the
+    // advice: wait, then try again.
+    expect(extractErrorCode(refusal)).toBeUndefined()
+  })
+})
