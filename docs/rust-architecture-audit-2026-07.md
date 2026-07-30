@@ -232,6 +232,27 @@ remark/rehype가 **문서 전체를 매 프레임 재파싱**한다. 증분 파�
 
 토큰 하나당 `W`번 JSON 직렬화 + `W × 10K`번 JS 콜백, 그중 정확히 1개만 주인이다.
 
+> **정정 (Tauri 2.10.3 소스 확인, 2026-07-30).** `W`가 실제로 몇인지, 그리고
+> 무엇이 `W`번 도는지 둘 다 틀렸다.
+>
+> **직렬화는 창마다가 아니라 한 번이다.** `manager/mod.rs:539`의 `EmitArgs::new`가
+> 루프 **밖**에서 한 번 만들어지고 그 뒤 `&emit_args`로 넘어간다. 창마다 도는 건
+> `webview.emit_js` — 이스케이프된 JS 문자열 + eval — 뿐이다.
+>
+> **그리고 그 창별 루프조차 리스너 없는 창은 건너뛴다.** `event/listener.rs:283`이
+> `js_listeners.get(webview.label()).and_then(|s| s.get(event))`로 거른다.
+> 런처 창(`main`)은 `BootGate.tsx:229`에서 `children` **이전에** 반환하므로
+> `ChatPanel`도 `claude:*` 리스너도 안 붙는다. 즉 숨은 런처는 공짜다.
+>
+> 그래서 **볼트 하나만 열려 있는 보통 상태에서 브로드캐스트의 추가비용은 0이다.**
+> 비용은 *동시에 열린 프로젝트 창 수 − 1* 만큼의 eval이고, 남의 창은 창별
+> `chatRuns`/`isKnownThread` 조회에서 전부 떨어져 나간다(권한 카드가 남의 창에
+> 뜨는 일은 없다 — `usePermissionGate.ts:35`가 자기 창 스토어를 본다).
+>
+> **그래서 8b(`emit_to` + runId→창 맵)는 8c와 함께 미룬다.** 지금 맵을 만들면
+> 아래 :985가 말하는 그 `Channel` 전환이 도로 지운다. 채팅의 가장 뜨거운 경로를
+> 결정론적 테스트 없이 두 번 건드릴 이유가 없다.
+
 Tauri 내부 비용: `EmitArgs::new` → `serde_json::to_string(&Value)` → 창마다
 `emit_js_script(...)`로 이스케이프된 JS 문자열을 새로 만들어 `eval`, 전역
 `js_event_listeners` `std::Mutex` 아래에서.
