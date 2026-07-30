@@ -834,6 +834,32 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
     }
   }
 
+  // `handleRegenerate` is redeclared every render, and it is handed to the ONE
+  // `MessageRow` that may be regenerated — so that row's `React.memo` failed on
+  // every render of this panel, re-parsing its whole answer through
+  // react-markdown. Measured (`transcript-bench.test.tsx`): a keystroke over 48
+  // messages costs 0.3ms with the memo holding and 1.7ms with this one row
+  // failing; on a 10KB answer it is 0.2ms vs 16.6ms — a dropped frame per key.
+  //
+  // A `useCallback` dep list is the wrong tool here. It would have to track
+  // everything the handler closes over, including `runVaultCommand` (another
+  // plain declaration) and `turnsHook` — which `useThreadTurns` rebuilds as a
+  // fresh object literal every render, so the callback would never hold anyway.
+  // A wrong or lagging list is a stale-closure bug, and this handler's guards
+  // (`chatStatus === 'streaming'`, the in-flight set) have to read the LATEST
+  // values to be correct.
+  //
+  // So: latch the newest handler in a ref and expose a permanently stable
+  // wrapper. It deliberately opts out of the dependency system, which is safe
+  // because this is only ever invoked from a click — never read during render
+  // (`MessageRow` checks presence, not identity).
+  const regenerateRef = useRef(handleRegenerate)
+  regenerateRef.current = handleRegenerate
+  const onRegenerate = useCallback(
+    (assistantTurnId: string) => void regenerateRef.current(assistantTurnId),
+    [],
+  )
+
   function handleStop() {
     if (!activeId) return
     // Pause BEFORE aborting. The abort settles the turn and flips the thread to
@@ -988,7 +1014,7 @@ export function ChatPanel({ slug, threads, activeId }: Props) {
               turn={turn}
               threadId={activeId}
               threadTitle={activeThread?.title ?? ''}
-              onRegenerate={turn.id === regeneratableTurnId ? handleRegenerate : undefined}
+              onRegenerate={turn.id === regeneratableTurnId ? onRegenerate : undefined}
               // While a plan is parked for approval, its plan lives in the
               // approval card — hide the (redundant) answer text so the plan
               // isn't shown twice.
