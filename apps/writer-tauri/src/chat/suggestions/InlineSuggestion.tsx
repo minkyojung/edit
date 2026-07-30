@@ -12,6 +12,7 @@
 
 import { useMemo } from 'react'
 import { IconExternalLink, IconPencil } from '@tabler/icons-react'
+import { isToolCallInFlight } from '@/chat/types'
 import type { ToolPart } from '@/chat/types'
 import { usePendingChangesStore, rejectPendingChange } from '@/state/pendingChangesStore'
 import { notify } from '@/lib/notify'
@@ -73,7 +74,7 @@ export function InlineSuggestion({ part }: { part: ToolPart }) {
   // in a calm pending state rather than the old tiny "Preparing edit…" text.
   const preparing =
     diffLines.length === 0 &&
-    (part.state === 'input-streaming' || part.state === 'input-available')
+    isToolCallInFlight(part)
   // Historical change pruned and nothing reconstructable → render nothing.
   if (diffLines.length === 0 && !preparing) return null
 

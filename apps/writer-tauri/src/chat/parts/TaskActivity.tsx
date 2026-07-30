@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { IconLoader2, IconRobot } from '@tabler/icons-react'
+import { isToolCallInFlight } from '@/chat/types'
 import type { ToolPart } from '@/chat/types'
 import { ActivityRow } from '@/chat/parts/ActivityRow'
 import { useBackgroundTasks, type BackgroundTask } from '@/stores/backgroundTasks'
@@ -43,7 +44,7 @@ export function TaskActivity({ part, steps }: { part: ToolPart; steps?: ReactNod
 
   const running = bg
     ? bg.status === 'running'
-    : part.state === 'input-streaming' || part.state === 'input-available'
+    : isToolCallInFlight(part)
 
   const task = part.task
   const heartbeat = (() => {

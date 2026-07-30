@@ -5,6 +5,7 @@ import { flushDirty } from '@/lib/docFileSync'
 import { useChatActivity } from '@/stores/chatActivity'
 import { useChatRuns } from '@/stores/chatRuns'
 import { modelSupportsFastMode } from '@/chat/types'
+import { settleUnfinishedToolParts } from '@/chat/utils/settleParts'
 import type { ChatEffort, ChatMode, ChatModel, ChatTurn, FileAttachment } from '@/chat/types'
 import { classifyRunError } from '@/chat/utils/errorMessage'
 import { createStreamingBuffer } from '@/chat/utils/streamingBuffer'
@@ -208,7 +209,10 @@ export function useChatRunner(deps: UseChatRunnerDeps): ChatRunner {
         overageDisabledReason: string | undefined = undefined,
       ) => {
         flusher.cancel()
-        const parts = buffer.buildParts()
+        // A turn that did not finish cleanly leaves its last tool call without a
+        // result, and that state renders as a spinner — which would then be
+        // persisted and re-render spinning on every launch.
+        const parts = settleUnfinishedToolParts(buffer.buildParts(), finalStatus)
         const modelText = buffer.joinByType('text')
         const thinking = buffer.joinByType('reasoning')
         const content = modelText
