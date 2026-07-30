@@ -170,25 +170,32 @@ routing are per-`runId`.
 The title sidecar is **single-flight** and rejects a second concurrent `chat`
 with `-32001 BUSY`.
 
-**params**:
+**params**: `ChatStartArgs` in `src-tauri/src/claude_sidecar/commands.rs` is the
+authoritative list, field by field, with the reason each one exists. It is not
+restated here: this section used to document a `tools: [{name, input_schema}]`
+array and an example tool called `propose_change`, and neither has ever
+existed. Seventeen fields restated in prose is how that happened.
+
 ```json
 {
   "runId": "client-uuid",
-  "model": "claude-sonnet-4-6",
+  "model": "claude-sonnet-5",
   "systemPrompt": "...",
   "prompt": "user message text",
-  "tools": [
-    { "name": "propose_change", "description": "...", "input_schema": {...} }
-  ],
+  "relayTools": ["propose_edit", "query_notes"],
   "permissionMode": "bypassPermissions"
 }
 ```
 
+The three worth stating here because they are contracts rather than settings:
+
 - `runId` is a client-provided correlation id surfaced on every related
   notification. Distinct from the JSON-RPC `id` on the request itself.
-- `tools` is optional. If omitted, no tool definitions are passed to the SDK.
-- `permissionMode` defaults to `"bypassPermissions"` (we do not use the SDK's
-  built-in permission UI; the Tauri host manages user consent).
+- `relayTools` is a list of **names**; the sidecar owns the schemas
+  (`#buildRelayServer`). The host never sends tool definitions.
+- `permissionMode` defaults to `"bypassPermissions"` — the Tauri host manages
+  user consent, not the SDK's built-in UI. `"acceptEdits"` is NOT among the
+  values sent: auto-accept is a host-side concept carried by `autoAcceptEdits`.
 
 **result** (immediate, not a stream):
 ```json
@@ -395,6 +402,26 @@ After `chat/done`, the sidecar is idle and ready for the next `chat`.
 
 ---
 
+### `chat/task`
+
+Progress for a background subagent task (Task tool). `params` carries `runId`,
+`taskId`, and a `status` the frontend maps in `stores/backgroundTasks.ts`.
+
+---
+
+### `chat/skill-pending`
+
+The model proposed a reusable skill via `propose_skill`. The host stages it in
+`skillProposalStore` for Keep / Reject, and writes `SKILL.md` on Keep.
+
+**params**: `{ runId, pendingId, name, description, body, updates }`
+`updates` is the exact name of the skill being revised, or null for a new one.
+
+Deliberately a notification, not a request (§3b): the host's handler stages
+unconditionally, so there is no verdict for the tool to wait on.
+
+---
+
 ### `auth/refreshNeeded`
 
 Sent when Anthropic rejects an in-flight chat with 401 / unauthorized. The
@@ -413,26 +440,6 @@ host owns the OAuth flow; this notification is the sidecar asking for help.
 
 The `runId` lets a multi-chat host distinguish which chat triggered the
 refresh, even though a single new token applies to all of them.
-
----
-
-### `chat/proposal`
-
-Sent each time the model invokes a relay tool (e.g. `propose_change`). The
-sidecar's tool handler immediately returns a brief ack to the model and
-forwards the call's input to the host via this notification — the host
-(frontend) is responsible for applying the actual side-effect (inserting
-marks into the editor, etc.).
-
-**params**:
-```json
-{
-  "runId": "client-uuid",
-  "input": { "kind": "suggestion", "quote": "...", "content": "...", ... }
-}
-```
-
-The shape of `input` is whatever the relay tool's schema accepts.
 
 ---
 

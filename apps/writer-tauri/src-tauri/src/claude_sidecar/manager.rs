@@ -912,21 +912,23 @@ mod tests {
     }
 
     #[test]
-    fn event_name_matches_the_old_hardcoded_table() {
+    fn every_notification_the_sidecar_emits_reaches_its_tauri_event() {
         // Golden test pinning behaviour-equivalence with the hardcoded match
-        // this transform replaced: every method the sidecar actually emits must
-        // map to the exact same Tauri event the old table produced.
+        // this transform replaced. The list IS the sidecar's emit set — grep
+        // `notification('` in sidecar/src — so a row here that the sidecar
+        // does not send is a claim about a channel that does not exist.
+        //
+        // Five, not ten. `chat/edit-pending`, `chat/move-note` and
+        // `chat/permission` became host-side requests (§3b) and are now emitted
+        // by build_request_handler, not forwarded through here. `chat/proposal`
+        // and `ingest/result` were never emitted by anything.
+        // (`auth/refreshNeeded` is intercepted before this function.)
         for (method, expected) in [
             ("chat/event", "claude:event"),
             ("chat/done", "claude:done"),
             ("chat/error", "claude:error"),
             ("chat/task", "claude:task"),
-            ("chat/proposal", "claude:proposal"),
-            ("chat/edit-pending", "claude:edit-pending"),
             ("chat/skill-pending", "claude:skill-pending"),
-            ("chat/move-note", "claude:move-note"),
-            ("chat/permission", "claude:permission"),
-            ("ingest/result", "ingest:result"),
         ] {
             assert_eq!(notification_event_name(method).as_deref(), Some(expected));
         }
