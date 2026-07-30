@@ -8,8 +8,12 @@
 // get their own tiny store + apply path: on accept we just write the file.
 
 import { create } from 'zustand'
-import { writeVaultFile } from '@/lib/vault'
-import { composeFrontmatter } from '@/lib/frontmatter'
+import { readVaultFile, vaultFileExists, writeVaultFile } from '@/lib/vault'
+import { composeFrontmatter, mergeFrontmatter } from '@/lib/frontmatter'
+import { useDocsStore } from '@/state/docsStore'
+import { updateDocBody } from '@/state/docsStore/docBody'
+import { findSlugByVaultPath } from '@/state/docsStore/helpers'
+import { flushDirty } from '@/lib/docFileSync'
 
 export interface SkillProposal {
   /** Sidecar-minted id, unique per propose_skill call. */
@@ -43,6 +47,42 @@ export function skillDirName(name: string): string {
   )
 }
 
+/** Write a SKILL.md, by whichever route is the sanctioned one for its current
+ *  state. A nested `_system/agent/skills/<dir>/SKILL.md` is a scanned, editable
+ *  note — scanVault's `system:` rule only matches `_system/<name>.md` at one
+ *  level — so it can be open in the editor and it can carry frontmatter this
+ *  path knows nothing about.
+ *
+ *  - **New skill**: nothing on disk, so no doc and no handle. Compose and write.
+ *  - **Update, not open**: `mergeFrontmatter`, not `composeFrontmatter` — the
+ *    latter emits a whole new block, discarding every key the file had that
+ *    isn't in `fields`.
+ *  - **Update, open in the editor**: the flush owns disk for a doc with a live
+ *    handle. Writing here would be echo-suppressed and then overwritten by the
+ *    handle's stale mirror on the next tick — the accepted skill reverts and
+ *    the user was told it saved. Body goes through `updateDocBody`; the
+ *    description is frontmatter, which that funnel does not own, so it goes
+ *    through the property path and the flush emits it. */
+async function writeSkillFile(
+  rel: string,
+  fields: { name: string; description: string },
+  body: string,
+): Promise<void> {
+  if (!(await vaultFileExists(rel))) {
+    await writeVaultFile(rel, composeFrontmatter(fields, body))
+    return
+  }
+  const slug = findSlugByVaultPath(useDocsStore.getState().knownDocs, rel)
+  if (slug && useDocsStore.getState().handles[slug]) {
+    const r = await updateDocBody(slug, () => body)
+    if (!r.ok) throw new Error(`updateDocBody refused: ${r.reason}`)
+    useDocsStore.getState().setDocProperty(slug, 'description', fields.description)
+    void flushDirty()
+    return
+  }
+  await writeVaultFile(rel, mergeFrontmatter(await readVaultFile(rel), fields, body))
+}
+
 interface SkillProposalState {
   byId: Record<string, SkillProposal>
   push: (p: Omit<SkillProposal, 'status'>) => void
@@ -67,9 +107,9 @@ export const useSkillProposalStore = create<SkillProposalState>((set, get) => ({
     // if the proposed name drifted. New skills use their own name.
     const dir = skillDirName(p.updates ?? p.name)
     const rel = `_system/agent/skills/${dir}/SKILL.md`
-    const md = composeFrontmatter({ name: dir, description: p.description }, p.body)
+    const fields = { name: dir, description: p.description }
     try {
-      await writeVaultFile(rel, md)
+      await writeSkillFile(rel, fields, p.body)
     } catch (err) {
       console.warn('[skill] write failed', rel, err)
       return false
