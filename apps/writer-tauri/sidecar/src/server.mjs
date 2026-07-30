@@ -1831,7 +1831,18 @@ export class Server {
     // Cancel the TURN only — keep the thread query (and any in-flight background
     // tasks) alive; a one-shot thread then closes after the cancelled result.
     const threadId = this.runToThread.get(runId)
-    if (threadId) this.#cancelPersistentTurn(runId, threadId)
+    if (!threadId) {
+      // No such run — almost always a stale cancel for a turn that already
+      // settled, which is fine. But it is ALSO how a cancel that overtook its
+      // own `chat` frame looks, and that one is a lost Stop: the host reads the
+      // keychain and round-trips `setToken` before writing `chat`, so an early
+      // Stop can land first. The host closes that by re-sending after
+      // `claude_chat_start` resolves (by which point runToThread is
+      // populated) — this line is how we would find out if it ever stopped.
+      process.stderr.write(`[sidecar] cancel for unknown runId=${runId}\n`)
+      return
+    }
+    this.#cancelPersistentTurn(runId, threadId)
   }
 
   // Cancel the CURRENT turn of a persistent thread without killing the thread.

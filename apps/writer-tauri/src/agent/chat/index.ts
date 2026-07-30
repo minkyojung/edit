@@ -1034,6 +1034,18 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     if (outcome.ids.length > 0) {
       usePendingChangesStore.getState().markFeedbackDelivered(outcome.ids)
     }
+    // A Stop that landed while the start was in flight was silently lost. The
+    // host does a keychain read AND a full `setToken` round trip before it
+    // writes the `chat` frame, so a cancel invoked in that window reaches the
+    // sidecar first, finds no such runId (`#handleCancel` looks it up in
+    // `runToThread`), and no-ops — the run then starts and nothing can stop it.
+    //
+    // Re-sending here is provably in time: `claude_chat_start` awaits the
+    // sidecar's RESPONSE to `chat`, and that response is emitted after
+    // `runToThread.set`. So by this line the run is registered.
+    if (controller.signal.aborted) {
+      invoke('claude_chat_cancel', { args: { runId } }).catch(() => {})
+    }
   } catch (e) {
     cleanup()
     throw e

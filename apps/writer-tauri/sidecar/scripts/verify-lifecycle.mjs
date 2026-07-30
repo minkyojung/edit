@@ -433,8 +433,41 @@ async function t12() {
     ev.err.some((e) => e.runId === r1 && e.code === 'CANCELLED'))
 }
 
+// ── T13: a cancel that overtakes its own chat frame ────────────────────
+// The host writes `chat` only after a keychain read and a full `setToken`
+// round trip, while `claude_chat_cancel` writes immediately — so a Stop
+// pressed early reaches the sidecar FIRST. #handleCancel resolves runId
+// through runToThread, which is only populated when `chat` is handled, so the
+// early cancel no-ops and the run starts unstoppable. This pins the sidecar
+// half of the contract: an out-of-order cancel is a no-op (not a crash, not a
+// tombstone), which is exactly why the HOST has to re-send after the start
+// resolves (agent/chat/index.ts, after `claude_chat_start`).
+async function t13() {
+  console.log('\n[T13] a cancel arriving before its chat frame no-ops — the host must re-send')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  // Stop pressed while the host is still doing setToken: cancel lands first.
+  send('chat/cancel', { runId: r1 })
+  await sleep(10)
+  check('an unknown runId is a silent no-op, not an error', ev.err.length === 0,
+    `errs=[${ev.err.map((e) => e.code).join(',')}]`)
+  // Now the chat frame finally goes out; the run is live and NOT cancelled.
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  check('the run really did start despite the earlier cancel', fake.messages.length >= 1)
+  // The host's re-send is what actually stops it.
+  send('chat/cancel', { runId: r1 })
+  await waitFor(() => ev.err.some((e) => e.runId === r1 && e.code === 'CANCELLED'), 8000)
+  check('a cancel sent after the run is registered does stop it',
+    ev.err.some((e) => e.runId === r1 && e.code === 'CANCELLED'),
+    `errs=[${ev.err.map((e) => e.code).join(',')}]`)
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12(); await t13()
 } finally {
   process.stderr.write = origWrite
 }
