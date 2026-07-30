@@ -1,14 +1,40 @@
 // Read/manage the vault-local Agent Skills the chat agent creates via
-// propose_skill. Skills live at `_system/agent/skills/<dir>/SKILL.md` and
-// are catalogued as generic notes (scanVault mints a slug into each), so
-// they open in the editor like any note. The Skills page reads the files
-// directly to show name + description; opening/deletion use the slug/folder.
+// propose_skill. Skills live at `_system/agent/skills/<dir>/SKILL.md` and are
+// catalogued as generic notes, so they open in the editor like any note. The
+// Skills page reads the files directly to show name + description; opening and
+// deletion go by folder, and the catalog slug is resolved from the PATH — see
+// `skillDocSlug`.
 
 import { listVaultDir, readVaultFile, writeVaultFile, vaultFileExists } from '@/lib/vault'
 import { splitFrontmatter } from '@/lib/frontmatter'
 import { readTombstones } from '@/lib/assetTombstone'
+import { pathToKnownSlug } from '@/lib/docPaths'
+import type { KnownDoc } from '@/state/docsStore'
 
 export const SKILLS_REL = '_system/agent/skills'
+
+/** Vault-relative path of a skill folder's SKILL.md. One spelling, because
+ *  five places used to write it out and the constant is only half the string. */
+export function skillMdPath(dir: string): string {
+  return `${SKILLS_REL}/${dir}/SKILL.md`
+}
+
+/** This session's catalog slug for a skill folder, or null when the catalog has
+ *  no note at that path.
+ *
+ *  Resolved from the PATH, never from the file. The slug is ephemeral —
+ *  `scanVault.ts` calls it "never persisted, never written to the file", and
+ *  `portableFrontmatterFields` lists `slug: undefined` so the flush strips it —
+ *  so a `slug:` still sitting in a SKILL.md is a leftover from an earlier run
+ *  that this session's catalog has never heard of. Reading it, which is what
+ *  this module used to do, produced a slug that opened nothing.
+ *
+ *  Takes the catalog as an argument rather than reaching into the store, so
+ *  this file stays store-free and the function stays pure. Same shape as
+ *  `ToolPart`'s path→slug resolution for chat tool results. */
+export function skillDocSlug(dir: string, knownDocs: readonly KnownDoc[]): string | null {
+  return pathToKnownSlug(skillMdPath(dir), knownDocs)
+}
 
 /** One default skill to seed: the folder name, a one-line `description` (the
  * when-to-use trigger that surfaces in the agent's context), and the SKILL.md
@@ -26,7 +52,7 @@ export interface SkillSeed {
 export async function seedSkills(seeds: SkillSeed[]): Promise<void> {
   const dead = await readTombstones()
   for (const seed of seeds) {
-    const rel = `${SKILLS_REL}/${seed.name}/SKILL.md`
+    const rel = skillMdPath(seed.name)
     if (dead.has(rel)) continue
     if (await vaultFileExists(rel)) continue
     const content = `---\nname: ${seed.name}\ndescription: ${seed.description}\n---\n\n${seed.body.trim()}\n`
@@ -36,15 +62,13 @@ export async function seedSkills(seeds: SkillSeed[]): Promise<void> {
 }
 
 export interface VaultSkill {
-  /** Folder name under the skills dir — the delete/identity key. */
+  /** Folder name under the skills dir — the delete/identity key, and what
+   * `skillDocSlug` resolves an openable slug from. */
   dir: string
   /** SKILL.md `name` frontmatter (falls back to the folder name). */
   name: string
   /** SKILL.md `description` — the when-to-use line. */
   description: string
-  /** Catalog slug (minted into the SKILL.md frontmatter by scanVault) so the
-   * file opens in the editor. '' when not yet scanned. */
-  slug: string
 }
 
 /** List every skill in the vault. Returns [] when the skills dir doesn't
@@ -59,13 +83,12 @@ export async function listSkills(): Promise<VaultSkill[]> {
   const skills: VaultSkill[] = []
   for (const dir of entries) {
     try {
-      const raw = await readVaultFile(`${SKILLS_REL}/${dir}/SKILL.md`)
+      const raw = await readVaultFile(skillMdPath(dir))
       const { data } = splitFrontmatter(raw)
       skills.push({
         dir,
         name: (data.name ?? dir).trim(),
         description: (data.description ?? '').trim(),
-        slug: (data.slug ?? '').trim(),
       })
     } catch {
       // Not a skill folder (no SKILL.md) or unreadable — skip.
@@ -79,7 +102,7 @@ export async function listSkills(): Promise<VaultSkill[]> {
  * diff an UPDATE against what's on disk. */
 export async function readSkillBody(dir: string): Promise<string> {
   try {
-    const raw = await readVaultFile(`${SKILLS_REL}/${dir}/SKILL.md`)
+    const raw = await readVaultFile(skillMdPath(dir))
     return splitFrontmatter(raw).body
   } catch {
     return ''
