@@ -219,6 +219,14 @@ remark/rehype가 **문서 전체를 매 프레임 재파싱**한다. 증분 파�
   Rust는 `params` 안에 `runId`를 손에 쥐고도 버린다
 - `chat/index.ts:431` — `if (!parseChatEvent(e.payload) || e.payload.runId !== runId) return`.
   **zod `safeParse`를 먼저 돌리고 나서** 남의 이벤트를 버린다. `z.looseObject`(`eventSchemas.ts:33`)라 사본까지 할당
+  > **정정 (측정, 2026-07-30).** 이 줄만은 고칠 값어치가 없다. `parseChatEvent`를
+  > 재보면 **호출당 0.17µs**이고, `content` 500자 × 40개짜리 큰 `assistant`
+  > 페이로드로도 **0.19µs**다 — `looseObject`가 얕은 복사라 페이로드 크기와
+  > 무관하다. 순서를 뒤집어 아끼는 건 남의 이벤트 하나당 0.2µs이므로,
+  > 리스너 가드 아홉 곳(`chat/index.ts` 3, `chatRun.ts` 3,
+  > `generateThreadTitle.ts` 3 — 감사가 센 네 곳이 아니다)을 건드릴 근거가 안 된다.
+  > **이 불릿은 닫는다.** 위의 나머지 — 창 브로드캐스트와 run당 리스너 10개 —
+  > 는 그대로 남아 있고, 2-2의 실제 배수는 거기서 나온다.
 - `runChat` 하나가 리스너를 **10개** 건다 (`:430, 451, 781, 806, 832, 853, 874, 895, 903, 947`),
   전부 하나의 `Promise.all` 안 = run 단위
 
