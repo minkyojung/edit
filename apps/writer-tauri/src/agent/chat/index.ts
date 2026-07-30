@@ -387,7 +387,12 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     )
   }
 
+  /** Set by `cleanup` so a registration that resolves afterwards detaches
+   *  itself instead of joining a list nobody will drain again. */
+  let disposed = false
+
   const cleanup = () => {
+    disposed = true
     useChatRuns.getState().end(runId)
     while (unlistens.length > 0) {
       const u = unlistens.pop()
@@ -939,6 +944,21 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }),
     ])
       .then((registered) => {
+        // `cleanup` can run before these nine `listen()` calls resolve — the
+        // pre-aborted branch below settles synchronously, and the `catch`
+        // around `claude_chat_start` calls cleanup too. It drained an empty
+        // array in that case, so everything registered here stayed attached
+        // for the life of the process: a failed start leaked all nine.
+        if (disposed) {
+          for (const u of registered) {
+            try {
+              u()
+            } catch {
+              // best-effort, same as cleanup's own teardown
+            }
+          }
+          return
+        }
         unlistens.push(...registered)
       })
       .catch((err) => settleErr(err))
@@ -950,7 +970,23 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     }
     controller.signal.addEventListener('abort', () => {
       invoke('claude_chat_cancel', { args: { runId } }).catch(() => {})
-      // The CANCELLED chat:error notification will arrive and finalize.
+      // Settle on the press, not on the sidecar's reply — the same thing the
+      // pre-aborted branch six lines up already does for the same condition.
+      //
+      // Cancelling is the user's decision, so the UI has no one to ask. Waiting
+      // for `chat/error` CANCELLED cost a measured 332ms of round trip (see
+      // sidecar/scripts/measure-cancel-latency.mjs; generation itself stops in
+      // 10ms) plus however many chat/event frames were still queued ahead of it
+      // in the reader task — and the run never settled at all if the
+      // notification did not come, since nothing here times out.
+      //
+      // Safe because the outcome is identical, not merely similar: the
+      // CANCELLED branch converts to this exact error shape too, so
+      // classifyRunError yields the same terminal:'stopped' / chatStatus:'idle'
+      // either way. `settled` makes the late notification a no-op, and
+      // `cleanup` detaches the listeners — which also stops a stopped run from
+      // continuing to stage edits.
+      settleErr(new DOMException('aborted', 'AbortError'))
     })
   })
 

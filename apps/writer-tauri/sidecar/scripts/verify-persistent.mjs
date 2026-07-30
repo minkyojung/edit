@@ -118,6 +118,29 @@ async function scenario3_cancel() {
   await sleep(400)
 }
 
+// The frontend no longer waits for CANCELLED before letting the user send —
+// Stop settles the UI on the press (agent/chat/index.ts). So the next turn can
+// arrive while the sidecar's cancelled turn is still unwinding, which scenario 3
+// never exercised because it awaits the CANCELLED first. If the sidecar failed
+// to release the turn, this one would queue behind it and never finish.
+async function scenario3b_cancelThenSendImmediately() {
+  console.log('\n[3b] cancel, then send WITHOUT waiting for CANCELLED')
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'Write a 400-word story about a lighthouse.' }, 3)
+  await sleep(1200)
+  send('chat/cancel', { runId: r1 })
+  // No wait — this is the race the local settle introduces.
+  send('chat', { runId: r2, threadId: tid, persistentQuery: true, prompt: 'one word: alive' }, 4)
+  const finished = await waitFor(() => ev.done.some((d) => d.runId === r2), 60000)
+  check('the immediately-sent turn still completes', finished,
+    `dones=[${ev.done.map((d) => (d.runId === r2 ? 'r2' : 'r1')).join(',')}] errs=[${ev.err.map((e) => e.code).join(',')}]`)
+  check('and the cancelled turn reported CANCELLED exactly once',
+    ev.err.filter((e) => e.runId === r1 && e.code === 'CANCELLED').length === 1)
+  send('chat/close-thread', { threadId: tid })
+  await sleep(400)
+}
+
 async function scenario4_modelChange() {
   console.log('\n[4] model change mid-thread: no abort (canonical control request)')
   const { server, send, ev } = makeServer()
@@ -181,6 +204,7 @@ try {
   await scenario1_multiTurn()
   await scenario2_background()
   await scenario3_cancel()
+  await scenario3b_cancelThenSendImmediately()
   await scenario4_modelChange()
   await scenario5_cancelKillsBackground()
 } finally {
