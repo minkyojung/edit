@@ -73,9 +73,17 @@ export interface RunChatArgs {
    * - `'plan'` — read-only planning turn; the SDK blocks tool execution and
    *   the caller also drops the propose_* relays + Bash.
    * Omit only for non-chat callers (e.g. ingest) that want the sidecar's
-   * bypassPermissions default. */
-  permissionMode?: 'plan' | 'default' | 'acceptEdits'
-  /** acceptEdits mode: auto-accept each proposed change the instant it lands
+   * bypassPermissions default.
+   *
+   * The SDK's own `'acceptEdits'` was listed here and never sent — the one
+   * assignment is `isPlan ? 'plan' : 'default'` (useChatRunner.ts), and the
+   * sidecar has no branch for it either. Auto-accept in this product is
+   * `autoAcceptEdits` below, which the host applies to a staged proposal; the
+   * SDK mode would have let the SDK's own Edit tool write to disk, which is
+   * the architecture this one replaced. Leaving the value declared invited
+   * someone to reach for the wrong one. */
+  permissionMode?: 'plan' | 'default'
+  /** Auto-accept each proposed change the instant it lands
    * (apply without waiting for a manual Keep). The diff still renders — now as
    * an already-applied change. Default false → edits stay pending for review. */
   autoAcceptEdits?: boolean

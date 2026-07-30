@@ -6,7 +6,6 @@
 // askVerdict) — no coupling to the Server instance. The propose_* factories
 // take askVerdict alone: the runId is the asker's business, not the tool's.
 
-import { isAbsolute, relative, normalize, resolve as resolvePath } from 'node:path'
 import { tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { notification } from '../jsonrpc.mjs'
