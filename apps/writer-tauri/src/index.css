@@ -731,10 +731,24 @@ html[data-window-mode='compact'] .command-palette {
      Tune this one knob to make prose tighter/airier. 0 = stock-CM uniform:
      every line is just its line-height, no per-line gap. */
   --prose-gap-line: 0;
-  /* Matched to --prose-gap-line so a line's top gap DOESN'T change when it is
-     reclassified paragraph↔list mid-typing (typing "- " would otherwise shrink
-     the gap and jump the caret up). Keep these two in lockstep. */
-  --prose-gap-list: 0;
+  /* Gap above a line that STARTS a new paragraph (the line above it is blank).
+     Separate from --prose-gap-line because the two breaks mean different things:
+     an Enter inside a paragraph continues a thought, a blank line ends one. A soft
+     wrap gets neither — it stays inside the same .cm-line. Rides the .cm-para-start
+     line decoration (livePreview.ts); see cmTheme.ts for the ordering it depends on.
+     Sits ON TOP of the blank line's own line box, so it only has to nudge. */
+  --prose-gap-para: 8px;
+  /* Was pinned to --prose-gap-line (both 0) so a line's height DIDN'T change when it
+     was reclassified paragraph↔list mid-typing — typing "- " would otherwise shift
+     the caret by the difference. That lockstep is now DELIBERATELY BROKEN: holding it
+     forced list items to share prose's rhythm, which is the whole reason a list read
+     as one undifferentiated block. At 1.6 line-height an item's own wrapped rows sit
+     ~28px apart, so items need MORE than that between them or you can't see where one
+     ends. The cost is a one-time ~6px caret hop the instant "- " turns a paragraph
+     into a list item (Obsidian has the same hop). If that hop ever proves worse than
+     the cramped lists were, the fix is to bring this back to --prose-gap-line — not to
+     re-pin the two silently. */
+  --prose-gap-list: 6px;
   --prose-lh-list: 1.6;
 
   /* ── Tahoe Design Tokens (Layer 1: Numeric) ──────────────────────────

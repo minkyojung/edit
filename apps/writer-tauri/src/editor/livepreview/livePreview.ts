@@ -140,6 +140,29 @@ function inCodeContext(state: EditorState, pos: number): boolean {
   return false
 }
 
+/** Whether this line belongs to a construct the BLOCK layer (v2/blocks) owns outright
+ * — an image or a GFM table. The tree walk above already refuses to descend into those
+ * (`if (name === 'Image' || name === 'Table') return false`), and imageOwnership.test
+ * pins that live-preview emits ZERO decorations over such a line. The per-line loop at
+ * the bottom runs OUTSIDE that walk, so anything emitted there needs this guard to
+ * honour the same ownership. Spacing-wise nothing is lost: both are replaced by block
+ * widgets that carry their own `--prose-gap-block` padding. */
+function ownedByBlockLayer(state: EditorState, line: Line): boolean {
+  let owned = false
+  syntaxTree(state).iterate({
+    from: line.from,
+    to: line.to,
+    enter: (n) => {
+      if (n.name === 'Image' || n.name === 'Table') {
+        owned = true
+        return false
+      }
+      return undefined
+    },
+  })
+  return owned
+}
+
 /** Context for a marker-LESS line that the syntax tree places inside a list item (a
  * hard-break / lazy-continuation line under a bullet). Walks up from the line start to
  * the innermost `ListItem` (nested → the child item, i.e. the deeper level), counts
@@ -491,6 +514,25 @@ function buildDecos(
       const lastLine = state.doc.lineAt(Math.min(to, state.doc.length)).number
       for (let ln = firstLine; ln <= lastLine; ln++) {
         const line = state.doc.line(ln)
+        // "Starts a new paragraph" = has text AND the line above is blank (or there is
+        // no line above). CM already spaces a SOFT WRAP for free — a wrapped row stays
+        // inside this same `.cm-line`, so per-line padding only ever lands on a real
+        // (Enter) line. What it can't tell apart is a line continuing the paragraph
+        // above from one starting a new one; this class is the only thing that does.
+        // Emitted before every `continue` below so it covers list lines and headings
+        // too — which gap actually wins there is settled by the theme's SOURCE ORDER
+        // (see cmTheme.ts / paraStart.test.ts), not by exceptions here.
+        // Line decoration only → IME-safe, same as `cm-list-line`.
+        // The two ownership guards are checked LAST so they only run for the handful of
+        // lines that actually follow a blank one, not every visible line.
+        if (
+          line.length > 0 &&
+          (ln === 1 || state.doc.line(ln - 1).length === 0) &&
+          !touchesProofRawRange(state, line.from, line.to) &&
+          !ownedByBlockLayer(state, line)
+        ) {
+          out.push(Decoration.line({ class: 'cm-para-start' }).range(line.from))
+        }
         if (listLinesDone.has(line.from)) continue // Lezer already styled this line
         // Same as the wikilink overlay: this loop is outside the tree walk, so the
         // proposal gate in `enter` doesn't cover it. A line carrying proposal text
