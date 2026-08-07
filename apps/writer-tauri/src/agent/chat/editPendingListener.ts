@@ -26,6 +26,8 @@ import {
   toVaultRelative,
 } from './toPendingChange'
 import { checkEditPlacement, describeRefusal } from './checkPlacement'
+import { readDocBody } from '@/state/docsStore/docBody'
+import { createTurnWrites, type TurnWrites } from './turnWrites'
 import type { EditPendingEvent } from './types'
 
 /** What this handler needs from the run it belongs to. Plain values — the
@@ -46,10 +48,25 @@ export interface EditPendingHandler {
   /** Handle one event. Never rejects: a failure is contained per path (see the
    * try/catch below) and reported to the model through the ack. */
   handle(payload: EditPendingEvent): Promise<void>
+  /** What this turn wrote to, and what each note held before it did. Only
+   * auto-accept fills this — a staged proposal changes nothing on disk, so
+   * there is no moment to catch. Empty on interactive runs by design. */
+  writes: TurnWrites
 }
 
 export function createEditPendingHandler(deps: EditPendingDeps): EditPendingHandler {
   const { runId, threadId, autoAcceptEdits, navigateToNewNotes, triggeringRequest } = deps
+
+  const writes = createTurnWrites()
+
+  /** Record what a note holds in the moment before this turn writes over it.
+   *
+   * Called at each auto-accept write site and nowhere else. `readDocBody` is
+   * the canonical reader — the mounted editor when there is one, the mirror
+   * otherwise — so what is kept is the text the write is actually replacing,
+   * not a stale copy from disk. A note that does not exist yet reads as `''`,
+   * which is the right answer rather than a missing one. */
+  const keepBefore = (slug: string) => writes.aboutToWrite(slug, () => readDocBody(slug))
 
   // Per-turn, per-path coordination for the "same not-yet-existing file, two+
   // tool calls in one turn" race: without this, two `claude:edit-pending`
@@ -187,6 +204,7 @@ export function createEditPendingHandler(deps: EditPendingDeps): EditPendingHand
             // auto-accept write below does (that's Meaning B).
             ackOk = true
             if (autoAcceptEdits) {
+              keepBefore(prior.pageSlug)
               const ok = await applyWriteWikiPage(
                 prior.pageSlug,
                 mergedBody,
@@ -213,6 +231,7 @@ export function createEditPendingHandler(deps: EditPendingDeps): EditPendingHand
             // true regardless of the disk-write outcome, same Meaning-A
             // reasoning as the `pending` branch above.
             ackOk = true
+            keepBefore(prior.pageSlug)
             const ok = await applyWriteWikiPage(
               prior.pageSlug,
               mergedBody,
@@ -311,6 +330,7 @@ export function createEditPendingHandler(deps: EditPendingDeps): EditPendingHand
             // idempotent no-op.
             const body = mapped.edits.map((ed) => ed.after ?? '').join('\n\n')
             const filePath = String(payload_.input?.file_path ?? mapped.pageSlug)
+            keepBefore(mapped.pageSlug)
             const outcome = await guardedWholeDocWrite(
               threadId,
               mapped.pageSlug,
@@ -335,6 +355,9 @@ export function createEditPendingHandler(deps: EditPendingDeps): EditPendingHand
           } else {
             // Range edit (Edit/MultiEdit): the applier's live-CM write path
             // is already protected by updateDocBody's live read — no CAS.
+            // Still a disk write during the turn, so the prior text is caught
+            // here too — accept() is where it stops being reachable.
+            keepBefore(mapped.pageSlug)
             usePendingChangesStore.getState().accept(mapped.id)
             ackApplied = true
           }
@@ -381,5 +404,5 @@ export function createEditPendingHandler(deps: EditPendingDeps): EditPendingHand
     })
   }
 
-  return { handle }
+  return { handle, writes }
 }
