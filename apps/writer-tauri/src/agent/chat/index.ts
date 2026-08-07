@@ -21,7 +21,6 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { navigateToNoteBySlug } from '@/editor/cmNav'
 import { assembleContext } from '@/agent/contextPipeline'
 import {
   getActiveVaultPath,
@@ -31,25 +30,16 @@ import {
   getPersistentQueryEnabled,
 } from '@/state/settingsStore'
 import { todayLocalDate } from '@/hooks/useDocMeta'
-import { pathForDoc, pathForSlug, pathToKnownSlug, type DocStatus } from '@/lib/docPaths'
+import { pathForDoc, pathForSlug, type DocStatus } from '@/lib/docPaths'
 import { queryNotes } from '@/lib/queryNotes'
 import { useChatRuns } from '@/stores/chatRuns'
 import { useDocsStore } from '@/state/docsStore'
 import { readDocBody } from '@/state/docsStore/docBody'
 import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useGitStore, aiEditSubject } from '@/state/gitStore'
-import { applyWriteWikiPage } from '@/agent/applyIngest'
 import { setModelBase } from '@/agent/modelBodyBase'
-import { guardedWholeDocWrite } from '@/agent/chat/wholeDocGuard'
 import { useSkillProposalStore } from '@/state/skillProposalStore'
-import { notify } from '@/lib/notify'
-import {
-  mapChatEditToPendingChange,
-  materializeChatNewWikiPage,
-  mergeEditIntoStagedBody,
-  toVaultRelative,
-} from './toPendingChange'
-import { checkEditPlacement, describeRefusal } from './checkPlacement'
+import { createEditPendingHandler } from './editPendingListener'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useThreadsStore } from '@/state/threadsStore'
 import { useFastModeStore } from '@/state/fastModeStore'
@@ -62,9 +52,15 @@ import {
   type DoneEvent,
   type ErrorEvent,
   type RunChatArgs,
+  type EditPendingEvent,
   type RunChatResult,
 } from './types'
-import { parseChatEvent, parseDoneEvent, parseErrorEvent } from './eventSchemas'
+import {
+  parseChatEvent,
+  parseDoneEvent,
+  parseEditPendingEvent,
+  parseErrorEvent,
+} from './eventSchemas'
 import { resolveAgent } from '../agents'
 import { buildEditOutcomeNote } from './buildEditOutcomeNote'
 import {
@@ -79,6 +75,7 @@ import {
   truncateDocForPrompt,
 } from './systemPrompt'
 import { markNoteBodyShown, needsNoteBody } from './noteContextLedger'
+import { resolveAndSet } from './metadataWrite'
 import { createStreamParser } from './streamParser'
 
 export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
@@ -106,15 +103,15 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       'propose_edit',
       'propose_write',
       'propose_skill',
-      // File-and-forget: when the agent organizes, it moves a note OUT of the
-      // capture folder into its resting place. Auto-applied (reversible), not
-      // queued — see the claude:move-note handler below.
+      // Auto-applied (reversible), not queued for review — but not
+      // fire-and-forget: each awaits the host's verdict and reports a refusal
+      // to the model. The host declines a path it cannot resolve, and declines
+      // a doc type that cannot carry the property (a daily journal has no
+      // status; a wiki page's folder is derived from its type). These used to
+      // return "Status set" / "Move applied" regardless, so the user was told
+      // about writes that never happened.
       'move_note',
-      // Fire-and-forget: set a note's workflow status on request. Auto-applied
-      // (reversible), not queued — see the claude:set-status handler below.
       'set_note_status',
-      // Fire-and-forget: set a note's tags on request. Auto-applied
-      // (reversible), not queued — see the claude:set-tags handler below.
       'set_note_tags',
       // Request/response: filter the catalog by status/tags and return
       // references (path + title + status + tags) — see the claude:query-notes
@@ -248,7 +245,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // Queue article list / wiki handoff: fixed for this run and still delivered
     // through the system prompt's DOCUMENT block, so the base is what we're
     // about to show.
-    if (slug) setModelBase(slug, docText)
+    if (slug) setModelBase(threadId, slug, docText)
   } else if (attachCurrentNote && slug && currentFilePath) {
     const shownEarlier = !needsNoteBody(threadId, slug, docText)
     // `appendDocument: false` means the caller is supplying the note text
@@ -261,7 +258,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       shownEarlier,
     )
     if (sendBody) {
-      setModelBase(slug, docText)
+      setModelBase(threadId, slug, docText)
       markNoteBodyShown(threadId, slug, docText)
     }
   }
@@ -279,7 +276,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     const body = doc ? readDocBody(doc.slug) : undefined
     // Same CAS base as the current doc: a mentioned note's shown body is what a
     // later whole-doc overwrite must not silently clobber.
-    if (doc && body) setModelBase(doc.slug, body)
+    if (doc && body) setModelBase(threadId, doc.slug, body)
     return { path, body: body && body.trim() ? body : undefined }
   })
 
@@ -361,23 +358,34 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
 
   const unlistens: UnlistenFn[] = []
 
-  // Per-turn, per-path coordination for the "same not-yet-existing file, two+
-  // tool calls in one turn" race: without this, two `claude:edit-pending`
-  // events for one file_path each independently see no existing doc (their
-  // knownDocs snapshot predates the other's note creation) and both
-  // materialize a brand-new note — materializeRace.test.ts reproduces this in
-  // isolation. Keyed by the same toVaultRelative normalization used
-  // everywhere else. Only entries for a NEWLY MATERIALIZED note are recorded
-  // (an edit that resolves to an already-existing doc isn't racing anything —
-  // mapChatEditToPendingChange creates nothing). Scoped to this run's
-  // closure — garbage collected when the run's promise settles, same
-  // lifetime as `unlistens` below; no explicit teardown needed.
-  const newNoteByPath = new Map<
-    string,
-    Promise<{ pageSlug: string; pendingId: string } | null>
-  >()
+  // This run's edit-pending decision layer. Owns the per-path mutex, the merge
+  // and auto-accept branches, and the ack the model acts on — see
+  // `./editPendingListener`. Scoped to this run's closure, so its per-path state
+  // is garbage collected when the run settles, same lifetime as `unlistens`
+  // below; no explicit teardown needed.
+  const editPending = createEditPendingHandler({
+    runId,
+    threadId,
+    autoAcceptEdits,
+    navigateToNewNotes,
+    triggeringRequest,
+  })
+
+  /** Answer a parked `host/*` request. The sidecar's tool call is blocked on
+   *  this, so a failure to send is a hung tool — log it loudly rather than
+   *  swallowing, and let the run-release path be the backstop. */
+  const answerHost = (requestId: string, result: unknown) => {
+    void invoke('claude_chat_host_answer', { args: { requestId, result } }).catch((err) =>
+      console.warn('[chat] host-answer failed', { requestId, err }),
+    )
+  }
+
+  /** Set by `cleanup` so a registration that resolves afterwards detaches
+   *  itself instead of joining a list nobody will drain again. */
+  let disposed = false
 
   const cleanup = () => {
+    disposed = true
     useChatRuns.getState().end(runId)
     while (unlistens.length > 0) {
       const u = unlistens.pop()
@@ -440,338 +448,14 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         }
         parser.handleEvent(e.payload.event)
       }),
-      // Phase 3.3 staged-edit gate: the sidecar's canUseTool hook
-      // parks the SDK on every write-side built-in (Edit / Write /
-      // MultiEdit / NotebookEdit) and emits this event with a
-      // sidecar-minted `pendingId`. The PendingEditsBar renders an
-      // Apply / Reject card per event and routes the user's decision
-      // back through `claude_chat_edit_decision` so the matching
-      // canUseTool Promise resolves and the SDK either runs the
-      // tool (allow) or feeds the deny message to the model.
-      listen<{
-        runId: string
-        pendingId: string
-        toolName: string
-        input: Record<string, unknown>
-      }>('claude:edit-pending', async (e) => {
-        if (e.payload.runId !== runId) return
-        // Phase E5: unified flow. Map the sidecar payload into a
-        // PendingChange and push. The sidebar dot lights up, the
-        // inline suggestion card in the chat answer renders the diff
-        // with Keep / Reject, and the inline review widget renders the
-        // diff on the target page. There is no separate tray —
-        // `pendingChangesStore` is the single source of truth for chat
-        // edits, and every surface reads it.
-        // Audit instrumentation (read-only, safe to leave on): logs each
-        // edit-pending event's arrival so a same-turn race on one file_path —
-        // two events resolving `knownDocs` before either has registered the
-        // other's note (materializeRace.test.ts reproduces this in isolation)
-        // — shows up as two log lines with the same filePath close in time.
-        console.log('[chat] edit-pending', {
-          runId: e.payload.runId,
-          toolName: e.payload.toolName,
-          filePath: (e.payload.input as { file_path?: unknown }).file_path,
-          atMs: Date.now(),
-        })
-        const payload = {
-          runId: e.payload.runId,
-          pendingId: e.payload.pendingId,
-          toolName: e.payload.toolName,
-          input: e.payload.input,
-        }
-
-        const filePathRaw = (e.payload.input as { file_path?: unknown }).file_path
-        const vaultRelPath =
-          typeof filePathRaw === 'string'
-            ? toVaultRelative(filePathRaw, getActiveVaultPath())
-            : null
-
-        // Promise-chain mutex, keyed by vault-relative path: this event
-        // awaits whatever the PREVIOUS event for the same path is doing
-        // (create or merge) before starting its own work, and immediately
-        // publishes its own tail for the NEXT event to wait on. This
-        // serializes any number of same-turn, same-path tool calls instead of
-        // letting them race (materializeRace.test.ts reproduces the race
-        // this closes). A path with no prior claim resolves instantly.
-        const priorTail: Promise<{ pageSlug: string; pendingId: string } | null> =
-          (vaultRelPath && newNoteByPath.get(vaultRelPath)) || Promise.resolve(null)
-
-        // Whether THIS specific tool call's proposal was successfully queued
-        // into pendingChangesStore ("Meaning A" — queued & valid — NOT
-        // "Meaning B" — user approved & on disk, which stays fully async and
-        // must never gate the sidecar's ack). Sent back to the sidecar below
-        // so its PostToolUse hook can stop telling the model "queued" when it
-        // silently wasn't (the eager-success gap the pipeline audit found).
-        let ackOk = false
-        // When a whole-doc write is refused as stale, the reason (with the
-        // latest body inline) rides the ack back to the round-trip propose_write
-        // tool, which returns it to the model as an error so it rebases.
-        let ackReason: string | undefined
-        // True ONLY when auto-accept mode actually wrote this change to disk (an
-        // `accept()` that landed). Rides the ack back so the sidecar tells the
-        // model "applied immediately" instead of "queued for review" — otherwise
-        // the model, believing its edit is still pending, wrongly tells the user
-        // to "reject the card" (there is none; it's already saved). Stays false on
-        // interactive runs, where the change genuinely IS queued.
-        let ackApplied = false
-
-        const myTail = (async (): Promise<{ pageSlug: string; pendingId: string } | null> => {
-          // The whole body is wrapped in try/catch: without this, a throw
-          // anywhere below (materialize, disk write, ...) would reject this
-          // promise, and since it's exactly what's stored in `newNoteByPath`,
-          // EVERY later same-path event this turn would re-throw the same
-          // rejection at `await priorTail` and silently no-op forever — a
-          // worse failure than the race this mutex was built to close. On
-          // catch, log and resolve to null so later same-path events fall
-          // through to independent handling instead of being poisoned.
-          try {
-            const prior = await priorTail
-            if (prior) {
-              // A previous tool call THIS turn already materialized a new
-              // note for this path — merge this call's edit into its staged
-              // body instead of independently mapping/materializing (which
-              // is what created the duplicate note before this fix).
-              const current = usePendingChangesStore.getState().byId[prior.pendingId]
-              if (!current) {
-                console.warn(
-                  '[chat] edit-pending merge: pendingId missing from store',
-                  prior.pendingId,
-                )
-                return prior
-              }
-              if (current.status === 'rejected') {
-                // The user (or an earlier failure) already declined this
-                // note — don't resurrect it with a late write.
-                return prior
-              }
-              const currentAfter = current.edits[0]?.after ?? ''
-              const { text: mergedBody, placement } = mergeEditIntoStagedBody(
-                currentAfter,
-                e.payload.toolName,
-                e.payload.input,
-              )
-              if (placement.kind === 'noop') {
-                // Nothing left to do — typically this call repeats what the
-                // PREVIOUS call this turn already staged. Report success: a
-                // refusal here would have the model re-propose an edit that is
-                // already in the staged body, forever.
-                ackOk = true
-                return prior
-              }
-              if (placement.kind !== 'ok') {
-                // The tool's edit didn't land against the staged body — surface
-                // it (A2's principle: don't silently no-op) AND tell the model
-                // why, in the same words the first edit of the turn would get.
-                notify.markCantApply()
-                ackReason = describeRefusal(
-                  placement,
-                  typeof filePathRaw === 'string' ? filePathRaw : prior.pageSlug,
-                  currentAfter,
-                  current.edits.length,
-                )
-                return prior
-              }
-              if (current.status === 'pending') {
-                // Still awaiting a decision — update the staged proposal.
-                usePendingChangesStore.getState().push({
-                  ...current,
-                  edits: [{ ...current.edits[0], after: mergedBody }],
-                })
-                // Queued successfully — true regardless of what the
-                // auto-accept write below does (that's Meaning B).
-                ackOk = true
-                if (autoAcceptEdits) {
-                  const ok = await applyWriteWikiPage(
-                    prior.pageSlug,
-                    mergedBody,
-                    prior.pendingId,
-                  )
-                  if (ok) {
-                    usePendingChangesStore.getState().accept(prior.pendingId, mergedBody)
-                    ackApplied = true
-                  } else {
-                    // Don't call accept() on a failed write — that would
-                    // tell every surface "done" over content that never
-                    // reached disk. Leave the change pending so the user can
-                    // still Keep it manually after the toast.
-                    notify.autoAcceptWriteFailed()
-                  }
-                }
-              } else {
-                // status === 'accepted': the store's push/accept would
-                // silently no-op here (its "already decided" guard) — this is
-                // exactly how this merge branch used to lose a second call's
-                // content while auto-accept had already settled the first.
-                // Write directly and check the result instead of assuming success.
-                // Content was successfully incorporated (merged) either way —
-                // true regardless of the disk-write outcome, same Meaning-A
-                // reasoning as the `pending` branch above.
-                ackOk = true
-                const ok = await applyWriteWikiPage(
-                  prior.pageSlug,
-                  mergedBody,
-                  prior.pendingId,
-                )
-                if (!ok) notify.autoAcceptWriteFailed()
-                else ackApplied = true
-              }
-              // Don't navigate again — the first call already opened the note.
-              return prior
-            }
-
-            // No prior claim on this path this turn — handle it exactly as
-            // before this fix.
-            //
-            // Ensure the target daily exists before we snapshot the catalog. The
-            // model routes inbox actions to `daily/<date>.md`; in a headless run
-            // that daily may not be in the catalog yet, so the path wouldn't
-            // resolve and we'd materialize a phantom note. openDaily is
-            // find-or-create — after it, the real daily resolves and the edit
-            // appends to it instead.
-            const dailyDate = filePathRaw?.toString().match(
-              /(?:^|\/)daily\/(\d{4}-\d{2}-\d{2})\.md$/,
-            )?.[1]
-            if (dailyDate) {
-              await useDocsStore.getState().openDaily(dailyDate)
-            }
-            const ctx = {
-              knownDocs: useDocsStore.getState().knownDocs,
-              vaultPath: getActiveVaultPath(),
-              threadId,
-              userRequest: triggeringRequest,
-            }
-            // First the pure mapper (existing doc). If it can't resolve a
-            // catalog slug, the one recoverable miss is a `propose_write`
-            // creating a brand-new wiki page: materialize the page (so it
-            // gets a slug) and stage its body. Anything still unmapped is a
-            // genuine miss — logged, no decision surface.
-            let mapped = mapChatEditToPendingChange(payload, ctx)
-            let createdNewNote = false
-            if (!mapped) {
-              mapped = await materializeChatNewWikiPage(payload, ctx)
-              createdNewNote = !!mapped
-            }
-            if (!mapped) {
-              console.warn(
-                '[chat] edit-pending unmappable; no decision surface',
-                { toolName: e.payload.toolName, pendingId: e.payload.pendingId },
-              )
-              return null
-            }
-
-            // Does this actually fit the document? Until now an unplaceable
-            // proposal was pushed anyway: the chat card rendered, the editor
-            // drew nothing (cmInBufferReview returns early on empty hunks), and
-            // the model was told "queued". Check BEFORE pushing so there is no
-            // card to leave stranded, and hand the reason to the model instead.
-            // Fails open — see checkEditPlacement.
-            //
-            // Skipped for a note we just created: its body is whatever this
-            // proposal stages, so there is no prior text an anchor could miss —
-            // and a refusal here would abandon the freshly created file as an
-            // empty orphan.
-            const fit = createdNewNote
-              ? ({ ok: true } as const)
-              : await checkEditPlacement(
-                  mapped.pageSlug,
-                  mapped,
-                  typeof filePathRaw === 'string' ? filePathRaw : mapped.pageSlug,
-                )
-            if (!fit.ok) {
-              ackReason = fit.reason
-              return null
-            }
-
-            usePendingChangesStore.getState().push(mapped)
-            // Queued successfully — true regardless of what the auto-accept
-            // write below does (that's Meaning B, fully async by design).
-            ackOk = true
-            // acceptEdits mode: apply immediately instead of parking for review.
-            // The change is rendered (diff preview) and then auto-accepted, so the
-            // applier writes it to disk without a manual Keep — same accept path
-            // the Keep button drives, just triggered automatically. Undo still
-            // flows through the editor (Cmd-Z → reopen).
-            if (autoAcceptEdits) {
-              if (e.payload.toolName === 'Write') {
-                // Whole-doc overwrite — guard it with CAS (writeWholeDocGuarded)
-                // so a stale write (the user edited the note while the model
-                // generated) is refused and fed back to the model instead of
-                // clobbering. Runs synchronously here, BEFORE the ack below that
-                // the round-trip propose_write tool blocks on. For a brand-new
-                // note this also writes the body into the handle before we open
-                // it (the note is populated before the editor mounts — the race
-                // the createdNewNote path used to guard by hand); accept with the
-                // body as resolvedResult so the applier's own write is an
-                // idempotent no-op.
-                const body = mapped.edits.map((ed) => ed.after ?? '').join('\n\n')
-                const filePath = String(e.payload.input?.file_path ?? mapped.pageSlug)
-                const outcome = await guardedWholeDocWrite(
-                  mapped.pageSlug,
-                  body,
-                  mapped.id,
-                  filePath,
-                )
-                if (outcome.kind === 'applied') {
-                  usePendingChangesStore.getState().accept(mapped.id, body)
-                  ackApplied = true
-                } else if (outcome.kind === 'stale') {
-                  // Bounce the divergence back to the model (via the ack) so it
-                  // rebases; leave the change pending so the user's edit survives.
-                  ackOk = false
-                  ackReason = outcome.ackReason
-                } else {
-                  // 'parked' (retries exhausted) or 'failed' — leave the change
-                  // pending for a manual Keep and say so. ackOk stays true so the
-                  // turn ends rather than looping.
-                  notify.autoAcceptWriteFailed()
-                }
-              } else {
-                // Range edit (Edit/MultiEdit): the applier's live-CM write path
-                // is already protected by updateDocBody's live read — no CAS.
-                usePendingChangesStore.getState().accept(mapped.id)
-                ackApplied = true
-              }
-            }
-            // Open the new note. In acceptEdits mode it's already populated
-            // (above); on interactive runs the editor mounts, subscribes to the
-            // pending store, and renders the staged body as a green preview.
-            // Existing-note edits are left alone (the suggestion card's
-            // click-to-jump handles those; auto-jumping on every edit is intrusive).
-            if (createdNewNote && navigateToNewNotes) {
-              navigateToNoteBySlug(mapped.pageSlug)
-            }
-            // Only claim this path for coordination when a note was ACTUALLY
-            // newly materialized — an edit that resolved to an already-existing
-            // doc isn't racing anything (nothing was created), so a later
-            // same-path event should handle itself independently rather than
-            // merging into an unrelated existing-doc PendingChange.
-            return createdNewNote ? { pageSlug: mapped.pageSlug, pendingId: mapped.id } : null
-          } catch (err) {
-            console.error('[chat] edit-pending handler failed', {
-              toolName: e.payload.toolName,
-              filePath: filePathRaw,
-              err,
-            })
-            return null
-          }
-        })()
-
-        if (vaultRelPath) newNoteByPath.set(vaultRelPath, myTail)
-        await myTail
-
-        // Tell the sidecar whether THIS call's proposal actually landed — the
-        // propose_* tool handler is BLOCKED awaiting this pendingId (not
-        // `mapped.id` in the merge case: the handler waits on what ITS OWN
-        // tool call minted, which is always `e.payload.pendingId`). Its
-        // verdict becomes the tool result the model sees, which is what stops
-        // it from re-proposing an edit it can't otherwise confirm landed.
-        // Best-effort: the handler races a fail-open timeout, so a failure
-        // here costs a lost confirmation and a delay, not a stuck turn.
-        invoke('claude_chat_edit_ack', {
-          args: { pendingId: e.payload.pendingId, ok: ackOk, reason: ackReason, applied: ackApplied },
-        }).catch((err) => {
-          console.warn('[chat] edit-ack send failed', err)
-        })
+      // The sidecar parks the model's propose_* tool on the host's verdict and
+      // emits this event with a sidecar-minted `pendingId`. Everything that
+      // verdict is made of — mapping, the per-path mutex, the merge and
+      // auto-accept branches, the refusal text — lives in
+      // `./editPendingListener`. This only routes.
+      listen<EditPendingEvent>('claude:edit-pending', (e) => {
+        if (!parseEditPendingEvent(e.payload)) return
+        void editPending.handle(e.payload)
       }),
       // propose_skill tool fired (Phase 2B). The sidecar relays a proposed
       // reusable skill; we stage it in the dedicated skillProposalStore (NOT
@@ -800,72 +484,47 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }),
       // move_note MCP tool: relocate a note out of the capture folder into its
       // resting place. Auto-applied (no review card) — a move is reversible and
-      // loses no content. Resolve the note by its (vault-relative) path and hand
-      // it to docsStore.moveDocToFolder, which rewrites relPath and lets the
-      // flush machinery move the file on disk.
-      listen<{ runId: string; fromPath: string; toFolder: string }>(
+      // loses no content. moveDocToFolder rewrites relPath and lets the flush
+      // machinery move the file on disk, and reports what it did.
+      //
+      // Resolves through pathToKnownSlug like the metadata tools, not through
+      // a relPath match. Only generic notes carry a relPath, so matching on it
+      // made every typed doc look like "no note at that path" — the store's own
+      // guard says the truer thing, that its location is derived from its type.
+      listen<{ runId: string; requestId: string; fromPath: string; toFolder: string }>(
         'claude:move-note',
         (e) => {
           if (e.payload.runId !== runId) return
-          const relFrom = toVaultRelative(e.payload.fromPath, getActiveVaultPath())
-          if (!relFrom) {
-            console.warn('[chat] move-note: unresolved path', e.payload.fromPath)
-            return
-          }
-          const doc = useDocsStore
-            .getState()
-            .knownDocs.find((d) => d.relPath === relFrom)
-          if (!doc) {
-            console.warn('[chat] move-note: no note at', relFrom)
-            return
-          }
           // Strip any leading/trailing slashes so 'people/' and '/people' both
           // land as the folder 'people'. '' would target the vault root.
           const folder = e.payload.toFolder.replace(/^\/+|\/+$/g, '')
-          const ok = useDocsStore.getState().moveDocToFolder(doc.slug, folder)
-          console.log('[chat] move-note', { from: relFrom, toFolder: folder, ok })
+          answerHost(e.payload.requestId, resolveAndSet(e.payload.fromPath, (slug) =>
+            useDocsStore.getState().moveDocToFolder(slug, folder),
+          ))
         },
       ),
       // set_note_status MCP tool → set a note's workflow status. Resolve via
       // pathToKnownSlug (not a relPath match) so writing/wiki docs resolve too,
       // then hand to setDocStatus, which guards non-status doc types itself.
-      listen<{ runId: string; path: string; status: DocStatus }>(
+      listen<{ runId: string; requestId: string; path: string; status: DocStatus }>(
         'claude:set-status',
         (e) => {
           if (e.payload.runId !== runId) return
-          const rel = toVaultRelative(e.payload.path, getActiveVaultPath())
-          if (!rel) {
-            console.warn('[chat] set-status: unresolved path', e.payload.path)
-            return
-          }
-          const slug = pathToKnownSlug(rel, useDocsStore.getState().knownDocs)
-          if (!slug) {
-            console.warn('[chat] set-status: no note at', rel)
-            return
-          }
-          useDocsStore.getState().setDocStatus(slug, e.payload.status)
-          console.log('[chat] set-status', { path: rel, status: e.payload.status })
+          answerHost(e.payload.requestId, resolveAndSet(e.payload.path, (slug) =>
+            useDocsStore.getState().setDocStatus(slug, e.payload.status),
+          ))
         },
       ),
       // set_note_tags MCP tool → replace a note's tags. Resolve via
       // pathToKnownSlug (writing/wiki docs too), then hand to setDocTags,
       // which trims/de-dupes and guards non-metadata doc types.
-      listen<{ runId: string; path: string; tags: string[] }>(
+      listen<{ runId: string; requestId: string; path: string; tags: string[] }>(
         'claude:set-tags',
         (e) => {
           if (e.payload.runId !== runId) return
-          const rel = toVaultRelative(e.payload.path, getActiveVaultPath())
-          if (!rel) {
-            console.warn('[chat] set-tags: unresolved path', e.payload.path)
-            return
-          }
-          const slug = pathToKnownSlug(rel, useDocsStore.getState().knownDocs)
-          if (!slug) {
-            console.warn('[chat] set-tags: no note at', rel)
-            return
-          }
-          useDocsStore.getState().setDocTags(slug, e.payload.tags)
-          console.log('[chat] set-tags', { path: rel, tags: e.payload.tags })
+          answerHost(e.payload.requestId, resolveAndSet(e.payload.path, (slug) =>
+            useDocsStore.getState().setDocTags(slug, e.payload.tags),
+          ))
         },
       ),
       // query_notes MCP tool → filter the catalog by metadata (status/tags)
@@ -873,7 +532,9 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       // query_result), so it must always fire, even on empty results.
       listen<{
         runId: string
-        queryId: string
+        // A host-minted token, echoed back verbatim so the host can reconnect
+        // the reply to the sidecar request it parked.
+        queryId: number
         where?: { status?: DocStatus; tags?: string[] }
         limit?: number
         cursor?: string | null
@@ -951,6 +612,21 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       }),
     ])
       .then((registered) => {
+        // `cleanup` can run before these nine `listen()` calls resolve — the
+        // pre-aborted branch below settles synchronously, and the `catch`
+        // around `claude_chat_start` calls cleanup too. It drained an empty
+        // array in that case, so everything registered here stayed attached
+        // for the life of the process: a failed start leaked all nine.
+        if (disposed) {
+          for (const u of registered) {
+            try {
+              u()
+            } catch {
+              // best-effort, same as cleanup's own teardown
+            }
+          }
+          return
+        }
         unlistens.push(...registered)
       })
       .catch((err) => settleErr(err))
@@ -962,7 +638,23 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     }
     controller.signal.addEventListener('abort', () => {
       invoke('claude_chat_cancel', { args: { runId } }).catch(() => {})
-      // The CANCELLED chat:error notification will arrive and finalize.
+      // Settle on the press, not on the sidecar's reply — the same thing the
+      // pre-aborted branch six lines up already does for the same condition.
+      //
+      // Cancelling is the user's decision, so the UI has no one to ask. Waiting
+      // for `chat/error` CANCELLED cost a measured 332ms of round trip (see
+      // sidecar/scripts/measure-cancel-latency.mjs; generation itself stops in
+      // 10ms) plus however many chat/event frames were still queued ahead of it
+      // in the reader task — and the run never settled at all if the
+      // notification did not come, since nothing here times out.
+      //
+      // Safe because the outcome is identical, not merely similar: the
+      // CANCELLED branch converts to this exact error shape too, so
+      // classifyRunError yields the same terminal:'stopped' / chatStatus:'idle'
+      // either way. `settled` makes the late notification a no-op, and
+      // `cleanup` detaches the listeners — which also stops a stopped run from
+      // continuing to stage edits.
+      settleErr(new DOMException('aborted', 'AbortError'))
     })
   })
 
@@ -989,16 +681,27 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
         // and allows them after ExitPlanMode is approved. builtinTools drops
         // Bash but keeps Write (confined to the plans dir by the same gate).
         permissionMode,
-        // Phase E6: explicit least-privilege builtin set. Write-side
-        // built-ins (Edit / Write / MultiEdit / NotebookEdit) are
-        // OMITTED — the LLM uses the host-applies `propose_*` MCP
-        // tools (in `relayTools` above) for any disk-changing
-        // intent. Read-side / search / shell remain since the model
-        // needs them to discover context. WebSearch / WebFetch let
-        // the model pull live information from the web (read-only, so
-        // they run freely under bypassPermissions — no canUseTool
-        // gate). Plan turns drop Bash via the caller-supplied
-        // `builtinTools`.
+        // Phase E6: explicit least-privilege builtin set. `Edit` /
+        // `MultiEdit` / `NotebookEdit` stay OMITTED — a NOTE is edited
+        // through the host-applies `propose_*` MCP tools (in
+        // `relayTools` above), which is what gives the user the
+        // red/green review and keeps the editor buffer authoritative.
+        //
+        // `Write` is present for ONE thing: HTML artifacts, which have
+        // no slug, no editor buffer and no diff worth reading, so the
+        // relay buys nothing and a review card would just be a wall of
+        // markup. Notes stay out of its reach via the
+        // `hostOwnedNoteDenyRules()` deny rule in the sidecar — not by
+        // omission, and not by asking nicely: `bypassPermissions` skips
+        // `canUseTool`, so that rule is the whole boundary. Do not add
+        // `Edit` here without re-reading the editing rules in
+        // `agent/defaults/CLAUDE.md`, which address `Edit` by name and
+        // would start pointing at the real tool.
+        //
+        // Read-side / search / shell remain since the model needs them
+        // to discover context. WebSearch / WebFetch are read-only so
+        // they run freely under bypassPermissions. Plan turns drop Bash
+        // via the caller-supplied `builtinTools`.
         builtinTools:
           builtinTools ??
           [
@@ -1006,6 +709,7 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
             'Glob',
             'Grep',
             'Bash',
+            'Write',
             'WebSearch',
             'WebFetch',
             'AskUserQuestion',
@@ -1045,6 +749,18 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
     // changes delivered so the same reject / failure isn't reported again.
     if (outcome.ids.length > 0) {
       usePendingChangesStore.getState().markFeedbackDelivered(outcome.ids)
+    }
+    // A Stop that landed while the start was in flight was silently lost. The
+    // host does a keychain read AND a full `setToken` round trip before it
+    // writes the `chat` frame, so a cancel invoked in that window reaches the
+    // sidecar first, finds no such runId (`#handleCancel` looks it up in
+    // `runToThread`), and no-ops — the run then starts and nothing can stop it.
+    //
+    // Re-sending here is provably in time: `claude_chat_start` awaits the
+    // sidecar's RESPONSE to `chat`, and that response is emitted after
+    // `runToThread.set`. So by this line the run is registered.
+    if (controller.signal.aborted) {
+      invoke('claude_chat_cancel', { args: { runId } }).catch(() => {})
     }
   } catch (e) {
     cleanup()

@@ -13,7 +13,7 @@ import { StatusRow } from '@/chat/parts/StatusRow'
 import { NoticeRow } from '@/chat/parts/NoticeRow'
 import { isProposeEditTool } from '@/chat/parts/proposeChangeTool'
 import { InlineSuggestion } from '@/chat/suggestions/InlineSuggestion'
-import { usePendingChangesStore } from '@/state/pendingChangesStore'
+import { useLiveEditIds } from '@/chat/parts/useLiveEditIds'
 
 /** Walks an assistant turn's timeline and reshapes it for rendering:
  *  - reasoning + non-edit tool calls form the turn's "process". They render as
@@ -41,8 +41,11 @@ export function PartList({
   hideText?: boolean
 }) {
   // Subscribed so the duplicate-shell filter below re-evaluates as proposals
-  // land in / leave the store.
-  const changesById = usePendingChangesStore((s) => s.byId)
+  // land in / leave the store — but only for THIS message's proposals. Watching
+  // the whole map made every Accept / Reject / arriving proposal / note switch
+  // re-render every message in the thread, and each of those re-parses its
+  // whole answer.
+  const liveEditIds = useLiveEditIds(parts)
 
   const compactNodes: ReactNode[] = []
   const processRows: ReactNode[] = []
@@ -84,7 +87,7 @@ export function PartList({
   // shells for that file so the user sees one actionable row; a lone shell (no
   // live sibling) still renders so past edits stay visible. Computed up front so
   // the loop can decide visibility at each edit's own timeline position.
-  const isLiveEdit = (p: ToolPartType) => !!(p.pendingId && changesById[p.pendingId])
+  const isLiveEdit = (p: ToolPartType) => !!(p.pendingId && liveEditIds.has(p.pendingId))
   const liveFileKeys = new Set(
     mainParts
       .filter(

@@ -296,6 +296,11 @@ export const usePendingChangesStore = create<PendingChangesState>()(
           const snapshot = readDocBody(change.pageSlug)
           const next: PendingChange = {
             id: change.id,
+            // Carried, not derived: only the caller that MATERIALIZED the note
+            // knows it did. Dropping it here made `cleanupRejectedNewNote` in
+            // the applier unreachable — it reads this flag, so every rejected
+            // "create this note" proposal left an empty orphan behind.
+            createdNewNote: change.createdNewNote,
             source: change.source,
             pageSlug: change.pageSlug,
             groupId: change.groupId,

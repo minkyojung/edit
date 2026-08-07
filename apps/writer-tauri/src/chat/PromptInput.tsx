@@ -17,6 +17,7 @@ import { writeVaultBinary, deleteVaultDir } from '@/lib/vault'
 import {
   IconArrowUp,
   IconAt,
+  IconBrowser,
   IconClipboard,
   IconFile,
   IconFileText,
@@ -212,6 +213,7 @@ const FILE_KIND_ICON: Record<AssetKind, typeof IconFile> = {
   audio: IconMusic,
   video: IconMovie,
   text: IconFileText,
+  html: IconBrowser,
   other: IconFile,
 }
 

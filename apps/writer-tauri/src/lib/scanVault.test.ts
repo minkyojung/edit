@@ -7,11 +7,10 @@
  * tools (vim creating a file under a "wrong" path) or future layout
  * changes silently break the in-memory catalog.
  *
- * Scope is the pure `mdRelToKnownDoc` helper — the I/O orchestration
- * around it (recursive readDir, slug sidecar read/write) is exercised
- * end-to-end at app boot, not unit-tested here. Mocking Tauri fs
- * extensively would couple the tests to the I/O layer rather than the
- * placement contract.
+ * Scope is the pure `mdRelToKnownDoc` helper: no Tauri fs mocking, so the
+ * tests stay about the placement contract rather than the I/O layer. The walk
+ * around it — which paths the traversal even hands to this function — is
+ * covered separately in `vaultTree.test.ts`, against a fake disk.
  */
 
 import { describe, expect, it } from 'vitest'

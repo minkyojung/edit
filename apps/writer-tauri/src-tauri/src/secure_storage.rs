@@ -19,18 +19,53 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::OnceLock;
 use tauri::AppHandle;
 use tauri::Manager;
 
 const KEY_SALT: &[u8] = b"writer-tauri.secure-storage.v1";
 
+/// Counts reads of the machine uid so the cache below can be asserted on.
+/// Test-only: in a release build there is no counter and no branch.
+#[cfg(test)]
+static UID_READS: AtomicUsize = AtomicUsize::new(0);
+
+/// Reads the machine's hardware id. On macOS this shells out to `ioreg`
+/// (measured p50 17ms, max 31ms on an M-series laptop) — the cost `derive_key`
+/// exists to pay only once.
+fn read_machine_uid() -> Result<String, String> {
+    #[cfg(test)]
+    UID_READS.fetch_add(1, Ordering::Relaxed);
+    machine_uid::get().map_err(|e| format!("failed to read machine id: {e}"))
+}
+
+/// The derived key, computed once per process.
+///
+/// Both inputs are immutable — a compile-time salt and a hardware id that
+/// doesn't change while the machine is running — so the result is too. Without
+/// this the subprocess ran on every token read, and every token read holds
+/// `REFRESH_LOCK`, so the cost serialised across every chat start, title
+/// request and sidecar respawn.
+///
+/// Deliberately not a `LazyLock`: its initialiser can't fail, so the fallible
+/// read would have to be baked into the cached value and one flaky `ioreg` at
+/// startup would poison the process for good. Memoize successes only.
+static DERIVED_KEY: OnceLock<[u8; 32]> = OnceLock::new();
+
 fn derive_key() -> Result<[u8; 32], String> {
-    let machine_id =
-        machine_uid::get().map_err(|e| format!("failed to read machine id: {e}"))?;
+    if let Some(key) = DERIVED_KEY.get() {
+        return Ok(*key);
+    }
+    let machine_id = read_machine_uid()?;
     let mut hasher = Sha256::new();
     hasher.update(KEY_SALT);
     hasher.update(machine_id.as_bytes());
-    Ok(hasher.finalize().into())
+    let key: [u8; 32] = hasher.finalize().into();
+    // A racing caller may win the set; both computed the same value from the
+    // same immutable inputs, so either is correct.
+    Ok(*DERIVED_KEY.get_or_init(|| key))
 }
 
 fn storage_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -89,5 +124,29 @@ pub fn delete(app: &AppHandle, name: &str) -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
         Err(e) => Err(format!("delete {}: {}", path.display(), e)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn derives_the_key_once_per_process() {
+        // Warm the cache first, then measure a delta rather than an absolute:
+        // tests share a process, so any other test touching this module would
+        // break an `== 1` assertion depending on run order.
+        let warm = derive_key().expect("machine uid readable");
+        let before = UID_READS.load(Ordering::Relaxed);
+
+        for _ in 0..3 {
+            assert_eq!(derive_key().expect("cached"), warm, "key must be stable");
+        }
+
+        assert_eq!(
+            UID_READS.load(Ordering::Relaxed) - before,
+            0,
+            "machine uid was re-read after the cache was warm",
+        );
     }
 }

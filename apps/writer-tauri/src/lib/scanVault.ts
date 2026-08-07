@@ -22,11 +22,9 @@
 // writings, daily files with bad date format) are skipped silently.
 // The vault is a user surface — odd files shouldn't crash boot.
 
-import { readDir } from '@tauri-apps/plugin-fs'
-import { join } from '@tauri-apps/api/path'
 import { generateClientSlug } from '@/lib/slug'
 import { getActiveVaultPath } from '@/state/settingsStore'
-import { readVaultFile, vaultFileExists } from '@/lib/vault'
+import { listVaultTreeRecursive, readVaultFile } from '@/lib/vault'
 import type { KnownDoc } from '@/state/docsStore'
 import { frontmatterToMeta, type DocMetaFile } from '@/lib/docPaths'
 import { fmEntriesFromData, type FmEntry } from '@/lib/docProperties'
@@ -55,36 +53,6 @@ async function mintDocMeta(
   // EVERY parsed key in file order for the properties panel. Same single
   // parse feeds both — no extra read.
   return { slug: generateClientSlug(), meta: frontmatterToMeta(data), fm: fmEntriesFromData(data) }
-}
-
-/** Walk a vault subdirectory recursively and return every body-.md
- * file's path relative to the vault root. Sidecar files
- * (`.marks.json`) and hidden entries (`.DS_Store`, `.git/`, ...) are
- * filtered out at every level. */
-async function listMdRecursive(subRel: string): Promise<string[]> {
-  const root = getActiveVaultPath()
-  if (!root) return []
-  // Root (`subRel === ''`) always exists when a vault is selected; the
-  // vault path helpers reject an empty relPath, so don't route '' through
-  // vaultFileExists — use the root directly.
-  if (subRel !== '' && !(await vaultFileExists(subRel))) return []
-  const absPath = subRel === '' ? root : await join(root, subRel)
-  const entries = await readDir(absPath)
-  const results: string[] = []
-  for (const entry of entries) {
-    if (entry.name.startsWith('.')) continue
-    const childRel = subRel === '' ? entry.name : `${subRel}/${entry.name}`
-    if (entry.isDirectory) {
-      const sub = await listMdRecursive(childRel)
-      results.push(...sub)
-    } else if (
-      entry.name.endsWith('.md') &&
-      !entry.name.endsWith('.marks.json')
-    ) {
-      results.push(childRel)
-    }
-  }
-  return results
 }
 
 /** Build a KnownDoc from a path + slug. Returns null when the path
@@ -221,18 +189,25 @@ function mdRelToBaseDoc(
   return null
 }
 
-/** Scan the active vault and return every recognised doc as a
- * KnownDoc. Empty array when no vault is selected — caller decides
- * whether to prompt for one. Slugs are ephemeral: each scan mints fresh
- * ones (identity across restarts is the file path, not the slug). */
-export async function scanVault(): Promise<KnownDoc[]> {
-  if (!getActiveVaultPath()) return []
+/** Scan the active vault: every recognised doc as a KnownDoc, plus the folder
+ * and attachment inventories the sidebar tree needs. All three come from ONE
+ * traversal (`listVaultTreeRecursive`) — boot used to walk the whole tree
+ * twice, once here and once for the tree, paying every `readDir` two times.
+ * Everything empty when no vault is selected; the caller decides whether to
+ * prompt for one. Slugs are ephemeral: each scan mints fresh ones (identity
+ * across restarts is the file path, not the slug). */
+export async function scanVault(): Promise<{
+  docs: KnownDoc[]
+  dirs: string[]
+  files: string[]
+}> {
+  if (!getActiveVaultPath()) return { docs: [], dirs: [], files: [] }
 
   // Flat Obsidian-style vault: walk the WHOLE vault so every `.md`
   // surfaces in the catalog (recognised folders keep their special
   // classification; anything else becomes a generic `note` at its
   // relPath). Always on now that the folder tree is the only sidebar.
-  const allMd = await listMdRecursive('')
+  const { dirs, files, notes: allMd } = await listVaultTreeRecursive()
 
   // Pass 1: mint a fresh ephemeral slug + load portable meta for every
   // file. Done up-front because pass-2's writing-note resolution needs the
@@ -272,7 +247,7 @@ export async function scanVault(): Promise<KnownDoc[]> {
   // when two share a slug). Seeding from disk closes that race.
   seedLastWrittenPath(scanned)
 
-  return docs
+  return { docs, dirs, files }
 }
 
 /** Build a KnownDoc for a single externally-created `.md` file. Used

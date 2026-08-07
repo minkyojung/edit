@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   classifyModify,
+  isWatchableArtifactFile,
   matchMovedDoc,
   planReappear,
   renameLeg,
@@ -9,6 +10,28 @@ import {
 // Regression cover for A2 (external move/rename keeps the open tab alive).
 // These pin the three routing decisions that each shipped a real bug; the
 // live verification covers the fs-event → store wiring around them.
+
+describe('isWatchableArtifactFile — which paths reach the artifact branch', () => {
+  it('accepts html artifacts anywhere in the vault', () => {
+    expect(isWatchableArtifactFile('writing/weekly-status.html')).toBe(true)
+    expect(isWatchableArtifactFile('report.htm')).toBe(true)
+    expect(isWatchableArtifactFile('a/b/c/Deep.HTML')).toBe(true)
+  })
+
+  // The branch must not overlap the `.md` router: everything downstream of
+  // isWatchableBodyFile assumes a slug-bearing note, and everything downstream
+  // of this assumes there is no slug at all.
+  it('rejects notes and every other file kind', () => {
+    expect(isWatchableArtifactFile('wiki/Tom.md')).toBe(false)
+    expect(isWatchableArtifactFile('images/a.png')).toBe(false)
+    expect(isWatchableArtifactFile('writing/notes.html.tmp')).toBe(false)
+  })
+
+  it('rejects dot-dirs — app and tool noise, not what the user is looking at', () => {
+    expect(isWatchableArtifactFile('.git/hooks/x.html')).toBe(false)
+    expect(isWatchableArtifactFile('.octave/threads/t.html')).toBe(false)
+  })
+})
 
 describe('classifyModify — A: rename vs reload', () => {
   it('routes a rename modify to the move/rename handler', () => {

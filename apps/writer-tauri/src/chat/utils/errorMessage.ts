@@ -1,7 +1,60 @@
+/** What a Tauri command rejects with, mirroring `CommandError` in
+ * src-tauri/src/claude_sidecar/commands.rs. Tagged on `kind`; the Rust side
+ * pins the exact JSON in its own test.
+ *
+ * Consumed exhaustively below (the `never` check), on purpose: `state.rs`
+ * claims `SidecarState` is "mirrored 1:1 by the TS SidecarState union" and no
+ * such union exists — both consumers read an inline `{status, mode}` and
+ * ignore the rest. A mirror nobody type-checks is a comment, not a contract. */
+export type CommandError =
+  | { kind: 'notReady' }
+  | { kind: 'rpc'; code: number; message: string }
+  | { kind: 'exited' }
+  | { kind: 'protocolMismatch'; expected: number; got: number | null }
+  | { kind: 'transport'; message: string }
+  | { kind: 'noLongerWaiting'; message: string }
+
+function asCommandError(e: unknown): CommandError | null {
+  if (typeof e !== 'object' || e === null) return null
+  const kind = (e as { kind?: unknown }).kind
+  return typeof kind === 'string' ? (e as CommandError) : null
+}
+
+/** User-facing copy for a structured command failure.
+ *
+ * `rpc` passes the sidecar's own wording through untouched. That is the whole
+ * point of this type: the sidecar writes the one message the user can act on
+ * (which chats are busy, what to do), and the previous `/^rpc error:/` catch-all
+ * replaced it with "Something went wrong". */
+function describeCommandError(e: CommandError): string {
+  switch (e.kind) {
+    case 'notReady':
+      return 'Still starting up — try again in a moment'
+    case 'rpc':
+      return e.message
+    case 'exited':
+      return 'Backend service crashed and is restarting — please try again'
+    case 'protocolMismatch':
+      return `Backend is out of date (expected protocol ${e.expected}, found ${e.got ?? 'none'}) — reinstall or rebuild`
+    case 'transport':
+    case 'noLongerWaiting':
+      return e.message
+    default: {
+      // A new Rust variant lands here as a type error rather than as silent
+      // generic copy — the failure mode this union exists to prevent.
+      const never: never = e
+      return String(never)
+    }
+  }
+}
+
 /** Pull the leading `^([A-Z_]+):` classifier from an error so the renderer
  * can branch on it (e.g. show a Reconnect button only for AUTH). Returns
  * undefined for errors that don't carry one. */
 export function extractErrorCode(e: unknown): string | undefined {
+  // A structured command error carries no `^CODE:` prefix; the renderer's
+  // code-specific chrome (AUTH's Reconnect button) does not apply to it.
+  if (asCommandError(e)) return undefined
   const raw = e instanceof Error ? e.message : String(e)
   return raw.match(/^([A-Z_]+):/)?.[1]
 }
@@ -13,6 +66,8 @@ export function extractErrorCode(e: unknown): string | undefined {
  * EXEC) and maps each to user-friendly copy; EXEC forwards the SDK's own
  * detail; anything else falls through to message cleanup. */
 export function humanizeError(e: unknown): string {
+  const structured = asCommandError(e)
+  if (structured) return describeCommandError(structured)
   const raw = e instanceof Error ? e.message : String(e)
   const code = raw.match(/^([A-Z_]+):/)?.[1]
   switch (code) {
@@ -52,9 +107,6 @@ export function humanizeError(e: unknown): string {
       // the full detail is in the sidecar stderr (logErrorContext) for debugging.
       return 'Something went wrong — please try again'
   }
-  // Transport-level RPC failures (client.rs `rpc error: <code> <message>`) can
-  // reach here verbatim; they carry no user-actionable detail, so genericize.
-  if (/^rpc error:/i.test(raw)) return 'Something went wrong — please try again'
   let msg = raw.replace(/^Error:\s*/i, '').trim()
   if (msg.length === 0) return 'Something went wrong'
   if (msg.length > 240) msg = msg.slice(0, 237) + '…'

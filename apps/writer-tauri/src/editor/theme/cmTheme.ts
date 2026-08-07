@@ -7,7 +7,13 @@
 import { EditorView } from '@codemirror/view'
 import { LIST_INDENT, LIST_MARKER_END_PAD, TASK_BOX_EM } from '@/editor/livepreview/livePreview'
 
-export const cmPrototypeTheme = EditorView.theme({
+// The raw spec, exported SEPARATELY from the mounted theme. Every vertical-gap rule
+// below carries the same specificity (0,1,0), so which one wins is decided purely by
+// the order of these keys — `EditorView.theme` emits them in insertion order. That
+// makes the order load-bearing and invisible: reorder two keys and nothing throws,
+// the spacing just goes wrong. paraStart.test.ts asserts the order off this object
+// rather than restating the selectors, so the test can't drift from the theme.
+export const cmThemeSpec = {
   '&': {
     backgroundColor: 'transparent',
     color: 'var(--foreground)',
@@ -87,6 +93,14 @@ export const cmPrototypeTheme = EditorView.theme({
   // Blank lines between paragraphs already add a line-box of separation, so this
   // stays small. Headings / code override it below.
   '.cm-line': { padding: 'var(--prose-gap-line, 0.3em) 0 0' },
+  // A line that STARTS a new paragraph (the line above it is blank) — the gap above it
+  // separates two paragraphs, not two lines of one, so it gets its own knob. Without
+  // this every hard break looked identical: an Enter inside a paragraph and a genuine
+  // paragraph break both landed on plain `.cm-line`. Same specificity as `.cm-line`
+  // (0,1,0) but later in source → wins. It must stay ABOVE `.cm-list-line` and the
+  // headings, which are later still and so keep their own spacing when they follow a
+  // blank line. paraStart.test.ts asserts that ordering.
+  '.cm-para-start': { paddingTop: 'var(--prose-gap-para, 0)' },
   // List item lines opt OUT of the prose gap (marker already separates them).
   // Same specificity as `.cm-line` but later in source → wins on the top gap.
   '.cm-list-line': {
@@ -518,4 +532,6 @@ export const cmPrototypeTheme = EditorView.theme({
     fontSize: 'var(--text-footnote, 12px)',
     color: 'var(--muted-foreground)',
   },
-})
+}
+
+export const cmPrototypeTheme = EditorView.theme(cmThemeSpec)

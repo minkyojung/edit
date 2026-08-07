@@ -6,12 +6,13 @@
 //   - "claude:error" on failure or cancellation
 // Each event payload carries a `runId` to identify which chat it belongs to.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
+use super::client::SidecarError;
 use super::manager::SidecarManager;
 
 #[derive(Deserialize)]
@@ -143,12 +144,12 @@ pub struct ChatDecisionArgs {
 pub struct ChatEditAckArgs {
     pub pending_id: String,
     /// Whether the host actually queued this propose_edit/write/multi_edit
-    /// call into pendingChangesStore. The sidecar's PostToolUse hook awaits
-    /// this before letting the model treat the proposal as settled — false
-    /// (or a timeout) rewrites the tool's already-returned "queued" text
-    /// into a visible error the model can react to.
+    /// call into pendingChangesStore. This IS the tool call's result: the
+    /// handler is blocked on it and returns text chosen by this verdict, so
+    /// false reaches the model as a refusal rather than as a correction to
+    /// something it was already told.
     pub ok: bool,
-    /// Optional short reason surfaced in that rewritten error text.
+    /// Optional short reason surfaced in that refusal.
     #[serde(default)]
     pub reason: Option<String>,
     /// True when auto-accept mode actually wrote the change to disk (not merely
@@ -161,25 +162,79 @@ pub struct ChatEditAckArgs {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// A title request carries only the message to name. The prompt and the
+/// one-shot tool constraints belong to the sidecar's title mode
+/// (`TITLE_SYSTEM_PROMPT`) — passing a systemPrompt from here was half a policy,
+/// and the half that did not work on its own.
 pub struct TitleArgs {
     pub run_id: String,
     pub model: String,
     pub prompt: String,
-    #[serde(default)]
-    pub system_prompt: Option<String>,
 }
 
-fn get_manager(app: &AppHandle) -> Result<Arc<SidecarManager>, String> {
+/// What a Tauri command failed with, as structure rather than prose.
+///
+/// Every command used to end in `.map_err(|e| e.to_string())`, so the frontend
+/// received `SidecarError`'s Display output and had to read it back — there was
+/// a `/^rpc error:/` regex in errorMessage.ts matching this crate's
+/// `#[error("rpc error: {code} {message}")]` and replacing the whole thing with
+/// a generic line. That threw away the one message the user could act on: the
+/// sidecar's refusal when every chat thread is busy.
+///
+/// Tagged on `kind` like `SidecarState` (state.rs), for the same reason — the
+/// consumer switches on one field. Unlike that type, the TS side here is
+/// exhaustive (a `never` check), so this doc comment cannot quietly become
+/// untrue the way `state.rs`'s "mirrored 1:1" claim did.
+///
+/// `SidecarError::Rpc`'s `data` is deliberately not carried: no `errorResponse`
+/// call in the sidecar passes one, so a field for it would be permanently null.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum CommandError {
+    /// The sidecars have not finished starting; the caller may retry shortly.
+    NotReady,
+    /// The sidecar answered our request with an error. `message` is written for
+    /// the user — pass it through rather than summarising it.
+    Rpc { code: i64, message: String },
+    /// The sidecar process is gone.
+    Exited,
+    /// A stale `sidecar-pkg/`. Both numbers are carried because naming only one
+    /// makes the report unactionable.
+    ProtocolMismatch { expected: u32, got: Option<u32> },
+    /// Framing, serialization, or a closed pipe — nothing the user can act on
+    /// beyond retrying, but the detail belongs in a bug report.
+    Transport { message: String },
+    /// An answer arrived for a request the host had already released — the run
+    /// was cancelled, or the sidecar restarted. Reported rather than swallowed
+    /// so a card that outlives its gate is visible in the log, but the frontend
+    /// treats it as expected: the sidecar was already told.
+    NoLongerWaiting { message: String },
+}
+
+impl From<SidecarError> for CommandError {
+    fn from(e: SidecarError) -> Self {
+        match e {
+            SidecarError::Exited => CommandError::Exited,
+            SidecarError::Rpc { code, message, .. } => CommandError::Rpc { code, message },
+            SidecarError::ProtocolMismatch { expected, got } => {
+                CommandError::ProtocolMismatch { expected, got }
+            }
+            other => CommandError::Transport { message: other.to_string() },
+        }
+    }
+}
+
+fn get_manager(app: &AppHandle) -> Result<Arc<SidecarManager>, CommandError> {
     let state = app
         .try_state::<Arc<SidecarManager>>()
-        .ok_or_else(|| "Claude sidecars not yet ready".to_string())?;
+        .ok_or(CommandError::NotReady)?;
     Ok(state.inner().clone())
 }
 
 /// Starts a chat on the chat sidecar. Returns the immediate ack
 /// (`{ runId, accepted }`); subsequent streaming output arrives as events.
 #[tauri::command]
-pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Value, String> {
+pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Value, CommandError> {
     let manager = get_manager(&app)?;
     // Push the freshest token to the CHAT sidecar before every chat — handles
     // silent rotation without a restart. Chat-only so a title sidecar that's
@@ -187,7 +242,7 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     manager
         .try_inject_token_chat(&app)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
     let mut params = json!({
         "runId": args.run_id,
@@ -247,39 +302,36 @@ pub async fn claude_chat_start(app: AppHandle, args: ChatStartArgs) -> Result<Va
     }
 
     let chat = manager.chat_client().await;
-    chat.request("chat", Some(params))
-        .await
-        .map_err(|e| e.to_string())
+    Ok(chat.request("chat", Some(params))
+        .await?)
 }
 
 /// Close a persistent thread's long-lived query (archive / doc-close / delete).
 /// Distinct from cancel: this ends the query entirely. The SDK session persists,
 /// so a later chat for the same threadId resumes cleanly.
 #[tauri::command]
-pub async fn claude_chat_close_thread(app: AppHandle, args: CloseThreadArgs) -> Result<(), String> {
+pub async fn claude_chat_close_thread(app: AppHandle, args: CloseThreadArgs) -> Result<(), CommandError> {
     let manager = get_manager(&app)?;
     let chat = manager.chat_client().await;
-    chat.notify(
+    Ok(chat.notify(
         "chat/close-thread",
         Some(json!({ "threadId": args.thread_id })),
     )
-    .await
-    .map_err(|e| e.to_string())
+    .await?)
 }
 
 /// Stop a specific in-flight background subagent task (the user hit Stop on its
 /// row). The sidecar calls the SDK's stopTask; a task_notification with status
 /// 'stopped' follows on the chat/task channel.
 #[tauri::command]
-pub async fn claude_chat_stop_task(app: AppHandle, args: StopTaskArgs) -> Result<(), String> {
+pub async fn claude_chat_stop_task(app: AppHandle, args: StopTaskArgs) -> Result<(), CommandError> {
     let manager = get_manager(&app)?;
     let chat = manager.chat_client().await;
-    chat.notify(
+    Ok(chat.notify(
         "chat/stop-task",
         Some(json!({ "threadId": args.thread_id, "taskId": args.task_id })),
     )
-    .await
-    .map_err(|e| e.to_string())
+    .await?)
 }
 
 /// Lists the models this account can actually use, from the SDK's session-init
@@ -287,129 +339,230 @@ pub async fn claude_chat_stop_task(app: AppHandle, args: StopTaskArgs) -> Result
 /// this set; on any error it falls back to the built-in list, so this is purely
 /// additive — a failure never blocks model selection.
 #[tauri::command]
-pub async fn claude_list_models(app: AppHandle) -> Result<Value, String> {
+pub async fn claude_list_models(app: AppHandle) -> Result<Value, CommandError> {
     let manager = get_manager(&app)?;
     // Chat-only injection: models is answered by the chat sidecar, so it must
     // not depend on the title sidecar being healthy.
     manager
         .try_inject_token_chat(&app)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
     let chat = manager.chat_client().await;
-    chat.request("models", None)
-        .await
-        .map_err(|e| e.to_string())
+    Ok(chat.request("models", None)
+        .await?)
 }
 
 /// Cancels an in-flight chat. Notification only — no response expected.
 #[tauri::command]
-pub async fn claude_chat_cancel(app: AppHandle, args: ChatCancelArgs) -> Result<(), String> {
+pub async fn claude_chat_cancel(app: AppHandle, args: ChatCancelArgs) -> Result<(), CommandError> {
     let manager = get_manager(&app)?;
+    // Fail this run's parked host requests before cancelling. The frontend
+    // listener filters by runId, so once the run is cancelled nothing will
+    // ever answer them, and the sidecar's `query_notes` await would sit there
+    // until the process died.
+    manager.pending_frontend().release_run(&args.run_id).await;
     let chat = manager.chat_client().await;
-    chat.notify("chat/cancel", Some(json!({ "runId": args.run_id })))
-        .await
-        .map_err(|e| e.to_string())
+    Ok(chat.notify("chat/cancel", Some(json!({ "runId": args.run_id })))
+        .await?)
 }
 
 /// Answers a parked plan-mode gate (ExitPlanMode / AskUserQuestion). Routes
 /// the user's decision back to the sidecar's canUseTool callback so the turn
 /// resumes. Notification only — no response expected.
 #[tauri::command]
-pub async fn claude_chat_decision(app: AppHandle, args: ChatDecisionArgs) -> Result<(), String> {
+pub async fn claude_chat_decision(app: AppHandle, args: ChatDecisionArgs) -> Result<(), CommandError> {
     let manager = get_manager(&app)?;
-    let chat = manager.chat_client().await;
-    chat.notify(
-        "chat/decision",
-        Some(json!({
-            "runId": args.run_id,
-            "decisionId": args.decision_id,
-            "decision": args.decision,
-        })),
-    )
-    .await
-    .map_err(|e| e.to_string())
+    // The decision IS the answer to the sidecar's parked `host/permission`
+    // request — the SDK's canUseTool callback is blocked on it.
+    let answered = manager.pending_frontend().answer(&args.decision_id, args.decision).await;
+    if !answered {
+        // The gate is gone: the turn was cancelled while the card was up, or
+        // the sidecar restarted. The card outliving its gate is the reason
+        // this reports rather than succeeding silently.
+        return Err(CommandError::NoLongerWaiting { message: format!("gate {} is no longer waiting for a decision", args.decision_id) });
+    }
+    Ok(())
 }
 
 /// Confirms (or denies) that a propose_edit/write/multi_edit proposal was
 /// actually queued into pendingChangesStore, once agent/chat/index.ts's
-/// edit-pending handling settles. Resolves the sidecar's PostToolUse hook
-/// wait (see server.mjs `#handleEditAck`), which otherwise fails open after
+/// edit-pending handling settles. Answers the sidecar's parked
+/// `host/editPending` request, whose caller otherwise fails open after
 /// its own timeout. Notification only — no response expected.
 #[tauri::command]
-pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Result<(), String> {
+pub async fn claude_chat_edit_ack(app: AppHandle, args: ChatEditAckArgs) -> Result<(), CommandError> {
     let manager = get_manager(&app)?;
-    let chat = manager.chat_client().await;
-    chat.notify(
-        "chat/edit-ack",
-        Some(json!({
-            "pendingId": args.pending_id,
-            "ok": args.ok,
-            "reason": args.reason,
-            "applied": args.applied,
-        })),
-    )
-    .await
-    .map_err(|e| e.to_string())
+    let answered = manager
+        .pending_frontend()
+        .answer(
+            &args.pending_id,
+            json!({ "ok": args.ok, "reason": args.reason, "applied": args.applied }),
+        )
+        .await;
+    if !answered {
+        // Already released — the run was cancelled or the sidecar restarted.
+        // The tool call has been told so; this ack is just late.
+        return Err(CommandError::NoLongerWaiting { message: format!("proposal {} is no longer waiting for a verdict", args.pending_id) });
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatQueryResultArgs {
+    /// The key the host parked the request under, echoed back verbatim.
+    /// Not the sidecar's JSON-RPC id — see `PendingFrontend`.
     pub query_id: String,
-    /// The filtered note references (opaque to Rust — forwarded verbatim to
-    /// the sidecar, which hands them to the model as the query_notes result).
-    pub results: Value,
+    /// The filtered note references. Each entry is opaque to Rust and
+    /// forwarded verbatim, but the array itself is pinned: the tool does
+    /// `results.length`, and the sidecar used to normalise a non-array away
+    /// before this became a typed command boundary. Serde does it now.
+    pub results: Vec<Value>,
     #[serde(default)]
     pub next_cursor: Option<String>,
 }
 
-/// Returns the host-filtered result of a `query_notes` tool call to the
-/// sidecar, resolving its parked `#requestQuery` promise (see server.mjs
-/// `#handleQueryResult`). Notification only — no response expected.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostAnswerArgs {
+    /// The key the host parked the request under, echoed back verbatim.
+    pub request_id: String,
+    /// Opaque to Rust — the sidecar's tool decides what it means.
+    pub result: Value,
+}
+
+/// Answers a parked `host/*` request with a payload the host does not read.
+///
+/// Deliberately generic, where `claude_chat_query_result` /
+/// `claude_chat_edit_ack` / `claude_chat_decision` each name their own fields.
+/// Those three predate the transport and are typed at this boundary for
+/// reasons that still hold — `results` must be an array, an ack has three
+/// specific flags. A metadata write's answer is `{ok, reason}` and Rust has no
+/// stake in either field, so typing it here would only mean editing this file
+/// every time a relay tool gains a case.
+#[tauri::command]
+pub async fn claude_chat_host_answer(app: AppHandle, args: HostAnswerArgs) -> Result<(), CommandError> {
+    let manager = get_manager(&app)?;
+    if !manager.pending_frontend().answer(&args.request_id, args.result).await {
+        // Already released — the run was cancelled or the sidecar restarted.
+        return Err(CommandError::NoLongerWaiting { message: format!("request {} is no longer waiting", args.request_id) });
+    }
+    Ok(())
+}
+
+/// Answers a `host/queryNotes` request the sidecar parked with the host. This
+/// is the second half of a JSON-RPC request the host could not answer itself:
+/// the note catalogue lives in the frontend's docs store, so the reply travels
+/// out as a Tauri event and comes back here.
+///
+/// An unknown token is reported rather than swallowed. It means the slot was
+/// already released — the run was cancelled, or the sidecar restarted — and the
+/// sidecar has been told so. The frontend's work is wasted but nothing hangs.
 #[tauri::command]
 pub async fn claude_chat_query_result(
     app: AppHandle,
     args: ChatQueryResultArgs,
-) -> Result<(), String> {
+) -> Result<(), CommandError> {
     let manager = get_manager(&app)?;
-    let chat = manager.chat_client().await;
-    chat.notify(
-        "chat/query-result",
-        Some(json!({
-            "queryId": args.query_id,
-            "results": args.results,
-            "nextCursor": args.next_cursor,
-        })),
-    )
-    .await
-    .map_err(|e| e.to_string())
+    let answered = manager
+        .pending_frontend()
+        .answer(
+            &args.query_id,
+            json!({ "results": args.results, "nextCursor": args.next_cursor }),
+        )
+        .await;
+    if !answered {
+        return Err(CommandError::NoLongerWaiting { message: format!("query {} is no longer waiting for an answer", args.query_id) });
+    }
+    Ok(())
 }
 
 /// Runs a single-shot chat on the title sidecar. Used for thread-title
 /// generation. Returns the same ack shape as `claude_chat_start`; events
 /// flow on the same `claude:*` channel.
 #[tauri::command]
-pub async fn claude_title(app: AppHandle, args: TitleArgs) -> Result<Value, String> {
+pub async fn claude_title(app: AppHandle, args: TitleArgs) -> Result<Value, CommandError> {
     let manager = get_manager(&app)?;
     // Title-only injection: this runs on the title sidecar, so a chat sidecar
     // mid-restart must not block it (and vice versa).
     manager
         .try_inject_token_title(&app)
         .await
-        .map_err(|e| e.to_string())?;
+        ?;
 
-    let mut params = json!({
+    let params = json!({
         "runId": args.run_id,
         "model": args.model,
         "prompt": args.prompt,
     });
-    if let Some(sp) = args.system_prompt {
-        params["systemPrompt"] = Value::String(sp);
-    }
 
     let title = manager.title_client().await;
-    title
-        .request("chat", Some(params))
-        .await
-        .map_err(|e| e.to_string())
+    Ok(title.request("chat", Some(params)).await?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The wire shape is the contract with errorMessage.ts. Pinned here the way
+    /// state.rs pins SidecarState's, because the TS side cannot observe a
+    /// rename — it would just stop matching and fall through to generic copy.
+    #[test]
+    fn every_variant_serializes_to_the_shape_the_frontend_switches_on() {
+        let cases = [
+            (CommandError::NotReady, serde_json::json!({ "kind": "notReady" })),
+            (
+                CommandError::Rpc { code: -32001, message: "all busy".into() },
+                serde_json::json!({ "kind": "rpc", "code": -32001, "message": "all busy" }),
+            ),
+            (CommandError::Exited, serde_json::json!({ "kind": "exited" })),
+            (
+                CommandError::ProtocolMismatch { expected: 2, got: Some(1) },
+                serde_json::json!({ "kind": "protocolMismatch", "expected": 2, "got": 1 }),
+            ),
+            (
+                CommandError::Transport { message: "broken pipe".into() },
+                serde_json::json!({ "kind": "transport", "message": "broken pipe" }),
+            ),
+            (
+                CommandError::NoLongerWaiting { message: "gate x is gone".into() },
+                serde_json::json!({ "kind": "noLongerWaiting", "message": "gate x is gone" }),
+            ),
+        ];
+        for (err, want) in cases {
+            assert_eq!(serde_json::to_value(&err).unwrap(), want);
+        }
+    }
+
+    /// The refusal the user reads must survive the conversion intact — this is
+    /// the message that says which chats are busy and what to do about it.
+    #[test]
+    fn an_rpc_refusal_keeps_its_code_and_its_wording() {
+        let msg = "5 conversations are already working. Wait for one to finish.";
+        let converted: CommandError = SidecarError::Rpc {
+            code: -32001,
+            message: msg.into(),
+            data: None,
+        }
+        .into();
+        assert!(
+            matches!(&converted, CommandError::Rpc { code: -32001, message } if message == msg),
+            "got {converted:?}",
+        );
+    }
+
+    /// The three that carry no structure of their own collapse into one
+    /// variant rather than each inventing a string the frontend must read.
+    #[test]
+    fn framing_and_pipe_failures_all_land_in_transport() {
+        for e in [SidecarError::Send, SidecarError::Exited] {
+            let is_exited = matches!(e, SidecarError::Exited);
+            let converted: CommandError = e.into();
+            match (&converted, is_exited) {
+                (CommandError::Exited, true) => {}
+                (CommandError::Transport { .. }, false) => {}
+                _ => panic!("unexpected mapping: {converted:?}"),
+            }
+        }
+    }
 }

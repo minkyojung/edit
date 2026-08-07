@@ -61,14 +61,31 @@ We use the standard subset: requests, responses, and notifications.
 
 - Requests carry `id` (integer or string). Responses echo the same id.
 - Notifications must omit `id`.
-- The Rust bridge generates request ids; the sidecar never generates ids for
-  client-bound traffic — server-pushed events go out as notifications only.
+- Each side mints ids for the requests it sends, and correlates responses only
+  against ids it minted itself. **The two counters are separate namespaces and
+  may overlap without ambiguity**: a frame with an id *and* a method is a
+  request, a frame with an id and no method is a response.
 
 ### Direction
 
-- **Rust → sidecar**: requests and notifications (cancel notifications).
-- **sidecar → Rust**: responses (matched by id) and notifications (`chat/event`,
-  `chat/done`, `chat/error`).
+Both directions carry requests. The asymmetry this replaced was not a design —
+a question the sidecar needed to ask was faked with a notification out, a
+notification back, and a hand-rolled correlation map, once per feature.
+
+- **Rust → sidecar**: requests (§3) and notifications.
+- **sidecar → Rust**: requests (§3b), responses, and notifications (§4).
+
+A request the receiver has no handler for is answered `-32601 method not
+found`. Refusing is the point: a peer told "no" recovers, a peer ignored waits
+forever — neither side puts a deadline at the transport layer, because the
+transport cannot know what a given question means.
+
+A frame with neither `id` nor `method` cannot be addressed or dispatched. The
+host logs it. In practice this is the sidecar's `errorResponse(null, -32700)`
+for a frame it could not parse — which means one of our requests is about to go
+unanswered, so the log is the only warning that exists.
+
+Batches (a top-level JSON array) are unsupported in both directions.
 
 ---
 
@@ -88,7 +105,7 @@ Handshake. Must be the first request after spawn. The sidecar is in an "uninitia
 **result**:
 ```json
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "sidecarVersion": "0.1.0",
   "sdkVersion": "0.2.121",
   "node": "v20.11.0"
@@ -153,25 +170,32 @@ routing are per-`runId`.
 The title sidecar is **single-flight** and rejects a second concurrent `chat`
 with `-32001 BUSY`.
 
-**params**:
+**params**: `ChatStartArgs` in `src-tauri/src/claude_sidecar/commands.rs` is the
+authoritative list, field by field, with the reason each one exists. It is not
+restated here: this section used to document a `tools: [{name, input_schema}]`
+array and an example tool called `propose_change`, and neither has ever
+existed. Seventeen fields restated in prose is how that happened.
+
 ```json
 {
   "runId": "client-uuid",
-  "model": "claude-sonnet-4-6",
+  "model": "claude-sonnet-5",
   "systemPrompt": "...",
   "prompt": "user message text",
-  "tools": [
-    { "name": "propose_change", "description": "...", "input_schema": {...} }
-  ],
+  "relayTools": ["propose_edit", "query_notes"],
   "permissionMode": "bypassPermissions"
 }
 ```
 
+The three worth stating here because they are contracts rather than settings:
+
 - `runId` is a client-provided correlation id surfaced on every related
   notification. Distinct from the JSON-RPC `id` on the request itself.
-- `tools` is optional. If omitted, no tool definitions are passed to the SDK.
-- `permissionMode` defaults to `"bypassPermissions"` (we do not use the SDK's
-  built-in permission UI; the Tauri host manages user consent).
+- `relayTools` is a list of **names**; the sidecar owns the schemas
+  (`#buildRelayServer`). The host never sends tool definitions.
+- `permissionMode` defaults to `"bypassPermissions"` — the Tauri host manages
+  user consent, not the SDK's built-in UI. `"acceptEdits"` is NOT among the
+  values sent: auto-accept is a host-side concept carried by `autoAcceptEdits`.
 
 **result** (immediate, not a stream):
 ```json
@@ -203,47 +227,6 @@ The active chat terminates with a `chat/error` notification carrying
 
 ---
 
-### `chat/decision` (notification, no response)
-
-Answers a parked `canUseTool` gate — `AskUserQuestion` (any permission mode)
-or `ExitPlanMode` (plan mode only). Resolves the matching pending decision so
-the SDK's `canUseTool` callback returns and the turn continues. Unknown or
-already-settled `decisionId`s are ignored.
-
-**params**:
-```json
-{ "runId": "client-uuid", "decisionId": "sidecar-minted-uuid", "decision": {"...": "shape below"} }
-```
-
-`decision`'s shape depends on which tool requested it:
-- `AskUserQuestion` → `{ "answers": { "q1": "..." }, "response"?: "free-form reply" }`
-- `ExitPlanMode` → `{ "type": "approve" }` or `{ "type": "reject", "message": "..." }`
-
-Only fires for `permissionMode: "plan"` or `"default"` — never for
-`"bypassPermissions"`, which short-circuits `canUseTool` entirely.
-
----
-
-### `chat/edit-ack` (notification, no response)
-
-Confirms (or denies) that a `propose_edit`/`propose_write`/`propose_multi_edit`
-call was actually queued into the host's pending-changes store. The sidecar's
-`PostToolUse` hook (see `chat/edit-pending` below) awaits this before letting
-the model treat the proposal as settled.
-
-**params**:
-```json
-{ "pendingId": "uuid from the tool's own success text", "ok": true, "reason": null }
-```
-
-**Fail-open contract**: if this is never sent (or arrives after the hook's own
-~4-5s internal timeout), the hook treats the proposal as `ok: true` rather
-than blocking or erroring — a missing ack is NOT itself surfaced as a failure
-to the model. Only an explicit `ok: false` rewrites the tool's already-returned
-"queued" text into a visible error.
-
----
-
 ### `shutdown`
 
 Gracefully shut down. The sidecar finishes **all** in-flight chats with a
@@ -254,6 +237,116 @@ Gracefully shut down. The sidecar finishes **all** in-flight chats with a
 
 After receiving the `shutdown` response, the Rust bridge should close the
 sidecar's stdin and wait for process exit.
+
+---
+
+## 3b. Methods (sidecar → Rust)
+
+Questions the sidecar asks the host, as opposed to the events it announces.
+They exist because the answer lives on the far side of the host: the note
+catalogue is in the frontend's docs store, and a permission verdict is in the
+user's head. The host parks the obligation, asks the frontend, and answers when
+the frontend's own command comes back — see `claude_sidecar::pending_frontend`.
+
+Consequences worth stating, because both are load-bearing:
+
+- **Answers may take arbitrarily long.** The `host/permission` case waits on a
+  human. The sidecar sets no transport deadline; a caller that needs one adds
+  it itself.
+- **An answer is guaranteed, including on the sad paths.** If the run is
+  cancelled or the sidecar restarts, the host releases the parked request and
+  the caller sees `-32603` rather than waiting on a reply nobody will send.
+
+### `host/queryNotes`
+
+Filter the note catalogue by metadata and return references only. Backs the
+`query_notes` relay tool.
+
+**params**: `{ runId, where: { status?, tags?[] }, limit, cursor }`
+`runId` is required — it is what the host parks the request under, so a
+cancelled run can release it.
+
+**result**: `{ results: [{ path, title, status, tags }], nextCursor }`
+`results` is always an array; the host's command boundary rejects anything else.
+
+### `host/editPending`
+
+Stage a `propose_edit` / `propose_write` / `propose_multi_edit` proposal and
+report whether it took. Backs all three propose_* tools.
+
+**params**: `{ runId, pendingId, toolName: "Edit" | "Write" | "MultiEdit", input }`
+`pendingId` is the review card's identity, minted by the sidecar. The host
+parks the request under it rather than minting a second token, because the
+frontend already carries it end-to-end.
+
+**result**: `{ ok, reason, applied }`
+`ok: false` means nothing was queued and the file is unchanged; `reason` is
+shown to the model so it can rewrite. `applied: true` means auto-accept mode
+wrote it straight to disk and there is no review card.
+
+**The result IS the tool's result.** The handler blocks on it and returns text
+chosen by the verdict — there is no optimistic "queued" for a later signal to
+correct. That correction used to be a `PostToolUse` hook, which landed ~2/3 of
+the time; a refusal that missed left the model seeing an unchanged file, so it
+proposed the same edit again and the user got two cards for one edit.
+
+**Silence and refusal are different.** The caller fails OPEN after 15s of
+silence, because silence means a wedged host and a lost ack must not wedge the
+turn too. An explicit error response does not get that benefit — the host sends
+one when it releases a request, and a released request genuinely did not queue.
+
+### `host/permission`
+
+Park a `canUseTool` gate — `AskUserQuestion` (any permission mode) or
+`ExitPlanMode` (plan mode only) — until the user answers. Never fires for
+`bypassPermissions` on anything but `AskUserQuestion`, which the SDK does not
+short-circuit.
+
+**params**: `{ runId, decisionId, toolName, input }`
+`decisionId` keys the frontend's permission card and is quoted back, so the
+host parks under it.
+
+**result**: the decision, shaped by which tool asked:
+- `AskUserQuestion` → `{ answers: { "<question text>": "<option label>" }, response?: "free-form" }`
+- `ExitPlanMode` → `{ type: "approve" }` or `{ type: "reject", message }`
+
+Answers are keyed by the question TEXT, and nested under `decision` at the
+Tauri command boundary (`QuestionPanel.tsx`). Sent flat, the turn resumes and
+the model reports the question went unanswered — which reads exactly like a
+product bug and is not one.
+
+**This is the request with no deadline at either end.** A human is answering;
+five seconds and five minutes are both ordinary. The only thing that unparks it
+besides an answer is the turn being cancelled, which the sidecar carries into
+the transport as an abort signal so the pending slot is abandoned rather than
+left waiting on a reply nobody will send.
+
+### `host/setNoteStatus`, `host/setNoteTags`, `host/moveNote`
+
+Apply a metadata write or a move immediately (no review card) and report
+whether it landed. Back `set_note_status` / `set_note_tags` / `move_note`.
+
+**params**: `{ runId, requestId, path | fromPath, ... }`
+`requestId` is minted by the host and written into the outgoing event — these
+carry no id of their own, unlike `pendingId` / `decisionId`.
+
+**result**: `{ ok: true }` or `{ ok: false, reason }`, where `reason` is
+`unsupported-doc-type` or `no-such-note`.
+
+The two reasons stay distinct because the model's next move differs. A doc type
+that cannot carry the property is a dead end — a daily journal has no status, a
+wiki page's folder is derived from its type — and the tool tells the model not
+to retry. A missing note means the path was wrong, which is recoverable.
+
+An already-correct value is `ok`. The request is satisfied; the only thing that
+did not happen is a write.
+
+These returned an unconditional success string until protocol 2, so the model
+reported writes the host had silently declined.
+
+`propose_skill` deliberately stays a notification (`chat/skill-pending`). Its
+host handler stages unconditionally, so "proposed for user review" is true when
+it is said — there is no verdict to wait for.
 
 ---
 
@@ -309,6 +402,26 @@ After `chat/done`, the sidecar is idle and ready for the next `chat`.
 
 ---
 
+### `chat/task`
+
+Progress for a background subagent task (Task tool). `params` carries `runId`,
+`taskId`, and a `status` the frontend maps in `stores/backgroundTasks.ts`.
+
+---
+
+### `chat/skill-pending`
+
+The model proposed a reusable skill via `propose_skill`. The host stages it in
+`skillProposalStore` for Keep / Reject, and writes `SKILL.md` on Keep.
+
+**params**: `{ runId, pendingId, name, description, body, updates }`
+`updates` is the exact name of the skill being revised, or null for a new one.
+
+Deliberately a notification, not a request (§3b): the host's handler stages
+unconditionally, so there is no verdict for the tool to wait on.
+
+---
+
 ### `auth/refreshNeeded`
 
 Sent when Anthropic rejects an in-flight chat with 401 / unauthorized. The
@@ -327,56 +440,6 @@ host owns the OAuth flow; this notification is the sidecar asking for help.
 
 The `runId` lets a multi-chat host distinguish which chat triggered the
 refresh, even though a single new token applies to all of them.
-
----
-
-### `chat/proposal`
-
-Sent each time the model invokes a relay tool (e.g. `propose_change`). The
-sidecar's tool handler immediately returns a brief ack to the model and
-forwards the call's input to the host via this notification — the host
-(frontend) is responsible for applying the actual side-effect (inserting
-marks into the editor, etc.).
-
-**params**:
-```json
-{
-  "runId": "client-uuid",
-  "input": { "kind": "suggestion", "quote": "...", "content": "...", ... }
-}
-```
-
-The shape of `input` is whatever the relay tool's schema accepts.
-
----
-
-### `chat/permission`
-
-Sent when the sidecar's `canUseTool` gate parks on `AskUserQuestion` or (in
-plan mode) `ExitPlanMode`, waiting for the user's decision. Answered by
-`chat/decision` (Section 3), matched via `decisionId`.
-
-**params**:
-```json
-{ "runId": "client-uuid", "decisionId": "sidecar-minted-uuid", "toolName": "AskUserQuestion", "input": {"...": "the tool's own input"} }
-```
-
----
-
-### `chat/edit-pending`
-
-Sent when the model calls `propose_edit`/`propose_write`/`propose_multi_edit`.
-The tool itself returns a "queued for review" success string to the model
-immediately (non-blocking) — this notification is the host's cue to actually
-map the proposal into its pending-changes store. Once the host has decided
-whether it landed, it answers with `chat/edit-ack` (Section 3), which the
-sidecar's `PostToolUse` hook uses to confirm — or, on failure, rewrite — what
-the model was told.
-
-**params**:
-```json
-{ "runId": "client-uuid", "pendingId": "sidecar-minted-uuid", "toolName": "Edit" | "Write" | "MultiEdit", "input": {"...": "the tool's own input"} }
-```
 
 ---
 
@@ -546,3 +609,10 @@ Two independent version signals travel in `initialize`:
   request/notification shapes in this document.
 - **`clientVersion` / `sidecarVersion`** (semver strings) — advisory only, used
   for telemetry and bug reports; never gate behavior.
+
+### History
+
+| version | change |
+|---|---|
+| 1 | initial contract |
+| 2 | Every question the sidecar asks the host became a real request (§3b). `chat/query-notes`+`chat/query-result` → `host/queryNotes`; `chat/edit-pending`+`chat/edit-ack` → `host/editPending`; `chat/permission`+`chat/decision` → `host/permission`; `chat/set-status` / `chat/set-tags` / `chat/move-note` → `host/setNoteStatus` / `host/setNoteTags` / `host/moveNote`, which now return a verdict instead of nothing. A stale sidecar on either side of this leaves those three features broken while everything else appears to work, which is exactly the failure the equality assert converts into a startup error. |

@@ -350,8 +350,21 @@ const acceptUndoWatcher = EditorView.updateListener.of((u) => {
   for (const tr of u.transactions) {
     for (const e of tr.effects) {
       const store = usePendingChangesStore.getState()
-      if (e.is(acceptEffect)) queueMicrotask(() => store.accept(e.value))
-      else if (e.is(rejectEffect)) queueMicrotask(() => store.reject(e.value))
+      if (e.is(acceptEffect)) {
+        // Carry the merged body, exactly as keep() does. On the keep() path
+        // this is redundant: that call already ran synchronously, so this one
+        // no-ops on store.accept's `status !== 'pending'` guard. On REDO it is
+        // the only call there is — keep() doesn't run, and the undo's reopen
+        // cleared the resolvedResult the original accept stored. Without it the
+        // applier falls past its idempotent branch into the per-edit loop and
+        // writes the AI's text on top of a buffer that already contains it.
+        //
+        // Read from `u.state` rather than inside the microtask: this is the
+        // state the decision was made against, and the doc can move before the
+        // queue drains.
+        const resolved = savedBodyOf(u.state)
+        queueMicrotask(() => store.accept(e.value, resolved))
+      } else if (e.is(rejectEffect)) queueMicrotask(() => store.reject(e.value))
       else if (e.is(reopenEffect)) queueMicrotask(() => store.reopen(e.value.id))
     }
   }

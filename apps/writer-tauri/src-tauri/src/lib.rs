@@ -88,6 +88,7 @@ pub fn run() {
             claude_sidecar::commands::claude_chat_decision,
             claude_sidecar::commands::claude_chat_edit_ack,
             claude_sidecar::commands::claude_chat_query_result,
+            claude_sidecar::commands::claude_chat_host_answer,
             claude_sidecar::commands::claude_title,
             fetch_url::fetch_url,
             fetch_url::fetch_binary,

@@ -39,6 +39,7 @@ import type { ChatTurn, ThreadMeta } from '@/chat/types'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useChatDraftStore } from '@/state/chatDraftStore'
 import { forgetThreadNoteContext } from '@/agent/chat/noteContextLedger'
+import { forgetThreadModelBase } from '@/agent/modelBodyBase'
 import {
   appendThreadTurn,
   appendThreadTurns,
@@ -229,6 +230,21 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   },
 
   removeThread: async (id) => {
+    // Drop from the store FIRST, before any await. `appendTurn` early-returns
+    // on a thread that is no longer here, and that guard is the only thing
+    // stopping a turn that settles mid-removal from re-writing the files we
+    // are about to delete. Deleting first left the guard true for the whole
+    // length of the disk write, so a commit inside that window resurrected the
+    // thread — it came back on the next hydrate holding a partial answer.
+    set((s) => {
+      const threads = { ...s.threads }
+      const turns = { ...s.turns }
+      delete threads[id]
+      delete turns[id]
+      const draftIds = new Set(s.draftIds)
+      draftIds.delete(id)
+      return { threads, turns, draftIds }
+    })
     // No-op on disk for a draft (no files written yet); deletes both files
     // for a materialised thread.
     await deleteThreadFiles(id)
@@ -241,15 +257,10 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
     // inherit a claim that a note had already been sent, suppressing the block
     // for a thread that never saw it.
     forgetThreadNoteContext(id)
-    set((s) => {
-      const threads = { ...s.threads }
-      const turns = { ...s.turns }
-      delete threads[id]
-      delete turns[id]
-      const draftIds = new Set(s.draftIds)
-      draftIds.delete(id)
-      return { threads, turns, draftIds }
-    })
+    // And the CAS bases stamped alongside it — same shape, same reason, and a
+    // reused id inheriting a base would judge a write against a body this
+    // thread was never shown.
+    forgetThreadModelBase(id)
   },
 }))
 

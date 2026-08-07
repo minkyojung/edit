@@ -12,6 +12,35 @@ describe('extractErrorCode', () => {
   })
 })
 
+// A Tauri command that fails now rejects with a structured payload rather than
+// a Display string. Before this, `humanizeError` did `String(e)` on it and the
+// sidecar's own wording — including the one refusal that tells the user what to
+// do — was replaced by a generic line via the `/^rpc error:/` catch-all.
+describe('humanizeError on a structured command error', () => {
+  it('passes the sidecar refusal through verbatim — it is the actionable part', () => {
+    const msg = '5 conversations are already working. Wait for one to finish, or stop one.'
+    expect(humanizeError({ kind: 'rpc', code: -32001, message: msg })).toBe(msg)
+  })
+
+  it('names the cause for the shapes that carry no message', () => {
+    expect(humanizeError({ kind: 'notReady' })).toMatch(/starting|not ready/i)
+    expect(humanizeError({ kind: 'exited' })).toMatch(/crash|restart/i)
+    expect(humanizeError({ kind: 'transport', message: 'broken pipe' })).toMatch(/broken pipe/)
+  })
+
+  it('tells a stale install what it is, with both versions', () => {
+    const out = humanizeError({ kind: 'protocolMismatch', expected: 2, got: 1 })
+    expect(out).toMatch(/2/)
+    expect(out).toMatch(/1/)
+  })
+
+  it('still has no ^CODE: classifier to extract', () => {
+    // The renderer branches on that for AUTH's Reconnect button; a structured
+    // error carries no such prefix, and a BUSY refusal wants the plain Retry.
+    expect(extractErrorCode({ kind: 'rpc', code: -32001, message: 'x' })).toBeUndefined()
+  })
+})
+
 describe('humanizeError', () => {
   it('maps every known classifier to friendly copy (no raw CODE: leak)', () => {
     const codes = [
@@ -43,12 +72,14 @@ describe('humanizeError', () => {
     )
   })
 
-  it('genericizes transport-level rpc errors', () => {
+  // This used to assert the opposite: a `/^rpc error:/` regex matched Rust's
+  // `#[error("rpc error: {code} {message}")]` Display impl and replaced the
+  // whole line with generic copy. Commands now reject with a tagged object, so
+  // that regex had nothing left to match and was deleted along with its
+  // dependency on a Display format nobody had promised to keep.
+  it('no longer reads Rust Display strings — a stray one is just a message', () => {
     expect(humanizeError('rpc error: -32603 internal error')).toBe(
-      'Something went wrong — please try again',
-    )
-    expect(humanizeError(new Error('rpc error: -32001 busy'))).toBe(
-      'Something went wrong — please try again',
+      'rpc error: -32603 internal error',
     )
   })
 
@@ -107,5 +138,24 @@ describe('classifyRunError', () => {
     expect(out.errorCode).toBe('AUTH')
     expect(out.resetsAt).toBeUndefined()
     expect(out.rateLimitType).toBeUndefined()
+  })
+})
+
+// End-to-end on the wording, because the two halves shipped separately and the
+// reason the cap is a hard cap at all is that the refusal tells the user what
+// to do. Sidecar → CommandError::Rpc → this. If it ever reads "Something went
+// wrong" again, the cap is bounding memory and nothing else.
+describe('the thread-cap refusal reaches the user intact', () => {
+  it('shows the sidecar wording rather than generic copy', () => {
+    const refusal = {
+      kind: 'rpc' as const,
+      code: -32001,
+      message:
+        '5 conversations are already working. Wait for one to finish, or stop one, then try again.',
+    }
+    expect(humanizeError(refusal)).toBe(refusal.message)
+    // No `^CODE:` prefix, so the card offers plain Retry — which is exactly the
+    // advice: wait, then try again.
+    expect(extractErrorCode(refusal)).toBeUndefined()
   })
 })

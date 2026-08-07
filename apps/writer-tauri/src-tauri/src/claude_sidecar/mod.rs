@@ -5,4 +5,5 @@ pub mod client;
 pub mod commands;
 mod framing;
 pub mod manager;
+pub mod pending_frontend;
 pub mod state;

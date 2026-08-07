@@ -7,6 +7,8 @@
 import { mock } from 'node:test'
 import { randomUUID } from 'node:crypto'
 
+const BUSY_CODE = -32001
+
 const SIDECAR = '..'
 
 // ── Fake query registry ──────────────────────────────────────────────
@@ -14,11 +16,11 @@ const SIDECAR = '..'
 // order. Each exposes: pushEvent(e), endOutput(), messages[] (pulled inputs),
 // calls[] (control-request names).
 const fakes = []
-function makeFakeQuery(prompt) {
+function makeFakeQuery(prompt, options) {
   const outQ = []
   let outResolve = null
   let outEnded = false
-  const rec = { messages: [], calls: [], inputEnded: false, pushEvent, endOutput }
+  const rec = { messages: [], calls: [], inputEnded: false, options, pushEvent, endOutput }
   function pushEvent(e) {
     if (outResolve) { const r = outResolve; outResolve = null; r({ value: e, done: false }) }
     else outQ.push(e)
@@ -69,14 +71,19 @@ function makeFakeQuery(prompt) {
 
 mock.module('@anthropic-ai/claude-agent-sdk', {
   namedExports: {
-    query: ({ prompt }) => makeFakeQuery(prompt),
+    query: ({ prompt, options }) => makeFakeQuery(prompt, options),
     tool: (name, description, schema, handler) => ({ name, description, schema, handler }),
     createSdkMcpServer: (cfg) => ({ ...cfg }),
     getSessionInfo: async () => undefined, // missing session → create path
   },
 })
 
-const { Server, threadBusy } = await import(`${SIDECAR}/src/server.mjs`)
+const {
+  Server,
+  threadBusy,
+  MAX_LIVE_THREADS: MAX,
+  MAX_LIVE_TITLES: MAX_TITLES,
+} = await import(`${SIDECAR}/src/server.mjs`)
 
 // ── Harness ──────────────────────────────────────────────────────────
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -85,6 +92,7 @@ async function waitFor(pred, ms = 3000) {
   while (Date.now() - t0 < ms) { if (pred()) return true; await sleep(10) }
   return false
 }
+const errs = []
 const results = []
 const check = (name, ok, detail = '') => {
   results.push({ name, ok }); console.log(`${ok ? '  ✅' : '  ❌'} ${name}${detail ? ' — ' + detail : ''}`)
@@ -99,13 +107,16 @@ process.stderr.write = (s, ...a) => {
 }
 
 function makeServer() {
-  const ev = { done: [], err: [], task: [], bgDone: [] }
+  const ev = { done: [], err: [], task: [], bgDone: [], event: [] }
   const server = new Server({
     mode: 'chat',
     emit: (m) => {
+      // JSON-RPC error RESPONSES (a refused request), distinct from chat/error.
+      if (m.error && m.id !== undefined) errs.push(m)
       if (m.method === 'chat/done') (m.params.background ? ev.bgDone : ev.done).push(m.params)
       else if (m.method === 'chat/error') ev.err.push(m.params)
       else if (m.method === 'chat/task') ev.task.push(m.params)
+      else if (m.method === 'chat/event') ev.event.push(m.params)
     },
   })
   const send = (method, params, id) => server.handle({ jsonrpc: '2.0', id, method, params })
@@ -190,7 +201,6 @@ async function t5() {
   console.log('\n[T5] A1: #threadBusy protects a busy thread under LRU pressure')
   fakes.length = 0
   const { server, send, ev } = makeServer()
-  const MAX = 6
   const idle = []
   for (let i = 0; i < MAX - 1; i++) {
     const tid = randomUUID(), r = randomUUID()
@@ -254,15 +264,25 @@ async function t7() {
 
 // ── T8: title mode routes onto the thread engine (B2) — a title chat (no
 // threadId, no persistentQuery, exactly what generateThreadTitle sends) runs
-// as a closeAfterResult one-shot on the engine, not the legacy path, and stays
-// single-flight. ──
+// as a closeAfterResult one-shot on the engine, not the legacy path, and is
+// capped at MAX_LIVE_TITLES rather than refused outright.
+//
+// This used to assert single-flight (a second concurrent title must NOT spawn a
+// thread). That was the product's behaviour and it was the bug: teardown lags
+// `chat/done` by seconds against the real SDK, so the cap of 1 refused the next
+// new chat for that whole window and nothing retried. The window is invisible
+// here — the fake query ends its output the moment input ends — which is why
+// this check kept passing; `verify-thread-title` drives a real sidecar and is
+// what actually covers it.
 async function t8() {
-  console.log('\n[T8] title mode → thread engine, closeAfterResult one-shot, single-flight')
+  console.log('\n[T8] title mode → thread engine, closeAfterResult one-shot, capped not single-flight')
   fakes.length = 0; teardownLog.length = 0
   const ev = { done: [], err: [] }
   const server = new Server({
     mode: 'title',
     emit: (m) => {
+      // JSON-RPC error RESPONSES (a refused request), distinct from chat/error.
+      if (m.error && m.id !== undefined) errs.push(m)
       if (m.method === 'chat/done') ev.done.push(m.params)
       else if (m.method === 'chat/error') ev.err.push(m.params)
     },
@@ -278,13 +298,41 @@ async function t8() {
     server.activeThreads.size === 1,
     `threads=${server.activeThreads.size}`,
   )
-  // Single-flight: a second title while one is live must not spawn a 2nd thread.
-  send('chat', { runId: randomUUID(), prompt: 'other' }, nid())
-  check('title stays single-flight (activeThreads guard)', server.activeThreads.size === 1, `threads=${server.activeThreads.size}`)
+  // The title mode supplies its own prompt + one-shot constraints, so the
+  // caller sending only a message still gets them. Read off the built options:
+  // an empty tools array is the SDK's "no built-in tools", NOT "unspecified".
+  const opts = fake.options ?? {}
+  check('title mode supplied its own system prompt', typeof opts.systemPrompt === 'string' && opts.systemPrompt.length > 0)
+  check('title runs tool-less', Array.isArray(opts.tools) && opts.tools.length === 0, `tools=${JSON.stringify(opts.tools)}`)
+  check('title runs single-turn', opts.maxTurns === 1, `maxTurns=${opts.maxTurns}`)
+
+  // Capped, not single-flight: concurrent titles up to MAX_LIVE_TITLES are
+  // accepted (the previous new chat's thread has not drained yet), and only the
+  // one past the cap is refused.
+  const extras = []
+  for (let i = 1; i < MAX_TITLES; i++) {
+    const r = randomUUID()
+    extras.push(r)
+    send('chat', { runId: r, prompt: `other ${i}` }, nid())
+  }
+  const fakes2 = []
+  for (let i = 1; i < MAX_TITLES; i++) fakes2.push(await awaitFake(i + 1))
+  check(
+    `titles run concurrently up to the cap (${MAX_TITLES})`,
+    server.activeThreads.size === MAX_TITLES,
+    `threads=${server.activeThreads.size}`,
+  )
+  errs.length = 0
+  send('chat', { runId: randomUUID(), prompt: 'one too many' }, nid())
+  check('one past the cap is refused, not spawned', server.activeThreads.size === MAX_TITLES && errs.length === 1,
+    `threads=${server.activeThreads.size} errs=${errs.length}`)
+  check('and the refusal is a retryable BUSY', errs[0]?.error?.code === BUSY_CODE, JSON.stringify(errs[0]?.error))
+
   await runTurn(fake, r1, ev)
+  for (let i = 0; i < extras.length; i++) await runTurn(fakes2[i], extras[i], ev)
   await waitFor(() => server.activeThreads.size === 0)
-  check('title thread torn down after its single result', server.activeThreads.size === 0)
-  check('one chat/done, no error', ev.done.length === 1 && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
+  check('every title thread torn down after its single result', server.activeThreads.size === 0, `threads=${server.activeThreads.size}`)
+  check(`${MAX_TITLES} chat/done, no error`, ev.done.length === MAX_TITLES && ev.err.length === 0, `done=${ev.done.length} err=${ev.err.length}`)
 }
 
 // ── T9: background work decides whether a thread may be reaped/evicted ────
@@ -376,8 +424,265 @@ async function t10() {
   check('closing the thread does end the generator', f.inputEnded === true)
 }
 
+// ── T11: a turn queued behind a live one must not be stranded by teardown ──
+// #dispatchTurn already refuses to queue onto a dead thread, and its comment
+// names the failure exactly: "its runId is already in runToThread ... with no
+// terminal → frontend wedge". #teardownThread had the same hazard from the
+// other side — it kills the thread WITH turns still in rec.turnQueue and never
+// answers them. Reachable two ways: chat/close-thread while a turn is queued
+// (archiveThread does abort-then-close in one tick), and the cancel path's
+// PERSIST_INTERRUPT_GRACE_MS escalation to teardown('cancel_wedged').
+async function t11() {
+  console.log('\n[T11] closing a thread answers the turns still queued behind the live one')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
+  // Turn 1 goes live and STAYS live — we never push its `result`.
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  // Turn 2 lands while turn 1 is active, so it sits in rec.turnQueue.
+  send('chat', { runId: r2, threadId: tid, persistentQuery: true, prompt: 'b' }, nid())
+  await sleep(30)
+  send('chat/close-thread', { threadId: tid })
+  await sleep(80)
+  const answered = ev.err.some((e) => e.runId === r2) || ev.done.some((d) => d.runId === r2)
+  check('the queued turn is answered, not silently dropped', answered,
+    `errs=[${ev.err.map((e) => e.code).join(',')}] dones=${ev.done.length}`)
+  // Retryable, so the frontend re-sends on a fresh thread rather than showing a
+  // dead end — the same verdict #dispatchTurn gives its own dead-thread case.
+  const t = ev.err.find((e) => e.runId === r2)
+  check('and told it may retry', t?.retryable === true, `retryable=${t?.retryable}`)
+}
+
+// ── T12: the cancel path's grace-window escalation, same question ──────
+// #cancelPersistentTurn interrupts, then after PERSIST_INTERRUPT_GRACE_MS
+// escalates to teardown('cancel_wedged') if the turn is still live. The fake
+// query's interrupt() does nothing, so this is the wedged path exactly.
+async function t12() {
+  console.log('\n[T12] a wedged cancel escalates to teardown — the queued turn still gets answered')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  send('chat', { runId: r2, threadId: tid, persistentQuery: true, prompt: 'b' }, nid())
+  await sleep(30)
+  send('chat/cancel', { runId: r1 })
+  // Past the 5s grace, so the escalation to teardown has definitely run.
+  await waitFor(() => ev.err.some((e) => e.runId === r2) || ev.done.some((d) => d.runId === r2), 8000)
+  check('the queued turn is answered after a wedged cancel',
+    ev.err.some((e) => e.runId === r2) || ev.done.some((d) => d.runId === r2),
+    `errs=[${ev.err.map((e) => `${e.runId === r2 ? 'r2:' : 'r1:'}${e.code}`).join(',')}] dones=${ev.done.length}`)
+  // The cancelled turn itself is answered — that path already worked; what was
+  // missing is everything behind it.
+  check('and the cancelled turn still reports CANCELLED',
+    ev.err.some((e) => e.runId === r1 && e.code === 'CANCELLED'))
+}
+
+// ── T13: a cancel that overtakes its own chat frame ────────────────────
+// The host writes `chat` only after a keychain read and a full `setToken`
+// round trip, while `claude_chat_cancel` writes immediately — so a Stop
+// pressed early reaches the sidecar FIRST. #handleCancel resolves runId
+// through runToThread, which is only populated when `chat` is handled, so the
+// early cancel no-ops and the run starts unstoppable. This pins the sidecar
+// half of the contract: an out-of-order cancel is a no-op (not a crash, not a
+// tombstone), which is exactly why the HOST has to re-send after the start
+// resolves (agent/chat/index.ts, after `claude_chat_start`).
+async function t13() {
+  console.log('\n[T13] a cancel arriving before its chat frame no-ops — the host must re-send')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  // Stop pressed while the host is still doing setToken: cancel lands first.
+  send('chat/cancel', { runId: r1 })
+  await sleep(10)
+  check('an unknown runId is a silent no-op, not an error', ev.err.length === 0,
+    `errs=[${ev.err.map((e) => e.code).join(',')}]`)
+  // Now the chat frame finally goes out; the run is live and NOT cancelled.
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  check('the run really did start despite the earlier cancel', fake.messages.length >= 1)
+  // The host's re-send is what actually stops it.
+  send('chat/cancel', { runId: r1 })
+  await waitFor(() => ev.err.some((e) => e.runId === r1 && e.code === 'CANCELLED'), 8000)
+  check('a cancel sent after the run is registered does stop it',
+    ev.err.some((e) => e.runId === r1 && e.code === 'CANCELLED'),
+    `errs=[${ev.err.map((e) => e.code).join(',')}]`)
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
+// ── T14: a live control changed while a turn is active must not be dropped ──
+// #handleChatPersistent reconciles model/permissionMode/fastMode/effort only
+// `&& !existing.turnActive` (server.mjs:590), so a turn that arrives mid-answer
+// runs on the thread's OLD controls, silently. Stop → switch to plan → send is
+// the reachable path, and plan mode's teeth ARE permissionMode — so the turn
+// the user made read-only can still write.
+//
+// Note the asymmetry this pins: #warnFrozenParamChange runs unconditionally so
+// a FROZEN param never changes in silence. The live-control case had no signal
+// at all.
+async function t14() {
+  console.log('\n[T14] a model change sent mid-turn reaches the query when the turn settles')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID(), r2 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, model: 'claude-sonnet-5', prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  // Turn 2 changes the model while turn 1 is still generating.
+  send('chat', { runId: r2, threadId: tid, persistentQuery: true, model: 'claude-opus-4-8', prompt: 'b' }, nid())
+  await sleep(30)
+  check('nothing is applied while the turn is still live',
+    !fake.calls.includes('setModel'), `calls=[${fake.calls.join(',')}]`)
+  // Settle turn 1; the queued turn is about to run.
+  fake.pushEvent({ type: 'result', subtype: 'success', stop_reason: 'end_turn', usage: {}, total_cost_usd: 0 })
+  await waitFor(() => fake.messages.length >= 2, 5000)
+  check('the change is applied before the next turn runs',
+    fake.calls.includes('setModel'), `calls=[${fake.calls.join(',')}]`)
+  // And it must not be applied twice — the reconcile is consumed, not sticky.
+  fake.pushEvent({ type: 'result', subtype: 'success', stop_reason: 'end_turn', usage: {}, total_cost_usd: 0 })
+  await waitFor(() => ev.done.some((d) => d.runId === r2), 5000)
+  check('applied exactly once', fake.calls.filter((c) => c === 'setModel').length === 1,
+    `calls=[${fake.calls.join(',')}]`)
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
+// ── T15: subagent token deltas must not ride the firehose ──────────────
+// With forwardSubagentText on, each subagent message ALSO arrives whole as a
+// `type:'assistant'` event carrying parent_tool_use_id, and that is what builds
+// the subagent lane (streamParser.ts:421-452). The per-token stream_events with
+// a parent id are therefore redundant — streamParser.ts:183 drops them, but only
+// after they crossed the pipe, a full serde_json::Value tree, one app.emit per
+// window, and zod. Filter at the source.
+//
+// The trap this also pins: #isContentEvent counts stream_event when minting
+// bgTurnRunId, so a filter placed BEFORE that check would break
+// background-turn detection.
+async function t15() {
+  console.log('\n[T15] subagent stream_events are dropped at the source, main-thread ones are not')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await waitFor(() => fake.messages.length >= 1)
+  const before = ev.event.length
+
+  fake.pushEvent({ type: 'stream_event', parent_tool_use_id: 'toolu_sub', event: { delta: 'x' } })
+  await sleep(30)
+  check('a subagent stream_event is not forwarded', ev.event.length === before,
+    `events=${ev.event.length - before}`)
+
+  fake.pushEvent({ type: 'stream_event', parent_tool_use_id: null, event: { delta: 'y' } })
+  await waitFor(() => ev.event.length > before)
+  check("the main thread's own stream_event still is", ev.event.length === before + 1)
+
+  // The subagent LANE's supplier must survive — this is the event the frontend
+  // actually builds subagent rows from.
+  fake.pushEvent({ type: 'assistant', parent_tool_use_id: 'toolu_sub', message: { content: [] } })
+  await waitFor(() => ev.event.length > before + 1)
+  check('an assistant event with a parent id still is', ev.event.length === before + 2)
+
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
+// ── T16: the filter must not break background-turn detection ───────────
+// bgTurnRunId is minted by #isContentEvent, which counts stream_event. A
+// main-thread stream_event arriving BETWEEN turns must still mint it.
+async function t16() {
+  console.log('\n[T16] a between-turns stream_event still opens a background turn')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await runTurn(fake, r1, ev)
+  // Turn settled → turnActive false. A content event now is an autonomous
+  // background-completion turn.
+  fake.pushEvent({ type: 'stream_event', parent_tool_use_id: null, event: { delta: 'z' } })
+  await waitFor(() => ev.event.some((e) => e.background === true))
+  const bg = ev.event.find((e) => e.background === true)
+  check('it is tagged background with a synthetic runId',
+    !!bg && typeof bg.runId === 'string' && bg.runId !== r1, `runId=${bg?.runId}`)
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
+// ── T16b: the filter's placement, pinned by the one observable difference ──
+// A SUBAGENT stream_event between turns is dropped, but it still passes through
+// #isContentEvent first and mints bgTurnRunId. That matters because chat/task
+// reads bgTurnRunId (server.mjs:1593) — so a task event arriving in the window
+// before any surviving content event carries the synthetic runId rather than
+// null. Filtering before the mint would make it null.
+//
+// This replaces a claim I made and could not support: I first wrote that
+// filtering early would "break background-turn detection". It would not — the
+// whole-message `assistant` event is a content event too and mints on its own.
+// The real difference is narrower, and this is it.
+async function t16b() {
+  console.log('\n[T16b] a dropped subagent event still mints the background runId for chat/task')
+  fakes.length = 0
+  const { send, ev } = makeServer()
+  const tid = randomUUID(), r1 = randomUUID()
+  send('chat', { runId: r1, threadId: tid, persistentQuery: true, prompt: 'a' }, nid())
+  const fake = await awaitFake(1)
+  await runTurn(fake, r1, ev)
+  // Between turns. This is filtered out of chat/event, but not out of the mint.
+  fake.pushEvent({ type: 'stream_event', parent_tool_use_id: 'toolu_sub', event: { delta: 'x' } })
+  await sleep(30)
+  const taskBefore = ev.task.length
+  fake.pushEvent({ type: 'system', subtype: 'task_progress', task_id: 't1', description: 'd' })
+  await waitFor(() => ev.task.length > taskBefore)
+  const t = ev.task[ev.task.length - 1]
+  check('the task event carries the synthetic runId, not null',
+    typeof t?.runId === 'string' && t.runId !== r1, `runId=${t?.runId}`)
+  send('chat/close-thread', { threadId: tid }); await sleep(50)
+}
+
+// ── T17: the thread cap is a real bound, not an advisory one ───────────
+// #maybeEvictLRU only ever evicts an IDLE, background-free thread. When every
+// live thread is busy it finds no victim, and #ensureThread used to build one
+// more anyway — each thread is a `claude` CLI subprocess, measured at ~436MB.
+//
+// The refusal is deliberately narrow, and that narrowness is what makes it
+// acceptable: switching between many chats leaves them idle, so eviction
+// silently makes room and the user never sees this. It fires only when MAX
+// threads are ALL generating or holding background work.
+async function t17() {
+  console.log('\n[T17] with every thread busy, one more is refused rather than spawned')
+  fakes.length = 0
+  const { server, send, ev } = makeServer()
+  const tids = []
+  // Fill to MAX with threads that never settle — all busy.
+  for (let i = 0; i < MAX; i++) {
+    const tid = randomUUID()
+    tids.push(tid)
+    send('chat', { runId: randomUUID(), threadId: tid, persistentQuery: true, prompt: 'x' }, nid())
+    const f = await awaitFake(i + 1)
+    await waitFor(() => f.messages.length >= 1)
+  }
+  check(`${MAX} live threads, all busy`, server.activeThreads.size === MAX,
+    `size=${server.activeThreads.size}`)
+
+  const overflowId = nid()
+  send('chat', { runId: randomUUID(), threadId: randomUUID(), persistentQuery: true, prompt: 'y' }, overflowId)
+  await sleep(80)
+  check('no extra subprocess was created', server.activeThreads.size === MAX,
+    `size=${server.activeThreads.size} fakes=${fakes.length}`)
+  const refusal = errs.find((e) => e.id === overflowId)
+  check('the caller is told, with a retryable BUSY', !!refusal && refusal.error?.code === BUSY_CODE,
+    `err=${JSON.stringify(refusal?.error ?? null)}`)
+  check('and the reason names what to do',
+    /busy|finish|stop/i.test(refusal?.error?.message ?? ''), refusal?.error?.message)
+
+  for (const tid of tids) send('chat/close-thread', { threadId: tid })
+  await sleep(80)
+}
+
 try {
-  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10()
+  await t1(); await t2(); await t3(); await t5(); await t6(); await t7(); await t8(); await t9(); await t10(); await t11(); await t12(); await t13(); await t14(); await t15(); await t16(); await t16b(); await t17()
 } finally {
   process.stderr.write = origWrite
 }

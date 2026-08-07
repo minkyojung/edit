@@ -21,10 +21,18 @@ use tauri::{AppHandle, Emitter, Manager};
 /// emitter (`set_sidecar_state`).
 pub const SIDECAR_STATE_EVENT: &str = "sidecar:state";
 
-/// Observable lifecycle of one sidecar process, mirrored 1:1 by the TS
-/// `SidecarState` union. Tagged on `status` so the frontend store is a trivial
+/// Observable lifecycle of one sidecar process. Tagged on `status` so the
+/// frontend store is a trivial
 /// last-write-wins replace; `mode` (`chat` | `title`) identifies which sidecar,
 /// since the two run and fail independently.
+///
+/// This used to claim it was "mirrored 1:1 by the TS `SidecarState` union".
+/// There is no such union — both consumers read an inline `{status, mode}`
+/// (agent/chat/index.ts, agent/chatRun.ts) and never look at `attempt`, `max`,
+/// or `fatal`. The shape below is pinned by the test at the bottom of this
+/// file; the TS side is not, so a variant added here reaches no one.
+/// `CommandError` in commands.rs is the same pattern done the other way, with
+/// an exhaustive TS union — copy that if this ever grows a real consumer.
 #[derive(Clone, Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum SidecarState {

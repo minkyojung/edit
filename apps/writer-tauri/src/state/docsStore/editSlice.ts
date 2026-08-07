@@ -36,7 +36,7 @@ import { planFolderMove } from '@/lib/folderMove'
 import { updateWikilinksForRename } from '@/lib/renameWikilinks'
 import { normalizeTags } from '@/lib/tags'
 import { docSupportsStatus } from './helpers'
-import type { GetDocsState, KnownDoc, SetDocsState } from './types'
+import type { GetDocsState, KnownDoc, MetadataOutcome, SetDocsState } from './types'
 
 /** First free `<prefix><base>.md` (then ` 1`, ` 2`, …) not already
  * taken by another doc's relPath. `prefix` is '' for a root file or
@@ -156,7 +156,7 @@ export interface EditSlice {
    * target), and lets the flush rename-on-change machinery move the file
    * on disk. No-op if already there; refuses non-note docs. Returns true
    * on success. */
-  moveDocToFolder: (slug: string, folderPath: string) => boolean
+  moveDocToFolder: (slug: string, folderPath: string) => MetadataOutcome
   /** Rename a folder: move the directory on disk (one atomic rename),
    * rewrite the relPath of every doc inside it, and update knownFolders
    * (parent + nested). `oldPath` is the folder's vault-relative path,
@@ -176,10 +176,10 @@ export interface EditSlice {
   /** Set (or clear, with `undefined`) a note's workflow status, then
    * flush so the `.md` frontmatter reflects it immediately. No-op for
    * doc types that don't carry status (daily / system). */
-  setDocStatus: (slug: string, status: DocStatus | undefined) => void
+  setDocStatus: (slug: string, status: DocStatus | undefined) => MetadataOutcome
   /** Replace a note's tag list (trimmed, de-duped; empty clears the field),
    * then flush. No-op for doc types that don't carry metadata. */
-  setDocTags: (slug: string, tags: string[]) => void
+  setDocTags: (slug: string, tags: string[]) => MetadataOutcome
   /** Set a property's value by panel key. Typed keys coerce into their
    * catalog field (invalid values rejected → false); custom keys upsert
    * into `fm` (new keys append at the end). */
@@ -253,15 +253,17 @@ export const createEditSlice = (
 
   moveDocToFolder: (slug, folderPath) => {
     const idx = get().knownDocs.findIndex((d) => d.slug === slug)
-    if (idx < 0) return false
+    if (idx < 0) return { ok: false, reason: 'no-such-note' }
     const cur = get().knownDocs[idx]
     // Only generic notes carry a free-form relPath; daily / writing /
     // wiki / system docs have type-derived locations and don't move.
-    if (cur.type !== 'note' || !cur.relPath) return false
+    if (cur.type !== 'note' || !cur.relPath) {
+      return { ok: false, reason: 'unsupported-doc-type' }
+    }
     const base = cur.relPath.split('/').pop() ?? cur.relPath
     const stem = base.replace(/\.md$/, '')
     const prefix = folderPath ? `${folderPath}/` : ''
-    if (cur.relPath === `${prefix}${base}`) return true // already there
+    if (cur.relPath === `${prefix}${base}`) return { ok: true } // already there
     const newRelPath = uniqueRelPath(get().knownDocs, prefix, stem, slug)
     const list = [...get().knownDocs]
     list[idx] = { ...cur, relPath: newRelPath }
@@ -271,7 +273,7 @@ export const createEditSlice = (
     // renamed file). Fire it now so the move lands promptly.
     markSlugDirty(slug)
     void flushDirty()
-    return true
+    return { ok: true }
   },
 
   renameFolder: async (oldPath, newLeafName) => {
@@ -316,11 +318,13 @@ export const createEditSlice = (
 
   setDocStatus: (slug, status) => {
     const idx = get().knownDocs.findIndex((d) => d.slug === slug)
-    if (idx < 0) return
+    if (idx < 0) return { ok: false, reason: 'no-such-note' }
     const cur = get().knownDocs[idx]
     // Daily journals and system pages don't carry a workflow status.
-    if (!docSupportsStatus(cur)) return
-    if (cur.status === status) return
+    if (!docSupportsStatus(cur)) return { ok: false, reason: 'unsupported-doc-type' }
+    // Already what was asked for. The caller's request is satisfied, so this
+    // is success — the only thing that did not happen is a write.
+    if (cur.status === status) return { ok: true }
     const list = [...get().knownDocs]
     // Explicit `status` (even when undefined) so buildMetaForKnownDoc
     // writes the cleared value through mergeSidecar — same trick
@@ -330,16 +334,17 @@ export const createEditSlice = (
     markSlugDirty(slug)
     markPropertiesDirty(slug)
     void flushDirty()
+    return { ok: true }
   },
 
   setDocTags: (slug, tags) => {
     const idx = get().knownDocs.findIndex((d) => d.slug === slug)
-    if (idx < 0) return
+    if (idx < 0) return { ok: false, reason: 'no-such-note' }
     const cur = get().knownDocs[idx]
-    if (!docSupportsStatus(cur)) return
+    if (!docSupportsStatus(cur)) return { ok: false, reason: 'unsupported-doc-type' }
     const next = normalizeTags(tags)
     const prev = cur.tags ?? []
-    if (prev.length === next.length && prev.every((t, i) => t === next[i])) return
+    if (prev.length === next.length && prev.every((t, i) => t === next[i])) return { ok: true }
     const list = [...get().knownDocs]
     // Empty → undefined so buildMetaForKnownDoc drops the `tags:` block.
     list[idx] = { ...cur, tags: next.length ? next : undefined }
@@ -347,6 +352,7 @@ export const createEditSlice = (
     markSlugDirty(slug)
     markPropertiesDirty(slug)
     void flushDirty()
+    return { ok: true }
   },
 
   setDocProperty: (slug, key, value) => {

@@ -11,6 +11,7 @@ import {
 } from '@tabler/icons-react'
 import type { Icon } from '@tabler/icons-react'
 import type { BundledLanguage } from 'shiki'
+import { isToolCallInFlight } from '@/chat/types'
 import type { ToolPart as ToolPartType } from '@/chat/types'
 import { ActivityRow } from '@/chat/parts/ActivityRow'
 import { FileChip } from '@/chat/parts/FileChip'
@@ -188,7 +189,7 @@ function formatInput(input: unknown): string {
 /** Quiet state marker — a spinner while the call is in flight, a warning on
  * error, and nothing once it completes cleanly (a settled row stays calm). */
 function ToolStateMark({ state }: { state: ToolPartType['state'] }) {
-  if (state === 'input-streaming' || state === 'input-available') {
+  if (isToolCallInFlight({ state })) {
     return <IconLoader2 size={12} className="shrink-0 animate-spin text-muted-foreground" />
   }
   if (state === 'output-error') {

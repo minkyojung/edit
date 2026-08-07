@@ -39,11 +39,14 @@ message, never the system prompt.
 
 ## Verification map
 
-Everything except the first two needs `CLAUDE_CODE_OAUTH_TOKEN`.
+Everything needs `CLAUDE_CODE_OAUTH_TOKEN` except the four marked "no token"
+below, which run anywhere. (They are not the first rows — the table is
+ordered by topic, not by whether it needs a token.)
 
 | script | covers |
 |---|---|
-| `verify-lifecycle` | thread lifecycle, LRU eviction, busy/reap predicate, the prompt generator never finishing — fake SDK, no token |
+| `verify-lifecycle` | thread lifecycle, LRU eviction, busy/reap predicate, the prompt generator never finishing, orphaned queued turns — fake SDK, no token. **Needs `node --experimental-test-module-mocks`** (`mock.module` is still flagged); without it the run dies at import with `mock.module is not a function` |
+| `verify-bidirectional` | the sidecar as a JSON-RPC *caller*: minting a request, correlating the host's response, settling everyone when the connection goes — no SDK, no token |
 | `verify-session-id` | a thread id the CLI would reject still runs (the boundary normalises it) |
 | `verify-turn-queue` | a turn sent mid-answer is accepted and runs after, not concurrently |
 | `verify-git-revert-and-applied` | git revert + applied-edit signalling — no token |
@@ -57,13 +60,16 @@ Everything except the first two needs `CLAUDE_CODE_OAUTH_TOKEN`.
 | `verify-deny-rules-unconditional` | deny rules hold with the sandbox off |
 | `verify-sandbox-git-write` | the vault's git repo stays writable inside the sandbox — but its `hooks/` and `config` do not |
 | `verify-edit-roundtrip` | `propose_edit` reports its outcome back to the model |
+| `verify-edit-pending-contract` | what a `propose_*` proposal puts on the wire, and what each verdict tells the model — drives the real tool builders, no SDK, no token. Its field list is a copy (`.mjs` cannot import the host's zod schema); `src/agent/chat/editPendingContract.test.ts` compares it against the value the host DERIVES from that schema, so the copy cannot rot. Read its "WHAT IT STILL CANNOT SEE" header before trusting a green run |
 | `verify-stale-retry` | whole-doc stale → model rebase loop |
 | `verify-query-notes` | `query_notes` tool and its data-carrying relay |
+| `verify-metadata-outcome` | set_note_status / set_note_tags / move_note report a refusal instead of claiming success — no SDK, no token |
 | `verify-ask-when-forked` | AskUserQuestion only on a genuine fork |
 | `verify-uncertainty-disclosure` | the least-confident line on non-trivial edits |
 | `verify-reject-preference` | a rejected edit promoted to a preference |
 | `verify-profile-ondemand` | profile Background loaded on demand |
 | `verify-profile-title` | the title sidecar's one-shot transport |
+| `verify-thread-title` | what a title has to BE: one line in intent form, short enough that the caller's 30-char cap never fires, and two new chats started back-to-back both get one |
 
 ## SDK assumptions
 

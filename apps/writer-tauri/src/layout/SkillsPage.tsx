@@ -5,10 +5,16 @@
 // as notes). A hover-revealed trash deletes. Sits in the AppShell content
 // column like any note view — not a modal.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { IconBolt, IconChevronRight, IconTrash } from '@tabler/icons-react'
 import { openDoc } from '@/lib/openDoc'
-import { listSkills, SKILLS_REL, type VaultSkill } from '@/lib/skillsLib'
+import {
+  listSkills,
+  skillDocSlug,
+  skillMdPath,
+  type VaultSkill,
+} from '@/lib/skillsLib'
+import { useDocsStore } from '@/state/docsStore'
 import { deleteAssetByPath } from '@/lib/deleteAsset'
 import { confirm } from '@/state/confirmStore'
 import { notify } from '@/lib/notify'
@@ -16,6 +22,19 @@ import { notify } from '@/lib/notify'
 export function SkillsPage() {
   const [skills, setSkills] = useState<VaultSkill[]>([])
   const [loading, setLoading] = useState(true)
+  // A skill's slug is resolved from its path against THIS session's catalog —
+  // it is not stored in the file. Subscribed so a row becomes clickable as soon
+  // as a scan (boot, or the watcher noticing a new skill) catalogues it.
+  const knownDocs = useDocsStore((s) => s.knownDocs)
+  // Resolved once per render rather than per row: each lookup is a linear scan
+  // of the catalog, and the row needs it twice (enabled state + click).
+  const slugByDir = useMemo(
+    () =>
+      new Map(
+        skills.map((s) => [s.dir, skillDocSlug(s.dir, knownDocs)] as const),
+      ),
+    [skills, knownDocs],
+  )
 
   useEffect(() => {
     setLoading(true)
@@ -25,7 +44,8 @@ export function SkillsPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  const openSkill = (slug: string) => {
+  const openSkill = (dir: string) => {
+    const slug = slugByDir.get(dir)
     if (!slug) return
     openDoc(slug)
   }
@@ -37,7 +57,7 @@ export function SkillsPage() {
     })
     if (!ok) return
     try {
-      await deleteAssetByPath(`${SKILLS_REL}/${skill.dir}/SKILL.md`)
+      await deleteAssetByPath(skillMdPath(skill.dir))
       setSkills((cur) => cur.filter((s) => s.dir !== skill.dir))
     } catch (err) {
       console.warn('[skills] delete failed', skill.dir, err)
@@ -65,8 +85,8 @@ export function SkillsPage() {
             <li key={s.dir} className="group relative">
               <button
                 type="button"
-                onClick={() => openSkill(s.slug)}
-                disabled={!s.slug}
+                onClick={() => openSkill(s.dir)}
+                disabled={!slugByDir.get(s.dir)}
                 className="flex w-full items-center gap-3 pl-3 pr-3.5 text-left transition-colors hover:bg-accent/50 disabled:cursor-default disabled:hover:bg-transparent"
               >
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] bg-secondary text-secondary-foreground">

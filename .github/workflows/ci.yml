@@ -70,3 +70,79 @@ jobs:
       - name: Build (writer-tauri vite)
         working-directory: casablanca
         run: pnpm --filter writer-tauri build
+
+  rust:
+    name: Rust (test)
+    # macOS, not ubuntu. Seven source files are behind `cfg(target_os = "macos")`
+    # — lib.rs, window_chrome.rs, manager.rs, updater.rs, os_trash.rs, sound.rs,
+    # reveal.rs — so a green on linux would leave the platform half of the crate
+    # unbuilt. It also matches what we actually ship.
+    runs-on: macos-latest
+    steps:
+      - name: Checkout casablanca
+        uses: actions/checkout@v4
+        with:
+          path: casablanca
+
+      - name: Checkout proof-sdk (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: minkyojung/proof-sdk
+          path: proof-sdk
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: casablanca/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: casablanca/apps/writer-tauri/src-tauri
+
+      # `tauri_build::build()` runs from build.rs and validates the bundle
+      # config on EVERY cargo subcommand, so `check`, `test` and a real bundle
+      # all need the same three inputs present. None of them are in git, and
+      # missing any one of them fails before a single test compiles.
+      #
+      # 1/3 — the pinned bun, fetched by writer-tauri's postinstall. The
+      # frontend job skips scripts because vitest doesn't need it; we do.
+      - name: pnpm install
+        working-directory: casablanca
+        run: pnpm install --frozen-lockfile
+
+      # 2/3 — sidecar-pkg, the Resource the bundler ships. Packing it here also
+      # exercises the pack script itself, which is otherwise only ever run on a
+      # release build — the one path that can go stale without anyone noticing.
+      - name: Pack sidecar
+        working-directory: casablanca
+        run: pnpm --filter writer-tauri pack:sidecar
+
+      # 3/3 — the Google OAuth client, read at compile time by `include_str!`.
+      # Gitignored, and CI has no business holding the real one: nothing under
+      # test performs a Google OAuth exchange, so placeholders satisfy the
+      # compiler without putting a credential on a runner.
+      - name: Write placeholder Google OAuth secrets
+        working-directory: casablanca/apps/writer-tauri/src-tauri
+        run: |
+          mkdir -p secrets
+          echo "ci-placeholder-not-a-real-client-id" > secrets/google_client_id
+          echo "ci-placeholder-not-a-real-secret" > secrets/google_client_secret
+
+      # The suite this job exists for. It had been uncompilable — and therefore
+      # silently not running — for long enough that a deleted function's tests
+      # were still referencing it; `cargo check` without `--tests` passes in
+      # that state, so nothing local caught it either.
+      #
+      # Not gated on clippy: the crate carries pre-existing lints (complex
+      # types in the JSON-RPC plumbing), so `-D warnings` would be red on day
+      # one and teach everyone to ignore this job.
+      - name: Test (writer-tauri Rust)
+        working-directory: casablanca/apps/writer-tauri/src-tauri
+        run: cargo test --locked

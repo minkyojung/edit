@@ -47,6 +47,47 @@ const transactOriginRule = {
   },
 }
 
+// Local rule: `writeVaultFile` is the raw disk escape hatch, and a doc's
+// durable body has exactly ONE writer — the docFileSync flush, fed by
+// updateDocBody. Writing a scanned `.md` directly is invisible to both the
+// open editor and the dirty tracker, so it either destroys the user's unsaved
+// keystrokes (the rename-wikilinks bug) or is silently overwritten by the next
+// flush (the skill-accept bug). Both shipped.
+//
+// The selector is on the IMPORT rather than the call: there is exactly one
+// `writeVaultFile` in the codebase, so the name is unambiguous, and banning
+// the import also covers aliased and indirect call forms.
+//
+// What this does NOT buy: the allowlist below is path-based, so a file on it
+// can still add a bad write and lint will say nothing. It buys "a new module
+// cannot reach disk without justifying itself in this file" — which is the
+// step both shipped bugs skipped.
+const vaultWriteOwnerRule = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description:
+        'Route document-body writes through updateDocBody(); the docFileSync flush is the only sanctioned disk writer.',
+    },
+    messages: {
+      useDocBody:
+        'writeVaultFile writes disk behind the open editor. A doc body goes through ' +
+        'updateDocBody() (state/docsStore/docBody.ts), which reads the LIVE editor, ' +
+        'serializes per slug, and marks the slug dirty so the docFileSync flush persists it. ' +
+        'If this module legitimately owns a file the funnel does not cover, add it to the ' +
+        'allowlist block in eslint.config.js with a one-line reason.',
+    },
+    schema: [],
+  },
+  create(context) {
+    return {
+      "ImportSpecifier[imported.name='writeVaultFile']"(node) {
+        context.report({ node, messageId: 'useDocBody' })
+      },
+    }
+  },
+}
+
 export default tseslint.config(
   {
     ignores: [
@@ -65,11 +106,13 @@ export default tseslint.config(
       writer: {
         rules: {
           'transact-origin': transactOriginRule,
+          'vault-write-owner': vaultWriteOwnerRule,
         },
       },
     },
     rules: {
       'writer/transact-origin': 'error',
+      'writer/vault-write-owner': 'error',
       // ZWS (U+200B) is a load-bearing character in this codebase —
       // it appears intentionally inside regex literals (to strip it
       // from markdown bodies) and inside comments documenting that
@@ -133,6 +176,33 @@ export default tseslint.config(
     // bodyMarkdown; exempt them from the no-direct-assignment rule.
     files: ['src/state/docsStore/docBody.ts', 'src/**/*.test.{ts,tsx}'],
     rules: { 'no-restricted-syntax': 'off' },
+  },
+  {
+    // Modules that own a file the doc-body funnel does not cover. Each line
+    // says why; adding one without a reason is the thing this rule exists to
+    // make somebody stop and do.
+    files: [
+      'src/lib/vault.ts', // defines it
+      'src/lib/docFileSync.ts', // THE doc writer — the flush the rule points at
+      // Both of these write a doc's markdown, but only on the branch where the
+      // doc has NO live handle (no mirror, no editor — disk is the note).
+      // Routing those through the funnel would build a handle per note, which
+      // marks the slug dirty and never frees it.
+      'src/lib/renameWikilinks.ts',
+      'src/state/skillProposalStore.ts',
+      'src/state/wikiIndex.ts', // generated _system/index.md, documented overwrite contract
+      'src/state/vaultTimeline.ts', // generated timeline page, same contract
+      'src/lib/threadFiles.ts', // .octave/threads — dot-dir, never scanned as docs
+      'src/lib/assetTombstone.ts', // .json bookkeeping, not a doc
+      'src/lib/claudeImport.ts', // one-shot import, runs before the first scan
+      'src/lib/commandsLib.ts', // create-if-absent seed (vaultFileExists-guarded)
+      'src/lib/agentsLib.ts', // create-if-absent seed
+      'src/lib/skillsLib.ts', // create-if-absent seed
+      'src/lib/templates.ts', // create-if-absent seed
+      'src/lib/seedClaudeMd.ts', // one-shot migration, guarded on both sides
+      'src/**/*.test.{ts,tsx}', // mocks + vault's own unit tests
+    ],
+    rules: { 'writer/vault-write-owner': 'off' },
   },
   {
     // Build/CI helper scripts run under Node, not the browser — declare its

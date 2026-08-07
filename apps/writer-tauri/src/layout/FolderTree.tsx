@@ -43,6 +43,7 @@ import {
   IconMusic,
   IconVideo,
   IconFileText,
+  IconBrowser,
   IconFile,
 } from '@tabler/icons-react'
 import { useDocsStore } from '@/state/docsStore'
@@ -524,6 +525,8 @@ function attachmentIcon(name: string) {
       return IconVideo
     case 'text':
       return IconFileText
+    case 'html':
+      return IconBrowser
     default:
       return IconFile
   }

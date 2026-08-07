@@ -14,6 +14,7 @@ import { IconExternalLink, IconFile } from '@tabler/icons-react'
 import { convertFileSrc } from '@tauri-apps/api/core'
 import { openVaultFile, readVaultBinary, vaultAbsPath } from '@/lib/vault'
 import { classifyAsset } from '@/lib/attachments'
+import { useArtifactRevision } from '@/state/artifactRevisionStore'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -61,6 +62,10 @@ export function FileViewer() {
   const rel = useParams().rel ?? ''
   const kind = classifyAsset(rel)
   const fileName = rel.split('/').pop() ?? rel
+  // Bumped by vaultWatcher's artifact branch once the writes to this file
+  // settle. Only the html branch uses it — the other kinds are files the user
+  // brought in, not ones the agent rewrites underneath them.
+  const revision = useArtifactRevision(rel)
 
   // Asset URL for media (convertFileSrc) OR decoded text for text files.
   const [assetUrl, setAssetUrl] = useState<string | null>(null)
@@ -115,6 +120,42 @@ export function FileViewer() {
           />
         ) : kind === 'pdf' && assetUrl ? (
           <iframe src={assetUrl} title={fileName} className="h-full w-full border-0" />
+        ) : kind === 'html' && assetUrl ? (
+          // An HTML artifact is model-authored code, so this frame is a trust
+          // boundary, not a convenience. `allow-scripts` is what makes the
+          // artifact interactive at all; withholding `allow-same-origin` is what
+          // keeps it from reading the vault.
+          //
+          // NEVER add `allow-same-origin`. Measured in a --debug bundle: without
+          // the sandbox attribute, a script in this frame fetches
+          // `asset://localhost/<pct-encoded abs path>` and gets any file under
+          // assetProtocol's `$HOME/**` scope — a planted sentinel came back.
+          // With `allow-scripts` alone the frame lands on an opaque origin and
+          // the same fetch fails; `allow-same-origin` undoes exactly that.
+          // Tauri's IPC bridge does NOT reach here either (`__TAURI_INTERNALS__`
+          // is undefined and `window.parent` throws cross-origin), so `invoke`
+          // is not a second route. See docs/html-artifact-view-2026-07.md.
+          //
+          // Consequences worth knowing before someone "fixes" them: the frame is
+          // subject to no CSP (asset: responses carry no header and the parent's
+          // does not reach a child document), so its network egress is open —
+          // the sandbox bounds reads, not exfiltration. And with no
+          // allow-modals / allow-popups / allow-forms, an artifact calling
+          // alert(), window.open(), or submitting a form silently does nothing.
+          // The `key` is the re-render: React drops the old element and mounts a
+          // fresh one at the same src, which is what makes the frame re-fetch.
+          // Not a `?v=` query param — asset URLs pct-encode the whole path into
+          // a single segment, so a query string risks being folded into it and
+          // 403-ing (measured: a relative sibling fetch 403s for that reason).
+          // In-frame state resets on a bump, unavoidably; the artifact cannot
+          // even save its own, since localStorage throws on the opaque origin.
+          <iframe
+            key={`${rel}#${revision}`}
+            src={assetUrl}
+            title={fileName}
+            sandbox="allow-scripts"
+            className="h-full w-full border-0 bg-white"
+          />
         ) : kind === 'video' && assetUrl ? (
           <video
             src={assetUrl}

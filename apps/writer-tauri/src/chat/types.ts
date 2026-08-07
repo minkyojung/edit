@@ -406,6 +406,16 @@ export type ToolPartState =
   | 'output-error'      // result returned with an error
   | 'approval-requested' // host needs to approve before execution
 
+/** Still waiting on a result — the two states the UI renders as a spinner.
+ *
+ * Lives next to the union because four places ask this question (the row's
+ * state mark, the task-activity row, the inline suggestion, and the settle
+ * normaliser) and three of them used to spell out the same pair of literals. A
+ * new non-terminal state added above would have had to be found in all of them. */
+export function isToolCallInFlight(part: { state: ToolPartState }): boolean {
+  return part.state === 'input-streaming' || part.state === 'input-available'
+}
+
 export interface ToolPart {
   id: string
   ts: number

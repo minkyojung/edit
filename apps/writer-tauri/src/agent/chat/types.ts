@@ -73,9 +73,17 @@ export interface RunChatArgs {
    * - `'plan'` — read-only planning turn; the SDK blocks tool execution and
    *   the caller also drops the propose_* relays + Bash.
    * Omit only for non-chat callers (e.g. ingest) that want the sidecar's
-   * bypassPermissions default. */
-  permissionMode?: 'plan' | 'default' | 'acceptEdits'
-  /** acceptEdits mode: auto-accept each proposed change the instant it lands
+   * bypassPermissions default.
+   *
+   * The SDK's own `'acceptEdits'` was listed here and never sent — the one
+   * assignment is `isPlan ? 'plan' : 'default'` (useChatRunner.ts), and the
+   * sidecar has no branch for it either. Auto-accept in this product is
+   * `autoAcceptEdits` below, which the host applies to a staged proposal; the
+   * SDK mode would have let the SDK's own Edit tool write to disk, which is
+   * the architecture this one replaced. Leaving the value declared invited
+   * someone to reach for the wrong one. */
+  permissionMode?: 'plan' | 'default'
+  /** Auto-accept each proposed change the instant it lands
    * (apply without waiting for a manual Keep). The diff still renders — now as
    * an already-applied change. Default false → edits stay pending for review. */
   autoAcceptEdits?: boolean
@@ -373,6 +381,22 @@ export interface TaskEvent {
   outputFile?: string
   /** task_updated merge-patch (status/is_backgrounded/…). */
   patch?: { status?: string; is_backgrounded?: boolean; error?: string }
+}
+
+/** A proposal the model made through a `propose_*` relay tool, forwarded on
+ * `claude:edit-pending`. The sidecar's tool call is PARKED on the host's answer
+ * to this — see `editPendingListener.ts`, which decides and acks. */
+export interface EditPendingEvent {
+  runId: string
+  /** The review card's identity, and what the ack has to quote back: the
+   * sidecar parks its request under this id (`Key::FromParam("pendingId")` in
+   * manager.rs), so an ack without it reaches nobody. */
+  pendingId: string
+  /** 'Write' | 'Edit' | 'MultiEdit' — the built-in the relay tool mirrors. */
+  toolName: string
+  /** The tool's own arguments (file_path plus the tool-specific rest). Passed
+   * through to the mapper, which owns the per-tool shapes. */
+  input: Record<string, unknown>
 }
 
 export interface ErrorEvent {

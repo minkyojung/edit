@@ -70,6 +70,8 @@ function request(method, params) {
   return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); child.stdin.write(encode({ jsonrpc: '2.0', id, method, params })) })
 }
 function notify(method, params) { child.stdin.write(encode({ jsonrpc: '2.0', method, params })) }
+/** Answer a request the sidecar sent US — the verdict IS the tool's result. */
+function respond(id, result) { child.stdin.write(encode({ jsonrpc: '2.0', id, result })) }
 
 let failed = false
 const ok = (l) => console.log(`  ✓ ${l}`)
@@ -94,11 +96,11 @@ notifListeners.push((msg) => {
     }
   }
   // HOST role: record the proposal and return this run's verdict.
-  if (msg.method === 'chat/edit-pending') {
+  if (msg.method === 'host/editPending') {
     const { pendingId, toolName, input } = msg.params
     proposals.push({ pendingId, toolName, input })
     console.log(`  … proposal #${proposals.length} (${toolName}) — acking ${JSON.stringify(verdict)}`)
-    notify('chat/edit-ack', { pendingId, ...verdict })
+    respond(msg.id, verdict)
   }
 })
 

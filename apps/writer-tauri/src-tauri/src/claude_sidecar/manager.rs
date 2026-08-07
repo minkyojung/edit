@@ -4,6 +4,7 @@
 
 use std::ffi::OsString;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -11,7 +12,11 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::RwLock;
 
-use super::client::{ExitHandler, NotificationHandler, SidecarClient, SidecarError};
+use super::client::{
+    ExitHandler, NotificationHandler, RequestHandler, SidecarClient, SidecarError, INVALID_PARAMS,
+    METHOD_NOT_FOUND,
+};
+use super::pending_frontend::PendingFrontend;
 use super::state::{set_sidecar_state, SidecarState};
 
 // Self-reference handle for exit closures. Set after the SidecarManager Arc
@@ -54,18 +59,33 @@ struct RestartGuard {
     last_spawn: Instant,
 }
 
+#[derive(Debug)]
 enum RestartAction {
     /// Wait this long, then respawn.
     Backoff(Duration),
     /// Too many consecutive fast deaths — stop trying.
     GiveUp,
+    /// We asked for this exit (app quit). Leave it alone — respawning here
+    /// would resurrect a sidecar the app is in the middle of tearing down.
+    Expected,
 }
 
-/// Pure crash-loop policy. Given the consecutive-fast-death count so far and
-/// how long the just-dead instance lived, return the updated count and what to
-/// do next. Extracted from `handle_exit` so the escalation math is unit-tested
-/// without spawning real processes.
-fn restart_decision(prev_consecutive: u32, lived: Duration) -> (u32, RestartAction) {
+/// Pure crash-loop policy. Given whether the app is shutting down, the
+/// consecutive-fast-death count so far, and how long the just-dead instance
+/// lived, return the updated count and what to do next. Extracted from
+/// `handle_exit` so the escalation math is unit-tested without spawning real
+/// processes.
+fn restart_decision(
+    shutting_down: bool,
+    prev_consecutive: u32,
+    lived: Duration,
+) -> (u32, RestartAction) {
+    // Supervision is for deaths we didn't ask for. A sidecar leaving because we
+    // told it to says nothing about its health, so it neither respawns nor
+    // spends crash-loop budget.
+    if shutting_down {
+        return (prev_consecutive, RestartAction::Expected);
+    }
     // A death after a healthy run is an isolated incident, not a loop: reset
     // the streak (this death counts as the first restart).
     let consecutive = if lived >= HEALTHY_UPTIME {
@@ -108,10 +128,18 @@ pub struct SidecarManager {
     title: RwLock<Arc<SidecarClient>>,
     self_ref: SelfRef,
     notification_handler: NotificationHandler,
+    /// Requests from the chat sidecar that the frontend has to answer. Only
+    /// the chat sidecar can ask — the title sidecar runs one-shot completions
+    /// and has no relay tools.
+    pending_frontend: Arc<PendingFrontend>,
     launcher: Launcher,
     app: AppHandle,
     chat_restart: Mutex<RestartGuard>,
     title_restart: Mutex<RestartGuard>,
+    /// Set once `shutdown_all` starts, and never cleared — the app is on its
+    /// way out. Read by the supervisor so the graceful exits we're about to
+    /// request aren't mistaken for crashes.
+    shutting_down: AtomicBool,
 }
 
 impl SidecarManager {
@@ -125,6 +153,7 @@ impl SidecarManager {
         );
 
         let handler = build_notification_handler(app.clone());
+        let pending_frontend = Arc::new(PendingFrontend::new());
         let self_ref: SelfRef = Arc::new(OnceLock::new());
 
         let chat_exit = build_exit(self_ref.clone(), Mode::Chat);
@@ -138,6 +167,7 @@ impl SidecarManager {
             &launcher.args_for("chat"),
             &launcher.env,
             handler.clone(),
+            Some(build_request_handler(app.clone(), pending_frontend.clone())),
             Some(chat_exit),
         )
         .await?;
@@ -146,6 +176,7 @@ impl SidecarManager {
             &launcher.args_for("title"),
             &launcher.env,
             handler.clone(),
+            None,
             Some(title_exit),
         )
         .await?;
@@ -160,10 +191,12 @@ impl SidecarManager {
             title: RwLock::new(Arc::new(title)),
             self_ref: self_ref.clone(),
             notification_handler: handler,
+            pending_frontend,
             launcher,
             app: app.clone(),
             chat_restart: Mutex::new(RestartGuard { consecutive: 0, last_spawn: Instant::now() }),
             title_restart: Mutex::new(RestartGuard { consecutive: 0, last_spawn: Instant::now() }),
+            shutting_down: AtomicBool::new(false),
         });
 
         // Wire the self-ref so the exit closures can find us when they fire.
@@ -192,6 +225,11 @@ impl SidecarManager {
         self.chat.read().await.clone()
     }
 
+    /// Requests from the chat sidecar still waiting on a frontend answer.
+    pub fn pending_frontend(&self) -> &Arc<PendingFrontend> {
+        &self.pending_frontend
+    }
+
     /// Snapshots the current title client.
     pub async fn title_client(&self) -> Arc<SidecarClient> {
         self.title.read().await.clone()
@@ -210,6 +248,12 @@ impl SidecarManager {
     /// hard-kill each process group as a backstop, so a hung sidecar (or a CLI
     /// grandchild the graceful path didn't reap in time) still can't outlive us.
     pub async fn shutdown_all(&self, grace: std::time::Duration) {
+        // Before we ask, not after: the sidecars exit within ~250ms and the
+        // supervisor reads any exit as a crash worth respawning. Left armed, a
+        // quit would spawn a fresh sidecar mid-teardown — and `app.exit(0)`
+        // skips `Drop`, so that one really would be orphaned.
+        self.shutting_down.store(true, Ordering::SeqCst);
+
         let chat = self.chat_client().await;
         let title = self.title_client().await;
 
@@ -311,28 +355,36 @@ impl SidecarManager {
     async fn handle_exit(&self, mode: Mode) {
         // Decide backoff vs give-up from how the just-dead instance behaved.
         // The lock is released at the end of this block, before any await.
-        let (give_up, delay, attempt) = {
+        let (attempt, action) = {
             let mut g = self.restart_guard(mode).lock().unwrap();
-            let (next, action) = restart_decision(g.consecutive, g.last_spawn.elapsed());
+            let (next, action) = restart_decision(
+                self.shutting_down.load(Ordering::SeqCst),
+                g.consecutive,
+                g.last_spawn.elapsed(),
+            );
             g.consecutive = next;
-            match action {
-                RestartAction::GiveUp => (true, Duration::ZERO, next),
-                RestartAction::Backoff(d) => (false, d, next),
-            }
+            (next, action)
         };
 
-        if give_up {
-            eprintln!(
-                "[sidecar manager] {} sidecar crash-looped past {} restarts; giving up",
-                mode.as_str(),
-                MAX_CONSECUTIVE_RESTARTS,
-            );
-            set_sidecar_state(
-                &self.app,
-                SidecarState::Dead { mode: mode.as_str().into(), fatal: true },
-            );
-            return;
-        }
+        let delay = match action {
+            // Not our business: the app asked this sidecar to leave. Returning
+            // before the `Restarting` emit also keeps a quit from flashing a
+            // respawn the user will never see the end of.
+            RestartAction::Expected => return,
+            RestartAction::GiveUp => {
+                eprintln!(
+                    "[sidecar manager] {} sidecar crash-looped past {} restarts; giving up",
+                    mode.as_str(),
+                    MAX_CONSECUTIVE_RESTARTS,
+                );
+                set_sidecar_state(
+                    &self.app,
+                    SidecarState::Dead { mode: mode.as_str().into(), fatal: true },
+                );
+                return;
+            }
+            RestartAction::Backoff(d) => d,
+        };
 
         // Announce the impending respawn. Consumers settle in-flight work on
         // this transition. `attempt` is the consecutive-fast-death count; the
@@ -372,12 +424,25 @@ impl SidecarManager {
 
     async fn restart(&self, mode: Mode) -> Result<(), SidecarError> {
         eprintln!("[sidecar manager] {} sidecar exited; respawning", mode.as_str());
+        // The process that asked these questions is gone, so its answers have
+        // nowhere to land. Release them here rather than on the next spawn:
+        // if the respawn itself fails we return early, and the slots would
+        // otherwise sit there across every subsequent restart.
+        if matches!(mode, Mode::Chat) {
+            let released = self.pending_frontend.release_all().await;
+            if released > 0 {
+                eprintln!("[sidecar manager] released {released} pending frontend request(s)");
+            }
+        }
         let exit_handler = build_exit(self.self_ref.clone(), mode);
+        let request_handler = matches!(mode, Mode::Chat)
+            .then(|| build_request_handler(self.app.clone(), self.pending_frontend.clone()));
         let client = SidecarClient::spawn_initialized(
             &self.launcher.program,
             &self.launcher.args_for(mode.as_str()),
             &self.launcher.env,
             self.notification_handler.clone(),
+            request_handler,
             Some(exit_handler),
         )
         .await?;
@@ -452,6 +517,90 @@ fn build_notification_handler(app: AppHandle) -> NotificationHandler {
         if let Err(e) = app.emit(event_name.as_str(), params) {
             eprintln!("[sidecar manager] emit {event_name} failed: {e}");
         }
+    })
+}
+
+/// Serves the requests the sidecar asks the *host*, as opposed to the
+/// notifications it merely announces. Built per client so the `Responder` it
+/// hands out carries that client's write channel.
+///
+/// Every method here has the same shape, and it is forced by where the answer
+/// lives: the host cannot produce one, so it parks the obligation, asks the
+/// frontend, and the frontend's reply arrives later as its own
+/// `#[tauri::command]`. Answering inline is not an option, and blocking is not
+/// either — this runs on the reader task that drains the sidecar's stdout.
+/// Where a request's parking key comes from. Some already carry an id the
+/// frontend threads through its own work and quotes back; the rest get a
+/// minted one written into the outgoing event under the named field.
+enum Key {
+    FromParam(&'static str),
+    Mint(&'static str),
+}
+
+/// The requests the host serves, and how each is announced to the frontend.
+/// One table rather than a branch per method — a new one is a row.
+fn route(method: &str) -> Option<(&'static str, Key)> {
+    Some(match method {
+        "host/queryNotes" => ("claude:query-notes", Key::Mint("queryId")),
+        // The review card's own identity, already threaded through the
+        // frontend's per-path queueing before any ack is sent.
+        "host/editPending" => ("claude:edit-pending", Key::FromParam("pendingId")),
+        // Keys the permission card the user is looking at.
+        "host/permission" => ("claude:permission", Key::FromParam("decisionId")),
+        "host/setNoteStatus" => ("claude:set-status", Key::Mint("requestId")),
+        "host/setNoteTags" => ("claude:set-tags", Key::Mint("requestId")),
+        "host/moveNote" => ("claude:move-note", Key::Mint("requestId")),
+        _ => return None,
+    })
+}
+
+fn build_request_handler(app: AppHandle, pending: Arc<PendingFrontend>) -> RequestHandler {
+    Arc::new(move |method, params, responder| {
+        let Some((event, key_source)) = route(&method) else {
+            responder.err(METHOD_NOT_FOUND, &format!("method not found: {method}"));
+            return;
+        };
+        // Resolved before the spawn so a malformed request is refused on the
+        // spot rather than after a task hop.
+        let key = match key_source {
+            Key::Mint(field) => Err(field),
+            Key::FromParam(field) => match params.get(field).and_then(Value::as_str) {
+                Some(id) => Ok(id.to_owned()),
+                None => {
+                    responder.err(INVALID_PARAMS, &format!("{method} requires a {field}"));
+                    return;
+                }
+            },
+        };
+        // Parked under the runId so a cancelled run releases it. Without one we
+        // could park it but never know when to give up, so refuse instead.
+        let Some(run_id) = params.get("runId").and_then(Value::as_str).map(str::to_owned) else {
+            responder.err(INVALID_PARAMS, &format!("{method} requires a runId"));
+            return;
+        };
+        let (app, pending) = (app.clone(), pending.clone());
+        tauri::async_runtime::spawn(async move {
+            let mut payload = params;
+            // Park before emitting, never after: the frontend replies by
+            // quoting the key, so the slot has to exist before the event that
+            // carries it goes out. The window where a slot is parked but
+            // unannounced is closed by releasing it if the emit fails.
+            let key = match key {
+                Ok(from_param) => from_param,
+                Err(field) => {
+                    let minted = pending.mint();
+                    payload[field] = json!(minted);
+                    minted
+                }
+            };
+            if !pending.park(run_id, &key, responder).await {
+                return; // park answered the loser itself
+            }
+            if let Err(e) = app.emit(event, payload) {
+                eprintln!("[sidecar manager] emit {event} failed: {e}");
+                pending.release(&key).await;
+            }
+        });
     })
 }
 
@@ -708,10 +857,13 @@ mod dev_paths {
 mod tests {
     use super::*;
 
+    const RUNNING: bool = false;
+    const QUITTING: bool = true;
+
     fn backoff_ms(prev: u32, lived: Duration) -> u64 {
-        match restart_decision(prev, lived).1 {
+        match restart_decision(RUNNING, prev, lived).1 {
             RestartAction::Backoff(d) => d.as_millis() as u64,
-            RestartAction::GiveUp => panic!("expected Backoff, got GiveUp"),
+            other => panic!("expected Backoff, got {other:?}"),
         }
     }
 
@@ -719,7 +871,7 @@ mod tests {
     fn fast_deaths_escalate_backoff() {
         // A fresh crash loop: each fast death grows the delay 0.5→1→2→4→8s.
         let fast = Duration::from_secs(1);
-        assert_eq!(restart_decision(0, fast).0, 1);
+        assert_eq!(restart_decision(RUNNING, 0, fast).0, 1);
         assert_eq!(backoff_ms(0, fast), 500);
         assert_eq!(backoff_ms(1, fast), 1000);
         assert_eq!(backoff_ms(2, fast), 2000);
@@ -730,7 +882,8 @@ mod tests {
     #[test]
     fn gives_up_past_the_cap() {
         // The 6th consecutive fast death (prev = MAX = 5) stops the loop.
-        let (next, action) = restart_decision(MAX_CONSECUTIVE_RESTARTS, Duration::from_secs(1));
+        let (next, action) =
+            restart_decision(RUNNING, MAX_CONSECUTIVE_RESTARTS, Duration::from_secs(1));
         assert_eq!(next, MAX_CONSECUTIVE_RESTARTS + 1);
         assert!(matches!(action, RestartAction::GiveUp));
     }
@@ -739,27 +892,43 @@ mod tests {
     fn healthy_run_resets_the_streak() {
         // A death after a healthy uptime drops the streak back to 1 and the
         // shortest backoff, even if the prior streak was near the cap.
-        let (next, action) = restart_decision(MAX_CONSECUTIVE_RESTARTS, HEALTHY_UPTIME);
+        let (next, action) = restart_decision(RUNNING, MAX_CONSECUTIVE_RESTARTS, HEALTHY_UPTIME);
         assert_eq!(next, 1);
         assert!(matches!(action, RestartAction::Backoff(d) if d == Duration::from_millis(500)));
     }
 
     #[test]
-    fn event_name_matches_the_old_hardcoded_table() {
+    fn a_death_during_quit_is_expected_not_supervised() {
+        // On quit we ask each sidecar to leave, and it exits within ~250ms —
+        // well inside HEALTHY_UPTIME, so the crash-loop math would read it as a
+        // fast death and respawn after a 500ms backoff. The app exits at 700ms,
+        // so that respawn lands in a ~50ms window and leaves behind exactly the
+        // orphan the graceful shutdown exists to avoid.
+        let (next, action) = restart_decision(QUITTING, 3, Duration::from_millis(250));
+        assert!(matches!(action, RestartAction::Expected));
+        // And it must not spend crash-loop budget: an exit we asked for says
+        // nothing about whether the sidecar is healthy.
+        assert_eq!(next, 3, "an expected exit counted as a fast death");
+    }
+
+    #[test]
+    fn every_notification_the_sidecar_emits_reaches_its_tauri_event() {
         // Golden test pinning behaviour-equivalence with the hardcoded match
-        // this transform replaced: every method the sidecar actually emits must
-        // map to the exact same Tauri event the old table produced.
+        // this transform replaced. The list IS the sidecar's emit set — grep
+        // `notification('` in sidecar/src — so a row here that the sidecar
+        // does not send is a claim about a channel that does not exist.
+        //
+        // Five, not ten. `chat/edit-pending`, `chat/move-note` and
+        // `chat/permission` became host-side requests (§3b) and are now emitted
+        // by build_request_handler, not forwarded through here. `chat/proposal`
+        // and `ingest/result` were never emitted by anything.
+        // (`auth/refreshNeeded` is intercepted before this function.)
         for (method, expected) in [
             ("chat/event", "claude:event"),
             ("chat/done", "claude:done"),
             ("chat/error", "claude:error"),
             ("chat/task", "claude:task"),
-            ("chat/proposal", "claude:proposal"),
-            ("chat/edit-pending", "claude:edit-pending"),
             ("chat/skill-pending", "claude:skill-pending"),
-            ("chat/move-note", "claude:move-note"),
-            ("chat/permission", "claude:permission"),
-            ("ingest/result", "ingest:result"),
         ] {
             assert_eq!(notification_event_name(method).as_deref(), Some(expected));
         }
@@ -773,5 +942,38 @@ mod tests {
         // ...while a malformed, non-namespaced method is dropped (logged), not
         // forwarded as a bare event.
         assert_eq!(notification_event_name("shutdown"), None);
+    }
+
+    /// Every method the sidecar can ask, and the event each becomes. A typo on
+    /// either side is a silent -32601 at runtime — the sidecar's tool reports a
+    /// failure the user reads as a product bug — so the pairing is pinned here
+    /// rather than discovered in the app.
+    #[test]
+    fn every_served_method_maps_to_its_frontend_event() {
+        for (method, event, minted) in [
+            ("host/queryNotes", "claude:query-notes", Some("queryId")),
+            ("host/editPending", "claude:edit-pending", None),
+            ("host/permission", "claude:permission", None),
+            ("host/setNoteStatus", "claude:set-status", Some("requestId")),
+            ("host/setNoteTags", "claude:set-tags", Some("requestId")),
+            ("host/moveNote", "claude:move-note", Some("requestId")),
+        ] {
+            let (got_event, key) = route(method).unwrap_or_else(|| panic!("{method} is unserved"));
+            assert_eq!(got_event, event, "{method}");
+            match (key, minted) {
+                (Key::Mint(f), Some(want)) => assert_eq!(f, want, "{method} mint field"),
+                (Key::FromParam(_), None) => {}
+                _ => panic!("{method}: wrong key source"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_unserved_method_is_refused_rather_than_routed_somewhere() {
+        assert!(route("host/whatever").is_none());
+        // Near-misses, because a rename that only lands on one side is the
+        // realistic way this breaks.
+        assert!(route("host/setNoteStatuses").is_none());
+        assert!(route("chat/set-status").is_none());
     }
 }

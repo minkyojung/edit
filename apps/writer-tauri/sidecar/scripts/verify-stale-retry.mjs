@@ -1,12 +1,13 @@
 // Headless end-to-end check for the whole-doc STALE → model-retry loop.
 // Drives a live sidecar; this harness plays the HOST. It lets the model make a
-// whole-doc `propose_write`, then acks that first proposal as STALE
-// (`chat/edit-ack` ok:false + a reason that inlines the "latest" body, as the
-// real CAS would when the user edited the note mid-generation). It verifies the
+// whole-doc `propose_write`, then refuses that first proposal as STALE (a
+// `host/editPending` response with ok:false and a reason that inlines the
+// "latest" body, as the real CAS would when the user edited the note
+// mid-generation). It verifies the
 // real model then RETRIES propose_write and REBASES onto the injected latest
 // (i.e. keeps the user's line instead of resubmitting its stale version).
 //
-// This validates the Layer A/C mechanism — the edit-ack `reason` channel
+// This validates the Layer A/C mechanism — the verdict's `reason` channel
 // carrying the host's refusal back to the model so it retries. The delivery is
 // the propose_write ROUND-TRIP: the tool handler awaits the verdict and returns
 // it as its own result. (It rode a PostToolUse hook when this file was written;
@@ -73,6 +74,8 @@ function request(method, params) {
   return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); child.stdin.write(encode({ jsonrpc: '2.0', id, method, params })) })
 }
 function notify(method, params) { child.stdin.write(encode({ jsonrpc: '2.0', method, params })) }
+/** Answer a request the sidecar sent US — the verdict IS the tool's result. */
+function respond(id, result) { child.stdin.write(encode({ jsonrpc: '2.0', id, result })) }
 
 let failed = false
 const ok = (l) => console.log(`  ✓ ${l}`)
@@ -99,7 +102,7 @@ notifListeners.push((msg) => {
     }
   }
   // HOST role: react to each whole-doc write proposal.
-  if (msg.method === 'chat/edit-pending') {
+  if (msg.method === 'host/editPending') {
     const { pendingId, input } = msg.params
     const content = input?.content ?? ''
     writes.push({ pendingId, content })
@@ -115,10 +118,10 @@ notifListeners.push((msg) => {
         `would discard the user's edits. Rewrite against the current content ` +
         `below and call the write tool again:\n\n${LATEST_BODY}`
       console.log(`  … write #1 received (${content.length} chars) — acking STALE`)
-      notify('chat/edit-ack', { pendingId, ok: false, reason })
+      respond(msg.id, { ok: false, reason })
     } else {
       console.log(`  … write #${n} received (${content.length} chars) — acking OK`)
-      notify('chat/edit-ack', { pendingId, ok: true })
+      respond(msg.id, { ok: true })
     }
   }
 })

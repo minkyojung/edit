@@ -16,6 +16,7 @@ import {
   NOT_INITIALIZED,
   NO_TOKEN,
 } from './jsonrpc.mjs'
+import { Peer } from './peer.mjs'
 import { readSkillMeta } from './frontmatter.mjs'
 import {
   rateLimitPayload,
@@ -35,6 +36,7 @@ import {
   buildProposeSkillTool,
   buildProposeMultiEditTool,
   buildMoveNoteTool,
+  refusalText,
 } from './tools/relay.mjs'
 
 
@@ -121,7 +123,7 @@ async function sessionPersisted(sessionId) {
   }
 }
 
-function buildSetNoteStatusTool(getRunId, emit) {
+export function buildSetNoteStatusTool(askHost) {
   return tool(
     'set_note_status',
     "Set a note's workflow status when the user asks (e.g. \"이거 완료 처리해줘\" → done, \"진행 중으로\" → in-progress, \"아직 시작 안 함\" → not-started). `path` is the note's vault-relative or absolute path; `status` is one of not-started / in-progress / done. Only editable notes carry a status — a daily journal or a system page will be ignored by the host. Applied IMMEDIATELY (not queued for review) and reversible. Returns immediately — do not wait. This is the ONLY way to change a note's status; never write a `status:` line into a `---` frontmatter block yourself.",
@@ -130,21 +132,30 @@ function buildSetNoteStatusTool(getRunId, emit) {
       status: z.enum(['not-started', 'in-progress', 'done']),
     },
     async (input) => {
-      emit(
-        notification('chat/set-status', {
-          runId: getRunId(),
-          path: input.path,
-          status: input.status,
-        }),
-      )
-      return {
-        content: [{ type: 'text', text: `Status set: ${input.path} → ${input.status}` }],
+      // Round-trip. The host declines silently for a note it cannot find and
+      // for doc types that carry no status — the description below says so,
+      // but until this awaited a verdict the model was told "Status set"
+      // either way and passed that on to the user.
+      const said = (text) => ({ content: [{ type: 'text', text }] })
+      try {
+        const r = await askHost('host/setNoteStatus', { path: input.path, status: input.status })
+        if (r?.ok) return said(`Status set: ${input.path} → ${input.status}`)
+        return said(
+          refusalText(
+            'the status was NOT changed',
+            'is a doc type that carries no status — a daily journal or a system page',
+            input.path,
+            r?.reason,
+          ),
+        )
+      } catch (e) {
+        return said(`(error: the status was NOT set — ${e?.message ?? 'the host did not answer'}.)`)
       }
     },
   )
 }
 
-function buildSetNoteTagsTool(getRunId, emit) {
+export function buildSetNoteTagsTool(askHost) {
   return tool(
     'set_note_tags',
     "Set a note's tags when the user asks (e.g. \"이 노트에 태그 달아줘\", \"ai, 금융 태그 붙여줘\"). `path` is the note's vault-relative or absolute path; `tags` is the COMPLETE list of tags the note should have (this REPLACES the existing tags, so include the ones to keep). Pass an empty list to clear all tags. Only editable notes carry tags — a daily journal or system page is ignored by the host. Applied IMMEDIATELY (not queued) and reversible. Returns immediately — do not wait. This is the ONLY way to change a note's tags; never write a `tags:` block into a `---` frontmatter block yourself.",
@@ -153,17 +164,20 @@ function buildSetNoteTagsTool(getRunId, emit) {
       tags: z.array(z.string()),
     },
     async (input) => {
-      emit(
-        notification('chat/set-tags', {
-          runId: getRunId(),
-          path: input.path,
-          tags: input.tags,
-        }),
-      )
-      return {
-        content: [
-          { type: 'text', text: `Tags set: ${input.path} → [${input.tags.join(', ')}]` },
-        ],
+      const said = (text) => ({ content: [{ type: 'text', text }] })
+      try {
+        const r = await askHost('host/setNoteTags', { path: input.path, tags: input.tags })
+        if (r?.ok) return said(`Tags set: ${input.path} → [${input.tags.join(', ')}]`)
+        return said(
+          refusalText(
+            'the tags were NOT changed',
+            'is a doc type that carries no tags — a daily journal or a system page',
+            input.path,
+            r?.reason,
+          ),
+        )
+      } catch (e) {
+        return said(`(error: the tags were NOT set — ${e?.message ?? 'the host did not answer'}.)`)
       }
     },
   )
@@ -225,7 +239,7 @@ const SIDECAR_VERSION = '0.1.0'
 // during `initialize` and refuses to run a mismatched sidecar — this turns
 // the "forgot to run `pnpm pack:sidecar`" foot-gun into a loud, immediate
 // failure instead of a silently stale sidecar.
-const PROTOCOL_VERSION = 1
+const PROTOCOL_VERSION = 2
 
 // Plan-mode workflow body. Replaces the SDK's default code-implementation
 // plan steps (the CLI still wraps this with its read-only preamble + the
@@ -243,6 +257,54 @@ const PLAN_MODE_INSTRUCTIONS = [
   'page(s) you will change, what the change is, and why. No ```diff or code blocks,',
   'and do not paste the full file content.',
 ].join('\n')
+
+// ── Title mode ────────────────────────────────────────────────────────────
+// A `--mode=title` sidecar has exactly one job: name a conversation from its
+// first user message. That job is defined HERE rather than by the caller, for
+// two reasons.
+//
+// It used to be defined nowhere. `claude_title` sent a systemPrompt and nothing
+// else, so the request was indistinguishable from a chat: `#applySkillsAndRelay`
+// gave it the full `claude_code` tool preset, and with no maxTurns under
+// bypassPermissions the model read its first message as work to do and ANSWERED
+// it — measured at 11 lines, whose first line the caller then set as the tab
+// title. Constraining the toolset is what makes the instruction land; the prompt
+// alone did not.
+//
+// And a policy the caller states is a policy the harness must hand-copy to test.
+// Owning it here lets `verify-thread-title` send a bare prompt and assert on the
+// real thing.
+
+/** What a title has to be. Names the user's intent as an action, because a tab
+ *  reading "회의록 정리하기" tells you what the conversation is for while a topic
+ *  noun ("회의록") does not. Length is bounded below the caller's 30-char cap
+ *  (TITLE_MAX_CHARS): a title that needs truncating is one the model got wrong. */
+const TITLE_SYSTEM_PROMPT = [
+  "Turn the user's first message into a chat title. Do NOT answer the message.",
+  '',
+  'Format:',
+  '- One line. A noun phrase naming what the user wants to DO — the intent, not',
+  '  the speech act ("ask", "tell me", "can you").',
+  '- Korean → end with "~하기" (e.g. "회의록 정리하기", "세금 신고 방법 알아보기").',
+  '- English → start with a gerund (e.g. "Refactoring auth module").',
+  '- Aim for 12 characters. Never exceed 20 characters (Korean) or 4 words (English).',
+  '- No quotes, no trailing punctuation, no "Title:" prefix, no greeting, no question.',
+  '- Same language as the message.',
+].join('\n')
+
+/** Title-mode defaults, layered UNDER the caller's params so an explicit value
+ *  still wins (`verify-profile-title` drives this transport with its own
+ *  systemPrompt). `builtinTools: []` is the SDK's documented "disable all
+ *  built-in tools" — the maximally restricted state, and the term that actually
+ *  fixed the shape. `maxTurns: 1` stops a tool-less model from looping. */
+function titleModeDefaults(params) {
+  return {
+    systemPrompt: TITLE_SYSTEM_PROMPT,
+    builtinTools: [],
+    maxTurns: 1,
+    ...params,
+  }
+}
 
 // Allow-prefix for the plan-mode Write gate: in plan mode the built-in Write is
 // permitted only for paths under this dir, so the vault stays read-only while
@@ -300,6 +362,11 @@ export class Server {
     }
     this.mode = mode
     this.emit = emit
+    // Lets the sidecar ASK the host something and await the answer, instead of
+    // faking a round-trip with a pair of notifications and a bespoke
+    // correlation map (see peer.mjs). Nothing calls it yet — the three existing
+    // bridges migrate onto it one at a time.
+    this.peer = new Peer(emit)
     this.initialized = false
     this.token = null
     // threadId -> ThreadRec. Every chat runs here: one streaming-input query()
@@ -312,21 +379,6 @@ export class Server {
     // owning thread on the persistent path. Written when a turn is dispatched,
     // deleted when it settles.
     this.runToThread = new Map()
-    // decisionId -> { resolve, reject } for in-flight canUseTool gates
-    // (plan approval / clarifying questions) awaiting a host decision.
-    this.pendingDecisions = new Map()
-    // pendingId -> resolve(ok: boolean) for a propose_edit/write/multi_edit
-    // proposal awaiting the host's confirmation that it was actually queued
-    // into pendingChangesStore. Registered when the tool emits `chat/edit-
-    // pending`; resolved by `chat/edit-ack`. AWAITED by the tool handler itself,
-    // which returns the verdict as its own result — so only that one tool call
-    // blocks, never the agent loop's progress on other files.
-    this.pendingAcks = new Map()
-    // queryId -> { resolve, reject, runId } for an in-flight `query_notes`
-    // tool call awaiting the host's filtered result (references). Unlike
-    // pendingAcks, the tool handler AWAITS this and returns the payload to the
-    // model. Modeled on pendingDecisions (awaited + cancellable + data-carrying).
-    this.pendingQueries = new Map()
     this.shuttingDown = false
     // Pending waiters for the next setToken call. Resolved when a new token
     // is pushed; used by the AUTH-retry path to coordinate refreshes.
@@ -346,6 +398,18 @@ export class Server {
     const { method, params, id } = message
     const isRequest = id !== undefined
 
+    // Classify on WHICH of `id` and `method` are present, mirroring the host
+    // (client.rs). A response carries an id and no method; switching on
+    // `method` alone dropped it into `default:`, where `isRequest` is true
+    // because a response has an id — so the sidecar answered the host's reply
+    // with "Method not found: undefined". Route it to whoever asked.
+    if (id !== undefined && method === undefined) {
+      // `settle` returns false for an id we never minted. Nothing to do and
+      // nothing to answer: a response is not addressable.
+      this.peer.settle(message)
+      return
+    }
+
     try {
       switch (method) {
         case 'initialize':
@@ -362,12 +426,6 @@ export class Server {
           return this.#handleCloseThread(params)
         case 'chat/stop-task':
           return this.#handleStopTask(params)
-        case 'chat/decision':
-          return this.#handleDecision(params)
-        case 'chat/edit-ack':
-          return this.#handleEditAck(params)
-        case 'chat/query-result':
-          return this.#handleQueryResult(params)
         case 'shutdown':
           return this.#handleShutdown(id)
         default:
@@ -514,8 +572,8 @@ export class Server {
       this.emit(errorResponse(id, INVALID_PARAMS, `runId already active: ${runId}`))
       return
     }
-    if (this.mode === 'title' && this.activeThreads.size > 0) {
-      this.emit(errorResponse(id, BUSY, 'title sidecar is single-flight'))
+    if (this.mode === 'title' && this.activeThreads.size >= MAX_LIVE_TITLES) {
+      this.emit(errorResponse(id, BUSY, `title sidecar is at capacity (${MAX_LIVE_TITLES})`))
       return
     }
     if (this.shuttingDown) {
@@ -533,7 +591,11 @@ export class Server {
     // runId (runToThread) and emits the `accepted` response.
     const teardown = this.#usePersistentQuery(params) ? 'persist' : 'closeAfterResult'
     const threadId = params.threadId ?? params.sessionId ?? params.resume ?? runId
-    return this.#handleChatPersistent(id, { ...params, threadId, teardown })
+    // Title mode carries its own prompt + one-shot tool constraints (see
+    // TITLE_SYSTEM_PROMPT). Applied here, at the mode boundary, so every title
+    // request gets them regardless of what the caller remembered to send.
+    const withMode = this.mode === 'title' ? titleModeDefaults(params) : params
+    return this.#handleChatPersistent(id, { ...withMode, threadId, teardown })
   }
 
   // Whether this chat keeps a long-lived (persistent) thread. True only for a
@@ -577,10 +639,20 @@ export class Server {
       // the whole query), then dispatches the turn. setModel/setPermissionMode
       // don't touch running background tasks, so no background guard is needed;
       // only skip while a turn is mid-flight (settings apply between turns).
-      if (this.#turnControlsChanged(existing, params) && !existing.turnActive) {
-        this.emit(response(id, { runId, accepted: true, threadId }))
-        this.#applyThreadControls(existing, params).then(() => this.#dispatchTurn(existing, item))
-        return
+      if (this.#turnControlsChanged(existing, params)) {
+        if (existing.turnActive) {
+          // Mid-answer: the control requests must not be issued now (they apply
+          // between turns), but dropping them is how a plan-mode turn ended up
+          // writing — permissionMode IS plan mode's teeth. Stash and let
+          // #settleTurn apply it before it releases the parked turn. Last write
+          // wins, matching the "settings apply between turns" rule: two turns
+          // queued behind this one both reconcile at the same boundary.
+          existing.pendingControls = params
+        } else {
+          this.emit(response(id, { runId, accepted: true, threadId }))
+          this.#applyThreadControls(existing, params).then(() => this.#dispatchTurn(existing, item))
+          return
+        }
       }
       // Reuse the live query — push this turn into its input queue.
       this.#dispatchTurn(existing, item)
@@ -589,6 +661,20 @@ export class Server {
     }
 
     // First turn on this thread — build the query, then dispatch into it.
+    // Refuse BEFORE accepting: once `accepted` is out, the frontend is waiting
+    // for a terminal on this runId and an error response can no longer reach it.
+    if (!this.#maybeEvictLRU()) {
+      this.runToThread.delete(runId)
+      this.emit(
+        errorResponse(
+          id,
+          BUSY,
+          `${MAX_LIVE_THREADS} conversations are already working. ` +
+            'Wait for one to finish, or stop one, then try again.',
+        ),
+      )
+      return
+    }
     this.emit(response(id, { runId, accepted: true, threadId }))
     this.#ensureThread(threadId, params)
       .then((rec) => this.#dispatchTurn(rec, item))
@@ -607,6 +693,27 @@ export class Server {
   // between a turn settling and the generator re-parking is still picked up,
   // because the generator re-checks the queue on each loop. Strict
   // serialization + FIFO: one turn generates at a time, in arrival order.
+  /** Answer a turn that will never run. Its runId is already in `runToThread`
+   *  and the frontend has no timeout on the other side, so silence here is a
+   *  permanent spinner.
+   *
+   *  Two callers, because a turn can be orphaned from either end: dispatched
+   *  onto a thread that died in the accept→dispatch gap, or still sitting in
+   *  `turnQueue` when the thread is torn down. They emit the same thing on
+   *  purpose — the frontend cannot tell the cases apart and should do the same
+   *  thing (re-send on a fresh thread), so `retryable` is true. */
+  #strandTurn(rec, item) {
+    this.runToThread.delete(item.runId)
+    this.#emitChatError(
+      item.runId,
+      'INTERNAL',
+      'thread closed before the turn started',
+      true,
+      undefined,
+      rec.threadId,
+    )
+  }
+
   #dispatchTurn(rec, item) {
     // The thread can be torn down between a turn's accept and its dispatch —
     // the #applyThreadControls().then(#dispatchTurn) path awaits control
@@ -615,15 +722,7 @@ export class Server {
     // with no terminal → frontend wedge. Surface a retryable error instead so
     // the frontend re-sends (spinning up a fresh thread).
     if (rec.dead) {
-      this.runToThread.delete(item.runId)
-      this.#emitChatError(
-        item.runId,
-        'INTERNAL',
-        'thread closed before the turn started',
-        true,
-        undefined,
-        rec.threadId,
-      )
+      this.#strandTurn(rec, item)
       return
     }
     rec.turnQueue.push(item)
@@ -864,8 +963,6 @@ export class Server {
   // by the gate. Session lifecycle: resume when the thread was reaped or the
   // app restarted (session on disk), else create.
   async #ensureThread(threadId, params) {
-    // Bound live subprocesses: evict an LRU idle, background-free thread first.
-    this.#maybeEvictLRU()
     const controller = new AbortController()
     const rec = {
       threadId,
@@ -884,6 +981,11 @@ export class Server {
       turnQueue: [],
       nextTurnResolve: null,
       closeRequested: false,
+      // A turn's live controls (model / permissionMode / fastMode / effort) that
+      // arrived while another turn was generating. Control requests only apply
+      // between turns, so #settleTurn drains this at the boundary rather than
+      // #handleChatPersistent dropping it.
+      pendingControls: null,
       // current turn (reset each turn in #threadInput)
       currentRunId: null,
       // the live turn's dispatch item — kept so an AUTH restart can replay it.
@@ -1209,6 +1311,23 @@ export class Server {
         if (isBg && !rec.bgTurnRunId && this.#isContentEvent(event)) {
           rec.bgTurnRunId = globalThis.crypto.randomUUID()
         }
+        // (3) Subagent token deltas are redundant. `forwardSubagentText` also
+        // delivers each subagent message WHOLE as a `type:'assistant'` event
+        // with the same parent_tool_use_id, and that is what the frontend builds
+        // the subagent lane from — so it drops these on arrival
+        // (streamParser.ts:183) after they have crossed the pipe, a full
+        // serde_json::Value tree, one app.emit per window, and zod. Drop them
+        // here instead. Only `stream_event`: the whole-message events with a
+        // parent id are the lane's only supplier and must pass.
+        //
+        // Placed AFTER the bgTurnRunId mint above, not before. Filtering earlier
+        // would NOT break background-turn detection — the whole-message
+        // `assistant` event is a content event too and mints on its own. The
+        // narrower, real difference: a `chat/task` event arriving between the
+        // dropped delta and the next surviving content event reads bgTurnRunId
+        // (:1593), and would carry null instead of the synthetic id. T16b pins it.
+        if (event?.type === 'stream_event' && event.parent_tool_use_id != null) continue
+
         const runId = rec.turnActive ? rec.currentRunId : rec.bgTurnRunId
         this.emit(
           notification('chat/event', {
@@ -1380,6 +1499,25 @@ export class Server {
     const runId = rec.currentRunId
     rec.turnActive = false
     rec.lastTurnEndedAt = Date.now()
+
+    // A turn that arrived mid-answer could not reconcile its live controls then
+    // (#handleChatPersistent stashes instead of dropping). This is the boundary
+    // it was waiting for: apply before either branch below releases
+    // turnSettleResolve, which is what lets the generator pull the next turn.
+    //
+    // Cleared for memory, not for correctness — a re-apply would already be a
+    // no-op because #applyThreadControls diffs against optionsSeed and rewrites
+    // it (:791). But `params` is a whole chat request, systemPrompt included, so
+    // a thread record must not hold one until the next mid-turn change.
+    if (rec.pendingControls) {
+      const pending = rec.pendingControls
+      rec.pendingControls = null
+      try {
+        await this.#applyThreadControls(rec, pending)
+      } catch (e) {
+        logErrorContext('applyPendingControls', runId, e, { mode: this.mode, threadId: rec.threadId })
+      }
+    }
 
     // The interrupt() path can land a clean `result` here AND abort the stream
     // (loop catch). Whichever runs first emits the single terminal; the other
@@ -1599,11 +1737,20 @@ export class Server {
     }, IDLE_TTL_MS)
   }
 
-  // Enforce MAX_LIVE_THREADS by evicting the least-recently-used idle,
-  // background-free thread. A thread mid-turn or with background work is never
-  // evicted. Evicted threads resume from disk on their next turn.
+  /** Make room for one more thread, and say whether there is any.
+   *
+   *  Evicts the least-recently-used idle, background-free thread; a thread
+   *  mid-turn, with a queued turn, or holding background work is never the
+   *  victim, and evicted threads resume from disk on their next turn — so under
+   *  ordinary use (moving between chats) this is invisible.
+   *
+   *  Returns false only when EVERY live thread is busy, which is the one case
+   *  that cannot be absorbed silently. It used to return anyway and the caller
+   *  built one more subprocess; each is a `claude` CLI process measured at
+   *  ~436MB resident, so "advisory" meant unbounded memory while the user was
+   *  actively working. */
   #maybeEvictLRU() {
-    if (this.activeThreads.size < MAX_LIVE_THREADS) return
+    if (this.activeThreads.size < MAX_LIVE_THREADS) return true
     let victim = null
     for (const [, rec] of this.activeThreads) {
       // Never evict a busy thread — mid-turn, a queued-but-not-yet-started turn,
@@ -1612,7 +1759,16 @@ export class Server {
       if (rec.dead || this.#threadBusy(rec)) continue
       if (!victim || rec.lastTurnEndedAt < victim.lastTurnEndedAt) victim = rec
     }
-    if (victim) this.#teardownThread(victim, 'lru_evict')
+    if (!victim) {
+      // Observability: the refusal below is user-visible, so its cause should
+      // never have to be guessed at from a support report.
+      process.stderr.write(
+        `[sidecar] thread cap reached: ${this.activeThreads.size}/${MAX_LIVE_THREADS} all busy\n`,
+      )
+      return false
+    }
+    this.#teardownThread(victim, 'lru_evict')
+    return true
   }
 
   // Per-thread idle watchdog. Guards ONLY an in-progress turn: an idle-but-alive
@@ -1662,6 +1818,9 @@ export class Server {
     )
     rec.dead = true
     rec.closeRequested = true
+    // Everything still queued dies with the loop. `dead` is already set, so
+    // nothing new can join the queue behind us while we drain it.
+    while (rec.turnQueue.length > 0) this.#strandTurn(rec, rec.turnQueue.shift())
     if (rec.nextTurnResolve) {
       const r = rec.nextTurnResolve
       rec.nextTurnResolve = null
@@ -1724,28 +1883,31 @@ export class Server {
     for (const name of enabledRelay) {
       if (name === 'propose_edit') {
         relayDefs.push(
-          buildProposeEditTool(getRunId, this.emit, (id) => this.#registerAckSlot(id)),
+          buildProposeEditTool((p) => this.#askVerdict(getRunId(), p)),
         )
       } else if (name === 'propose_write') {
-        relayDefs.push(buildProposeWriteTool(getRunId, this.emit, (id) => this.#registerAckSlot(id)))
+        relayDefs.push(buildProposeWriteTool((p) => this.#askVerdict(getRunId(), p)))
       } else if (name === 'propose_skill') {
         relayDefs.push(buildProposeSkillTool(getRunId, this.emit, existingSkills))
       } else if (name === 'propose_multi_edit') {
         relayDefs.push(
-          buildProposeMultiEditTool(getRunId, this.emit, (id) =>
-            this.#registerAckSlot(id),
-          ),
+          buildProposeMultiEditTool((p) => this.#askVerdict(getRunId(), p)),
         )
       } else if (name === 'move_note') {
-        relayDefs.push(buildMoveNoteTool(getRunId, this.emit))
+        relayDefs.push(buildMoveNoteTool((m, p) => this.#askHost(getRunId(), m, p)))
       } else if (name === 'set_note_status') {
-        relayDefs.push(buildSetNoteStatusTool(getRunId, this.emit))
+        relayDefs.push(buildSetNoteStatusTool((m, p) => this.#askHost(getRunId(), m, p)))
       } else if (name === 'set_note_tags') {
-        relayDefs.push(buildSetNoteTagsTool(getRunId, this.emit))
+        relayDefs.push(buildSetNoteTagsTool((m, p) => this.#askHost(getRunId(), m, p)))
       } else if (name === 'query_notes') {
         relayDefs.push(
           buildQueryNotesTool(getRunId, (where, limit, cursor) =>
-            this.#requestQuery(getRunId(), where, limit, cursor),
+            this.peer.request('host/queryNotes', {
+              runId: getRunId(),
+              where,
+              limit,
+              cursor,
+            }),
           ),
         )
       }
@@ -1760,129 +1922,60 @@ export class Server {
     )
   }
 
-  // Park a canUseTool gate: emit a `chat/permission` notification carrying the
-  // tool + input, and return a Promise that resolves when the host sends the
-  // matching `chat/decision`. Rejected if the run is cancelled while waiting
-  // (the controller.abort listener), so a pending gate never leaks.
+  // Park a canUseTool gate on the host: the user has to answer it, so this is
+  // the one request with no deadline of any kind — five seconds and five
+  // minutes are both ordinary. What unparks it besides an answer is the turn
+  // controller, which the abort signal carries into the transport so the slot
+  // is abandoned rather than merely rejected.
+  //
+  // `decisionId` is what the frontend's permission card is keyed by and what
+  // it quotes back, so the host parks under it instead of minting a second id.
   #requestDecision(runId, toolName, input, controller) {
-    return new Promise((resolve, reject) => {
-      const decisionId = globalThis.crypto.randomUUID()
-      const onAbort = () => {
-        this.pendingDecisions.delete(decisionId)
-        reject(new DOMException('cancelled while awaiting user decision', 'AbortError'))
-      }
-      this.pendingDecisions.set(decisionId, {
-        resolve: (d) => {
-          controller.signal.removeEventListener('abort', onAbort)
-          resolve(d)
-        },
-        reject: (e) => {
-          controller.signal.removeEventListener('abort', onAbort)
-          reject(e)
-        },
-      })
-      controller.signal.addEventListener('abort', onAbort, { once: true })
-      this.emit(notification('chat/permission', { runId, decisionId, toolName, input }))
-    })
+    return this.peer.request(
+      'host/permission',
+      { runId, decisionId: globalThis.crypto.randomUUID(), toolName, input },
+      { signal: controller.signal },
+    )
   }
 
-  // Host's answer to a parked gate. Resolves the matching pending decision so
-  // canUseTool returns and the SDK continues. Unknown / already-settled ids
-  // are ignored.
-  #handleDecision(params) {
-    const decisionId = params?.decisionId
-    if (typeof decisionId !== 'string') return
-    const pending = this.pendingDecisions.get(decisionId)
-    if (!pending) return
-    this.pendingDecisions.delete(decisionId)
-    pending.resolve(params?.decision ?? {})
+  // Ask the host to stage a proposal and report back whether it took. The
+  // pendingId is the review card's identity, not a correlation token — the
+  // transport correlates by JSON-RPC id, and the host parks the request under
+  // the pendingId so a cancelled run releases it.
+  //
+  // Registering-before-emitting used to be load-bearing here, because the ack
+  // was a separate notification that could land before the slot existed. A
+  // request has no such window: the id exists before the frame does.
+  // Ask the host to do something only it can do, and hear back. `runId` is
+  // what the host parks the request under so a cancelled run releases it.
+  #askHost(runId, method, params) {
+    return this.peer.request(method, { runId, ...params })
   }
 
-  // Open a slot for a propose_* tool call's host-ack, keyed by the pendingId it
-  // is about to emit in its `chat/edit-pending` notification. Every caller
-  // registers BEFORE emitting: the host round-trip is fast enough that an ack
-  // can land before the emit call returns, and a slot opened afterwards would
-  // miss it and fail open on a genuine refusal.
-  #registerAckSlot(pendingId) {
-    let resolve
-    const promise = new Promise((r) => {
-      resolve = r
-    })
-    this.pendingAcks.set(pendingId, { promise, resolve })
-    // Callers await `promise` and then call `cleanup`; they hold the promise
-    // ref, so deleting the map entry can't lose its value.
-    return { promise, cleanup: () => this.pendingAcks.delete(pendingId) }
-  }
-
-  // Host's answer to "did this propose_* proposal actually get queued?"
-  // (agent/chat/index.ts sends this once its edit-pending handling settles).
-  // Resolves the waiting tool handler. Unknown / already-settled / already-
-  // timed-out pendingIds are ignored — each handler races its own fail-open
-  // timeout, so a late or duplicate ack is a harmless no-op.
-  #handleEditAck(params) {
-    const pendingId = params?.pendingId
-    if (typeof pendingId !== 'string') return
-    const pending = this.pendingAcks.get(pendingId)
-    if (!pending) return
-    // Resolve but DON'T delete — the awaiting handler's `cleanup` is the sole
-    // deleter, after it has read the settled value.
-    pending.resolve({ ok: !!params?.ok, reason: params?.reason ?? null, applied: !!params?.applied })
-  }
-
-  // Ask the host to filter its note catalog by metadata and return references.
-  // Awaited by the `query_notes` tool handler, as the propose_* acks are. The
-  // host's filter is a near-instant in-memory pass, so a 5s timeout backstop
-  // (host never answers) plus per-run rejection on cancel is enough — no
-  // controller is threaded through the fire-once relay tools.
-  #requestQuery(runId, where, limit, cursor) {
-    return new Promise((resolve, reject) => {
-      const queryId = globalThis.crypto.randomUUID()
-      let timer = null
-      const settle = (fn) => (v) => {
-        if (timer) clearTimeout(timer)
-        this.pendingQueries.delete(queryId)
-        fn(v)
-      }
-      this.pendingQueries.set(queryId, {
-        runId,
-        resolve: settle(resolve),
-        reject: settle(reject),
-      })
-      timer = setTimeout(() => {
-        const q = this.pendingQueries.get(queryId)
-        if (q) q.reject(new Error('query_notes: host did not respond in time'))
-      }, 5000)
-      this.emit(notification('chat/query-notes', { runId, queryId, where, limit, cursor }))
-    })
-  }
-
-  // Host's filtered result for a parked query_notes call.
-  #handleQueryResult(params) {
-    const queryId = params?.queryId
-    if (typeof queryId !== 'string') return
-    const pending = this.pendingQueries.get(queryId)
-    if (!pending) return
-    pending.resolve({
-      results: Array.isArray(params?.results) ? params.results : [],
-      nextCursor: params?.nextCursor ?? null,
-    })
+  #askVerdict(runId, proposal) {
+    return this.peer.request('host/editPending', { runId, ...proposal })
   }
 
   #handleCancel(params) {
     const runId = params?.runId
     if (typeof runId !== 'string') return
 
-    // Fail any in-flight query_notes for this run so its slot doesn't linger
-    // until the 5s timeout.
-    for (const q of this.pendingQueries.values()) {
-      if (q.runId === runId) q.reject(new Error('cancelled'))
-    }
-
     // Every chat runs on the thread engine, so the runId maps to a thread.
     // Cancel the TURN only — keep the thread query (and any in-flight background
     // tasks) alive; a one-shot thread then closes after the cancelled result.
     const threadId = this.runToThread.get(runId)
-    if (threadId) this.#cancelPersistentTurn(runId, threadId)
+    if (!threadId) {
+      // No such run — almost always a stale cancel for a turn that already
+      // settled, which is fine. But it is ALSO how a cancel that overtook its
+      // own `chat` frame looks, and that one is a lost Stop: the host reads the
+      // keychain and round-trips `setToken` before writing `chat`, so an early
+      // Stop can land first. The host closes that by re-sending after
+      // `claude_chat_start` resolves (by which point runToThread is
+      // populated) — this line is how we would find out if it ever stopped.
+      process.stderr.write(`[sidecar] cancel for unknown runId=${runId}\n`)
+      return
+    }
+    this.#cancelPersistentTurn(runId, threadId)
   }
 
   // Cancel the CURRENT turn of a persistent thread without killing the thread.
@@ -2030,6 +2123,11 @@ export class Server {
     // and aborts the thread controller) so their `claude` children are reaped
     // too. Sessions persist to disk, so nothing is lost.
     for (const [, rec] of this.activeThreads) this.#teardownThread(rec, 'shutdown')
+    // Release anything waiting on the host. The transport's one obligation:
+    // a question asked over a connection that is going away must fail, not
+    // hang. Without this the caller's only escape is a timeout it invented
+    // itself, which is exactly how three bridges ended up with three policies.
+    this.peer.settleAll(new Error('sidecar is shutting down'))
     // Give in-flight chats a moment to flush their CANCELLED notifications and
     // let the SDK reap the CLI child before we exit.
     setTimeout(() => process.exit(0), 250)
@@ -2077,7 +2175,30 @@ const IDLE_TTL_MS = 300_000
 // Each live thread = one subprocess. Cap concurrent live threads; on overflow
 // the LRU idle, background-free thread is evicted (it resumes from disk on its
 // next turn). A thread that's mid-turn or has background work is never evicted.
-export const MAX_LIVE_THREADS = 6
+/** How many chat threads may hold a live `claude` CLI subprocess at once.
+ *
+ * Not arbitrary any more: one measured at ~436MB resident, so six is well over
+ * a gigabyte of a laptop's memory held by conversations the user is not looking
+ * at. Five is a product decision, not a derived number — what makes it safe to
+ * pick is that exceeding it is now refused rather than ignored, and that the
+ * refusal can only fire when all five are genuinely busy (an idle thread is
+ * evicted silently and resumes from disk, so moving between chats never hits
+ * it). */
+export const MAX_LIVE_THREADS = 5
+
+/** How many title runs may be in flight on the title sidecar at once.
+ *
+ * This was 1 ("single-flight"), which read as a safe conservative choice and was
+ * not: `closeAfterResult` teardown does not complete when `chat/done` is emitted
+ * — the SDK's output stream stays open until the CLI child actually exits, a
+ * measured 4-6s later — so the registry a size-1 cap is checked against stays
+ * occupied for seconds after the title is already on screen. Any second new chat
+ * inside that window was refused BUSY, and the caller does not retry, so that
+ * conversation stayed untitled for good.
+ *
+ * Three is bounded by the same memory argument as MAX_LIVE_THREADS, and cheaper
+ * than it in practice: a title run is tool-less, single-turn, and gone in ~6s. */
+export const MAX_LIVE_TITLES = 3
 
 // Persistent path: max wall-clock gap between events WITHIN an active turn
 // before we treat the turn as network-wedged and hard-close the thread (it
