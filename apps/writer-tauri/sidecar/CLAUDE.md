@@ -60,6 +60,7 @@ ordered by topic, not by whether it needs a token.)
 | `verify-deny-rules-unconditional` | deny rules hold with the sandbox off |
 | `verify-sandbox-git-write` | the vault's git repo stays writable inside the sandbox — but its `hooks/` and `config` do not |
 | `verify-edit-roundtrip` | `propose_edit` reports its outcome back to the model |
+| `verify-edit-pending-contract` | what a `propose_*` proposal puts on the wire, and what each verdict tells the model — drives the real tool builders, no SDK, no token. Its field list is a copy (`.mjs` cannot import the host's zod schema); `src/agent/chat/editPendingContract.test.ts` compares it against the value the host DERIVES from that schema, so the copy cannot rot. Read its "WHAT IT STILL CANNOT SEE" header before trusting a green run |
 | `verify-stale-retry` | whole-doc stale → model rebase loop |
 | `verify-query-notes` | `query_notes` tool and its data-carrying relay |
 | `verify-metadata-outcome` | set_note_status / set_note_tags / move_note report a refusal instead of claiming success — no SDK, no token |

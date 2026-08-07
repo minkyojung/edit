@@ -88,3 +88,14 @@ export const parseEditPendingEvent = makeParser<EditPendingEvent>(
   editPendingEnvelope,
   'claude:edit-pending',
 )
+
+/** What the sidecar has to put on the wire for a proposal to be actionable.
+ *
+ * Derived from the schema, never listed by hand. The sidecar's own check of this
+ * contract is a `.mjs` harness that cannot import this file (no TS loader), so
+ * it holds the list as source — and `editPendingContract.test.ts` compares that
+ * source against THIS value. Deriving is what makes the comparison mean
+ * something: a hand-kept copy here would just be a second thing to rot. */
+export const EDIT_PENDING_REQUIRED_FIELDS: readonly string[] = Object.freeze(
+  Object.keys(editPendingEnvelope.shape).sort(),
+)
