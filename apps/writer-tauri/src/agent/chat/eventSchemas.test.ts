@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   parseChatEvent,
   parseDoneEvent,
+  parseEditPendingEvent,
   parseErrorEvent,
   parseTaskEvent,
 } from './eventSchemas'
@@ -51,5 +52,45 @@ describe('event envelope validation', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     expect(parseChatEvent({ runId: 42, event: {} })).toBeNull()
     expect(parseTaskEvent({ threadId: 42 })).toBeNull()
+  })
+})
+
+// edit-pending is the one channel that requires more than its routing key. The
+// reasoning is at `editPendingEnvelope` in eventSchemas.ts; what it buys is
+// asserted here, and end-to-end in editPending.characterization.test.ts.
+describe('edit-pending envelope', () => {
+  const good = {
+    runId: 'r1',
+    pendingId: 'p1',
+    toolName: 'Write',
+    input: { file_path: '/v/a.md', content: 'x' },
+  }
+
+  it('accepts a well-formed proposal unchanged', () => {
+    expect(parseEditPendingEvent(good)).toBe(good)
+  })
+
+  it('passes through tool-specific fields it does not model', () => {
+    const multi = { ...good, toolName: 'MultiEdit', input: { file_path: '/v/a.md', edits: [] } }
+    expect(parseEditPendingEvent(multi)).toBe(multi)
+  })
+
+  it('drops a proposal with no pendingId — the ack would reach nobody', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { pendingId: _omitted, ...noId } = good
+    expect(parseEditPendingEvent(noId)).toBeNull()
+  })
+
+  it('drops a proposal with no input — the mapper has nothing to read', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { input: _omitted, ...noInput } = good
+    expect(parseEditPendingEvent(noInput)).toBeNull()
+    expect(parseEditPendingEvent({ ...good, input: 'not an object' })).toBeNull()
+  })
+
+  it('drops a proposal with no runId — it cannot be routed to a run', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { runId: _omitted, ...noRun } = good
+    expect(parseEditPendingEvent(noRun)).toBeNull()
   })
 })

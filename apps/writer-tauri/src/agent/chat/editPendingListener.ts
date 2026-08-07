@@ -26,14 +26,7 @@ import {
   toVaultRelative,
 } from './toPendingChange'
 import { checkEditPlacement, describeRefusal } from './checkPlacement'
-
-/** The sidecar's proposal, as it arrives on the Tauri event. */
-export interface EditPendingPayload {
-  runId: string
-  pendingId: string
-  toolName: string
-  input: Record<string, unknown>
-}
+import type { EditPendingEvent } from './types'
 
 /** What this handler needs from the run it belongs to. Plain values — the
  * handler reads stores directly for everything that changes underneath it. */
@@ -52,7 +45,7 @@ export interface EditPendingDeps {
 export interface EditPendingHandler {
   /** Handle one event. Never rejects: a failure is contained per path (see the
    * try/catch below) and reported to the model through the ack. */
-  handle(payload: EditPendingPayload): Promise<void>
+  handle(payload: EditPendingEvent): Promise<void>
 }
 
 export function createEditPendingHandler(deps: EditPendingDeps): EditPendingHandler {
@@ -73,7 +66,7 @@ export function createEditPendingHandler(deps: EditPendingDeps): EditPendingHand
     Promise<{ pageSlug: string; pendingId: string } | null>
   >()
 
-  async function handle(payload_: EditPendingPayload): Promise<void> {
+  async function handle(payload_: EditPendingEvent): Promise<void> {
     if (payload_.runId !== runId) return
     // Audit instrumentation (read-only, safe to leave on): logs each
     // edit-pending event's arrival so a same-turn race on one file_path —

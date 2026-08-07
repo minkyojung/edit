@@ -39,10 +39,7 @@ import { usePendingChangesStore } from '@/state/pendingChangesStore'
 import { useGitStore, aiEditSubject } from '@/state/gitStore'
 import { setModelBase } from '@/agent/modelBodyBase'
 import { useSkillProposalStore } from '@/state/skillProposalStore'
-import {
-  createEditPendingHandler,
-  type EditPendingPayload,
-} from './editPendingListener'
+import { createEditPendingHandler } from './editPendingListener'
 import { useContextUsageStore } from '@/state/contextUsageStore'
 import { useThreadsStore } from '@/state/threadsStore'
 import { useFastModeStore } from '@/state/fastModeStore'
@@ -55,9 +52,15 @@ import {
   type DoneEvent,
   type ErrorEvent,
   type RunChatArgs,
+  type EditPendingEvent,
   type RunChatResult,
 } from './types'
-import { parseChatEvent, parseDoneEvent, parseErrorEvent } from './eventSchemas'
+import {
+  parseChatEvent,
+  parseDoneEvent,
+  parseEditPendingEvent,
+  parseErrorEvent,
+} from './eventSchemas'
 import { resolveAgent } from '../agents'
 import { buildEditOutcomeNote } from './buildEditOutcomeNote'
 import {
@@ -450,7 +453,8 @@ export async function runChat(args: RunChatArgs): Promise<RunChatResult> {
       // verdict is made of — mapping, the per-path mutex, the merge and
       // auto-accept branches, the refusal text — lives in
       // `./editPendingListener`. This only routes.
-      listen<EditPendingPayload>('claude:edit-pending', (e) => {
+      listen<EditPendingEvent>('claude:edit-pending', (e) => {
+        if (!parseEditPendingEvent(e.payload)) return
         void editPending.handle(e.payload)
       }),
       // propose_skill tool fired (Phase 2B). The sidecar relays a proposed

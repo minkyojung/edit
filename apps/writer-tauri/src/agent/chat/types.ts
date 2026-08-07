@@ -383,6 +383,22 @@ export interface TaskEvent {
   patch?: { status?: string; is_backgrounded?: boolean; error?: string }
 }
 
+/** A proposal the model made through a `propose_*` relay tool, forwarded on
+ * `claude:edit-pending`. The sidecar's tool call is PARKED on the host's answer
+ * to this — see `editPendingListener.ts`, which decides and acks. */
+export interface EditPendingEvent {
+  runId: string
+  /** The review card's identity, and what the ack has to quote back: the
+   * sidecar parks its request under this id (`Key::FromParam("pendingId")` in
+   * manager.rs), so an ack without it reaches nobody. */
+  pendingId: string
+  /** 'Write' | 'Edit' | 'MultiEdit' — the built-in the relay tool mirrors. */
+  toolName: string
+  /** The tool's own arguments (file_path plus the tool-specific rest). Passed
+   * through to the mapper, which owns the per-tool shapes. */
+  input: Record<string, unknown>
+}
+
 export interface ErrorEvent {
   runId: string
   /** Persistent-query path: the conversation/thread this error belongs to. */

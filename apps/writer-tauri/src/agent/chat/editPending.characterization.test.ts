@@ -390,6 +390,34 @@ describe('edit-pending: auto-accept', () => {
   })
 })
 
+describe('edit-pending: malformed payload', () => {
+  // NOT a characterization test — this one asserts the behaviour we want, and
+  // it failed when written, which is how we know the gap was real.
+  //
+  // `claude:event` / `claude:done` / `claude:error` are all validated at the
+  // listener boundary by eventSchemas.ts; `claude:edit-pending` had a
+  // TypeScript type and nothing at runtime. A payload with no `pendingId` was
+  // processed anyway: a note got materialized and an ack was sent back with
+  // `pendingId: undefined`. The sidecar parks its propose_* request under that
+  // id (manager.rs keys it `Key::FromParam("pendingId")`), so the tool never
+  // hears an answer and fails open on a timeout — the model is left to guess.
+  it('drops an event with no pendingId instead of acting on it', async () => {
+    await startRun()
+
+    fire('claude:edit-pending', {
+      runId: currentRunId(),
+      // pendingId omitted — the shape a version skew would produce.
+      toolName: 'Write',
+      input: { file_path: FILE, content: '무엇이든\n' },
+    })
+    await flush()
+    await flush()
+
+    expect(state.created).toHaveLength(0)
+    expect(acks()).toHaveLength(0)
+  })
+})
+
 describe('edit-pending: failure containment', () => {
   // BREAKS IF: the try/catch around the per-path tail is removed. The rejected
   // promise is exactly what is stored in `newNoteByPath`, so every later event

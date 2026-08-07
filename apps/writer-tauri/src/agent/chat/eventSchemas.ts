@@ -26,7 +26,7 @@
 // event; tighten later with the logged issues as evidence.
 
 import { z } from 'zod'
-import type { ChatEvent, DoneEvent, ErrorEvent, TaskEvent } from './types'
+import type { ChatEvent, DoneEvent, EditPendingEvent, ErrorEvent, TaskEvent } from './types'
 
 const chatEventEnvelope = z.object({
   runId: z.string(),
@@ -43,6 +43,23 @@ const errorEventEnvelope = z.object({
 
 const taskEventEnvelope = z.object({
   threadId: z.string(),
+})
+
+// The one envelope here that requires more than its routing key, deliberately.
+// The note above says requiring extra fields risks stranding a run — that
+// reasoning is about `done`/`error`, where dropping the event is the worse
+// outcome because nothing else will ever settle the run. Here it inverts:
+// `pendingId` is not decoration, it is the id the sidecar parked its propose_*
+// request under, so acting on a payload without one produces an ack addressed
+// to nobody while a note gets materialized regardless. Dropping the event costs
+// the tool's fail-open timeout, which is a bounded, logged wait — strictly
+// better than a write nobody asked to confirm. `input` is required for the same
+// reason: the mapper reads `file_path` out of it and has nothing to do without.
+const editPendingEnvelope = z.object({
+  runId: z.string(),
+  pendingId: z.string(),
+  toolName: z.string(),
+  input: z.looseObject({}),
 })
 
 function makeParser<T>(schema: z.ZodType, channel: string): (raw: unknown) => T | null {
@@ -66,3 +83,8 @@ export const parseDoneEvent = makeParser<DoneEvent>(doneEventEnvelope, 'claude:d
 export const parseErrorEvent = makeParser<ErrorEvent>(errorEventEnvelope, 'claude:error')
 /** Validate a `claude:task` payload envelope; returns it typed, or null (logged) if malformed. */
 export const parseTaskEvent = makeParser<TaskEvent>(taskEventEnvelope, 'claude:task')
+/** Validate a `claude:edit-pending` payload; returns it typed, or null (logged) if malformed. */
+export const parseEditPendingEvent = makeParser<EditPendingEvent>(
+  editPendingEnvelope,
+  'claude:edit-pending',
+)
